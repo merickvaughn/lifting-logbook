@@ -13,6 +13,8 @@ export interface ImportSuggestionCall {
   payload: unknown;
   /** The most tokens the model may return. */
   maxOutputTokens: number;
+  /** The reply's JSON Schema, for a provider that can be held to one. Defaults to the import suggestions' (#1381 reuses this port). */
+  schema?: object;
 }
 
 export interface ImportSuggestionCallResult {

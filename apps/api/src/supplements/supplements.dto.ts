@@ -154,3 +154,8 @@ export class ImportSupplementsDto {
   /** Sheet rows the lifter skipped; logged, never stored. */
   @Optional() @IsInt() @Min(0) @Max(500) skipped?: number;
 }
+
+/** The AI suggestion request (#1381): the typed name, and nothing else. */
+export class SupplementAiSuggestionDto {
+  @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
+}

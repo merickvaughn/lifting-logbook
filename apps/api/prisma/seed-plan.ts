@@ -251,6 +251,7 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.trainingMax.deleteMany({ where });
   await tx.missingMaxDismissal.deleteMany({ where });
   await tx.importSuggestionUsage.deleteMany({ where });
+  await tx.supplementSuggestionUsage.deleteMany({ where });
   await tx.macrocycleDashboard.deleteMany({ where });
   await tx.trainingMaxHistory.deleteMany({ where });
   await tx.bodyWeight.deleteMany({ where });

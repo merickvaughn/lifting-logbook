@@ -9,7 +9,15 @@ import {
   type Overlap,
 } from '@lifting-logbook/core';
 import type { SupplementItemBody } from '@lifting-logbook/api-client';
-import type { Ingredient, SupplementCatalogEntry, SupplementItem, SupplementSlot, SupplementStatus } from '@lifting-logbook/types';
+import type {
+  Ingredient,
+  SupplementCatalogEntry,
+  SupplementItem,
+  SupplementSlot,
+  SupplementStatus,
+  SupplementSuggestion,
+  SupplementSuggestionTier,
+} from '@lifting-logbook/types';
 import { linkHost, num, searchFor, type Stack } from './supplementsView';
 
 /*
@@ -17,6 +25,31 @@ import { linkHost, num, searchFor, type Stack } from './supplementsView';
  * A dose row follows FHIR Dosage (timing slot, amount, and the days it applies on):
  * https://build.fhir.org/dosage.html
  */
+
+/** A tier 2 or 3 suggestion, with which tier it came from. */
+export interface TieredSuggestion {
+  tier: Exclude<SupplementSuggestionTier, 'catalog'>;
+  suggestion: SupplementSuggestion;
+}
+
+/**
+ * A suggestion in the catalog's shape, so `autofill` and `candidateItem` treat it as they do an
+ * entry. Its empty `key` is never sent: `toBody` links only a real catalog entry (#1381).
+ */
+export function suggestionEntry(s: SupplementSuggestion): SupplementCatalogEntry {
+  return {
+    key: '',
+    name: s.name,
+    aliases: [],
+    kind: 'product',
+    keyCompound: s.keyCompound,
+    suggestedDose: s.suggestedDose,
+    timing: s.timing,
+    suggestedSlot: s.suggestedSlot,
+    ingredients: s.ingredients,
+    reference: { uses: [], evidence: { level: 'limited', reason: '' }, cautions: [], typicalRange: s.typicalRange, sources: [] },
+  };
+}
 
 /** The fields catalog autofill can fill; a field the lifter has typed in is never overwritten. */
 export type AutofillField = 'keyCompound' | 'slot' | 'amount' | 'typicalRange' | 'timing' | 'links';
@@ -193,8 +226,13 @@ export function validate(values: FormValues): string | undefined {
  * entry's protein, while a blank field keeps it. A mix never sends it: its ingredients come from
  * its parts.
  */
-export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?: SupplementCatalogEntry }): SupplementItemBody {
-  const { item, entry } = opts;
+export function toBody(
+  values: FormValues,
+  opts: { item?: SupplementItem; entry?: SupplementCatalogEntry; suggested?: TieredSuggestion },
+): SupplementItemBody {
+  const { item, suggested } = opts;
+  // A suggestion's ingredients ride in the body like a catalog entry's, but it names no catalog key.
+  const entry = opts.entry ?? (suggested && suggestionEntry(suggested.suggestion));
   const body: SupplementItemBody = {
     name: values.name.trim(),
     keyCompound: values.keyCompound.trim(),
@@ -208,11 +246,13 @@ export function toBody(values: FormValues, opts: { item?: SupplementItem; entry?
     doses: values.doses.map((d) => ({ slot: d.slot, amount: d.amount.trim(), servings: Number(d.servings), dayTypes: d.dayTypes })),
   };
   // Only an add links the catalog entry: the edit endpoint doesn't take `catalogKey`, and rejects it.
-  if (entry && !item) body.catalogKey = entry.key;
+  if (opts.entry && !item) body.catalogKey = opts.entry.key;
+  // An AI suggestion is saved unverified: shown, but not counted until the lifter confirms it (#1381).
+  if (suggested?.tier === 'ai' && !item) body.unverified = true;
   const protein = Number(values.protein.trim() || 0);
   const base = item ? item.ingredients : entry?.ingredients ?? [];
   const changed = item ? protein !== Number(proteinOf(item) || 0) : values.protein.trim() !== '';
-  if (!item?.parts && changed) body.ingredients = withProtein(base, protein);
+  if (!item?.parts && (changed || (suggested && !item))) body.ingredients = withProtein(base, protein);
   return body;
 }
 

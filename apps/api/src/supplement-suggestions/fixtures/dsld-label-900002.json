@@ -1,0 +1,7 @@
+{
+  "id": 900002,
+  "fullName": "Creatine Caps",
+  "servingSizes": [ { "order": 1, "minQuantity": 2, "maxQuantity": 4, "unit": "Capsule(s)" } ],
+  "productType": { "langualCodeDescription": "Amino acid/Protein [A1305]" },
+  "ingredientRows": [ { "order": 1, "name": "Creatine Monohydrate", "quantity": [ { "servingSizeOrder": 1, "quantity": 1500, "unit": "mg" } ] } ]
+}

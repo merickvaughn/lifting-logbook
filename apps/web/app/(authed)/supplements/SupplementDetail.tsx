@@ -42,6 +42,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [confirmFailed, setConfirmFailed] = useState(false);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -72,6 +73,21 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
     }
   }
 
+  /** Counts the item: it was saved unverified, and the lifter has now checked it against their label (#1381). */
+  async function confirm() {
+    setSaving(true);
+    setConfirmFailed(false);
+    try {
+      await updateSupplementItem(item.id, { unverified: false }, localToday());
+      router.refresh();
+    } catch (err) {
+      logClientError('supplements.confirmItem', err, { itemId: item.id });
+      setConfirmFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <dialog
       ref={ref}
@@ -97,6 +113,19 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
           </button>
         </div>
       </header>
+
+      {item.unverified && (
+        <section>
+          <p className={styles.aiBanner}>
+            <span className={styles.aiTag}>AI · unverified</span> Not counted in your totals, protein or advisories until you confirm it
+            against the product’s label.
+          </p>
+          <button type="button" disabled={saving} onClick={() => void confirm()}>
+            Confirm
+          </button>
+          {confirmFailed && <p role="alert">Couldn’t confirm the item. Try again.</p>}
+        </section>
+      )}
 
       {notes.length > 0 && (
         <section>

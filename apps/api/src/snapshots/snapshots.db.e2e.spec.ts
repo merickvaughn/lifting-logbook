@@ -77,6 +77,7 @@ const KEPT = [
   'CustomProgram',
   'CustomProgramSpec',
   'ImportSuggestionUsage',
+  'SupplementSuggestionUsage',
   'GoogleSheetLink',
   'GoogleOauthRequest',
 ];

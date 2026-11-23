@@ -609,6 +609,31 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     // The largest seq the log's integer column holds is still a page boundary.
     expect(await page('?beforeSeq=2147483647')).toEqual([1, 2, 3, 4, 5]);
   });
+  describe('tiers 2 and 3 suggestions (#1381)', () => {
+    it('answers none to a blank label lookup without calling the label database, and 400s a repeated q', async () => {
+      const { inject } = newUser();
+      expect((await inject('GET', '/supplements/label-lookup?q=')).json()).toEqual({ status: 'none' });
+      expect((await inject('GET', '/supplements/label-lookup?q=a&q=b')).statusCode).toBe(400);
+    });
+
+    it('says the AI is off when no provider is configured, and requires a name', async () => {
+      const { inject } = newUser();
+      const res = await inject('POST', '/supplements/ai-suggestion', { name: 'Zorblax' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ status: 'off' });
+      expect((await inject('POST', '/supplements/ai-suggestion', {})).statusCode).toBe(400);
+      expect((await inject('POST', '/supplements/ai-suggestion', { name: '' })).statusCode).toBe(400);
+    });
+
+    it('saves an unverified item, leaves it out of the totals, and counts it once confirmed', async () => {
+      const { add, ok, get } = newUser();
+      const item = await add('Zorblax', { unverified: true, ingredients: [{ key: 'protein', amount: 20, unit: 'g' }], doses: [{ slot: 'all', amount: '1', servings: 1, dayTypes: [] }] });
+      expect(item.unverified).toBe(true);
+      await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { unverified: false });
+      expect((await get()).items.find((i) => i.id === item.id)?.unverified).toBe(false);
+    });
+  });
+
   describe('catalog (#1375)', () => {
     it('returns matches for q by name or alias, ignoring case, with reference content', async () => {
       const { inject } = newUser();

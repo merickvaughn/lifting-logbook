@@ -1541,6 +1541,8 @@ export interface AssignContinueMax {
 export const IMPORT_SUGGESTION_MAX_SETS = 1500;
 /** Suggestion requests each user may make per hour (proposal decision 12). */
 export const IMPORT_SUGGESTION_HOURLY_LIMIT = 10;
+/** Supplement AI suggestions a lifter may request per hour (#1381). */
+export const SUPPLEMENT_SUGGESTION_HOURLY_LIMIT = 20;
 /** How long the model gets to answer a suggestion request, with no retries (proposal decision 12). */
 export const IMPORT_SUGGESTION_DEADLINE_MS = 60_000;
 

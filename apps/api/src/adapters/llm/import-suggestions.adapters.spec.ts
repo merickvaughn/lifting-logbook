@@ -77,6 +77,14 @@ describe('AnthropicImportSuggestionsAdapter (#1174)', () => {
     expect(adapter.label).toBe('Anthropic (claude-test)');
   });
 
+  it('holds the answer to the schema the call names, so other features reuse the adapter (#1381)', async () => {
+    const create = jest.fn().mockResolvedValue(answer);
+    const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);
+    const schema = { type: 'object', properties: { suggestion: { type: 'string' } } };
+    await adapter.suggest({ ...call(false), schema }, new AbortController().signal);
+    expect((create.mock.calls[0]?.[0] as { tools: Array<{ input_schema: unknown }> }).tools[0]?.input_schema).toBe(schema);
+  });
+
   it('reports an answer that stopped at the token limit as truncated', async () => {
     const create = jest.fn().mockResolvedValue({ ...answer, stop_reason: 'max_tokens' });
     const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);

@@ -8,7 +8,9 @@ import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/ty
 import { localToday } from '@/lib/calendarDay';
 import {
   createSupplementItem,
+  fetchSupplementAiSuggestion,
   fetchSupplementCatalog,
+  fetchSupplementLabelLookup,
   removeSupplementItem,
   removeSupplementItems,
   setSupplementStatus,
@@ -27,6 +29,7 @@ import {
   replaceValues,
   sharesLine,
   sharesSlotWith,
+  suggestionEntry,
   toBody,
   trackName,
   validate,
@@ -34,6 +37,7 @@ import {
   type FormValues,
   type Preset,
   type ReplaceHow,
+  type TieredSuggestion,
 } from '@/lib/supplementForm';
 import type { Stack } from '@/lib/supplementsView';
 import styles from './supplements.module.css';
@@ -58,7 +62,11 @@ const LOOKUP_DELAY_MS = 250;
 interface Lookup {
   name: string;
   entry?: SupplementCatalogEntry;
+  /** A tier 2 (product label) or tier 3 (AI) suggestion that filled the form instead of an entry (#1381). */
+  suggested?: TieredSuggestion;
   filled: number;
+  /** After a catalog miss on an add: what the product label database said. Tier 3 is offered once it's set. */
+  label?: 'none' | 'unavailable';
 }
 
 interface FormState {
@@ -69,7 +77,10 @@ interface FormState {
 
 const without = (set: ReadonlySet<AutofillField>, field: AutofillField) => (set.has(field) ? new Set([...set].filter((f) => f !== field)) : set);
 
-const Suggested = ({ show }: { show: boolean }) => (show ? <span className={styles.suggestedTag}>SUGGESTED</span> : null);
+const Suggested = ({ show, ai }: { show: boolean; ai?: boolean }) =>
+  show ? ai ? <span className={styles.aiTag}>AI · unverified</span> : <span className={styles.suggestedTag}>SUGGESTED</span> : null;
+
+const TIER_NAME = { catalog: 'the shared catalog', label: 'a product label', ai: 'an AI suggestion' } as const;
 
 /**
  * The Add/Edit supplement form, a native modal `<dialog>`. Typing a name looks it up in the shared
@@ -125,18 +136,37 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       return;
     }
     let current = true;
-    const answered = (entries: SupplementCatalogEntry[]) => {
-      if (!current) return;
-      const entry = entries[0];
-      if (!entry) return setLookup({ name, filled: 0 });
+    const fill = (entry: SupplementCatalogEntry, found: Pick<Lookup, 'entry' | 'suggested'>) =>
       setForm((f) => {
         const result = autofill(f.values, typed.current, entry, editing ? 'edit' : 'add', stack, dayTypeId);
         return {
           values: result.values,
-          lookup: { name, entry, filled: result.filled.length },
+          lookup: { name, ...found, filled: result.filled.length },
           suggested: new Set([...[...f.suggested].filter((field) => !typed.current.has(field)), ...result.filled]),
         };
       });
+    // Tier 2, after a catalog miss on an add: the NIH label database. A miss or an outage leaves
+    // the form as it is and offers tier 3 (the outage is logged by the API).
+    const labelTier = async () => {
+      let found: Awaited<ReturnType<typeof fetchSupplementLabelLookup>>;
+      try {
+        found = await fetchSupplementLabelLookup(name);
+      } catch (err) {
+        if (!current) return;
+        logClientError('supplements.labelLookup', err);
+        return setLookup({ name, filled: 0, label: 'unavailable' });
+      }
+      if (!current) return;
+      const first = found.status === 'ready' ? found.suggestions[0] : undefined;
+      if (first) fill(suggestionEntry(first), { suggested: { tier: 'label', suggestion: first } });
+      else setLookup({ name, filled: 0, label: found.status === 'unavailable' ? 'unavailable' : 'none' });
+    };
+    const answered = (entries: SupplementCatalogEntry[]) => {
+      if (!current) return;
+      const entry = entries[0];
+      if (entry) return fill(entry, { entry });
+      setLookup({ name, filled: 0 });
+      if (!editing) void labelTier();
     };
     const timer = setTimeout(() => {
       const known = answers.current.get(name);
@@ -163,6 +193,9 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
 
   // The entry matched for the name as it is now; a match for an earlier name is never saved.
   const matched = lookup?.name === name ? lookup.entry : undefined;
+  const suggestedBy = lookup?.name === name ? lookup.suggested : undefined;
+  const aiFilled = suggestedBy?.tier === 'ai';
+  const [aiState, setAiState] = useState<{ name: string; busy: boolean; message?: string } | undefined>();
 
   // Replace what you already take? (#1411) The item being replaced is always listed first, ticked.
   // The rest are active items sharing an ingredient with what's being added; only same-slot ones
@@ -172,7 +205,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
   // rule as the form changes. Only the fields the overlap reads are dependencies, so typing a note
   // doesn't recompute it.
   const { doses, status, protein } = values;
-  const candidate = useMemo(() => candidateItem({ doses, status, protein }, matched), [doses, status, protein, matched]);
+  const candidate = useMemo(() => candidateItem({ doses, status, protein }, matched ?? (suggestedBy && suggestionEntry(suggestedBy.suggestion))), [doses, status, protein, matched, suggestedBy]);
   const overlaps = useMemo(
     () =>
       editing ? [] : overlapsFor(candidate, stack.items.filter((i) => openedWith.current.has(i.id) && i.id !== replacing?.id)),
@@ -202,6 +235,38 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
     if (added) tryAgainRef.current?.focus();
   }, [added]);
 
+  /** Tier 3: asks the AI about the typed name, once tiers 1 and 2 have missed. */
+  async function suggestWithAi() {
+    setAiState({ name, busy: true });
+    const done = (message?: string) => setAiState((s) => (s?.name === name ? { name, busy: false, message } : s));
+    try {
+      const res = await fetchSupplementAiSuggestion(name);
+      if (res.status === 'ready') {
+        setForm((f) => {
+          const result = autofill(f.values, typed.current, suggestionEntry(res.suggestion), 'add', stack, dayTypeId);
+          return {
+            values: result.values,
+            lookup: { name, suggested: { tier: 'ai', suggestion: res.suggestion }, filled: result.filled.length },
+            suggested: new Set([...[...f.suggested].filter((field) => !typed.current.has(field)), ...result.filled]),
+          };
+        });
+        return done();
+      }
+      done(
+        res.status === 'off'
+          ? 'AI suggestions aren’t turned on.'
+          : res.status === 'limited'
+            ? `You’ve used this hour’s AI suggestions; try again in ${res.retryAfterMinutes} minute${res.retryAfterMinutes === 1 ? '' : 's'}.`
+            : res.status === 'none'
+              ? 'The AI had no suggestion for this name.'
+              : 'AI suggestions aren’t available right now.',
+      );
+    } catch (err) {
+      logClientError('supplements.aiSuggestion', err);
+      done('AI suggestions aren’t available right now.');
+    }
+  }
+
   const typedIn = (field: AutofillField) => {
     typed.current.add(field);
     setForm((f) => ({ ...f, suggested: without(f.suggested, field) }));
@@ -228,7 +293,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
     const op = editing ? 'supplements.editItem' : 'supplements.addItem';
     const ids = replaceRows.filter((r) => r.on).map((r) => r.item.id);
     try {
-      const body = toBody(values, { item: editing, entry: matched });
+      const body = toBody(values, { item: editing, entry: matched, suggested: suggestedBy });
       if (editing) await updateSupplementItem(editing.id, body, localToday());
       else await createSupplementItem(body, localToday());
     } catch (err) {
@@ -339,14 +404,41 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
               {editing ? '' : '; label facts, uses and sources will be attached'}. Blue fields are suggestions; change anything.
             </p>
           )}
-          {name !== '' && lookup?.name === name && !lookup.entry && (
+          {suggestedBy && (
+            <p className={aiFilled ? styles.aiBanner : styles.infoBanner} role="status">
+              Filled {lookup?.filled ?? 0} field{lookup?.filled === 1 ? '' : 's'} from {TIER_NAME[suggestedBy.tier]}.{' '}
+              {aiFilled
+                ? 'Purple fields are the AI’s. It saves as unverified and isn’t counted in totals until you press Confirm on its detail panel; check it against your label.'
+                : 'Ingredients and amounts will be saved. Check them against your product; change anything.'}
+              {suggestedBy.suggestion.sources.map((s) => (
+                <span key={s.url}>
+                  {' '}
+                  <a href={s.url} target="_blank" rel="noopener noreferrer">
+                    {s.label}
+                  </a>
+                </span>
+              ))}
+            </p>
+          )}
+          {name !== '' && lookup?.name === name && !lookup.entry && !lookup.suggested && (
             <p className={styles.noMatchBanner} role="status">
               Not in the shared catalog.
             </p>
           )}
+          {name !== '' && lookup?.name === name && lookup.label && (
+            <div className={styles.noMatchBanner}>
+              <p role="status">
+                {lookup.label === 'none' ? 'No matching product label either.' : 'The product label database didn’t answer.'}
+              </p>
+              <button type="button" disabled={aiState?.name === name && aiState.busy} onClick={() => void suggestWithAi()}>
+                Suggest with AI
+              </button>
+              {aiState?.name === name && aiState.message && <p role="status">{aiState.message}</p>}
+            </div>
+          )}
 
           <label>
-            Key compound <Suggested show={suggested.has('keyCompound')} />
+            Key compound <Suggested show={suggested.has('keyCompound')} ai={aiFilled} />
             <input maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. Anthocyanins, 300 mg caffeine" value={values.keyCompound} onChange={(e) => set('keyCompound', e.target.value, 'keyCompound')} />
           </label>
 
@@ -357,7 +449,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
             {values.doses.map((d, i) => (
               <div key={i} className={styles.doseRow}>
                 <label>
-                  Slot <Suggested show={i === 0 && suggested.has('slot')} />
+                  Slot <Suggested show={i === 0 && suggested.has('slot')} ai={aiFilled} />
                   <select value={d.slot} onChange={(e) => setDose(i, { slot: SUPPLEMENT_SLOTS.find((s) => s === e.target.value) ?? d.slot }, 'slot')}>
                     {SUPPLEMENT_SLOTS.map((s) => (
                       <option key={s} value={s}>
@@ -367,7 +459,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
                   </select>
                 </label>
                 <label>
-                  Amount <Suggested show={i === 0 && suggested.has('amount')} />
+                  Amount <Suggested show={i === 0 && suggested.has('amount')} ai={aiFilled} />
                   <input ref={(el) => { amountRefs.current[i] = el; }} maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. 5 g" value={d.amount} onChange={(e) => setDose(i, { amount: e.target.value }, 'amount')} />
                 </label>
                 <label>
@@ -410,7 +502,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
 
           <div className={styles.twoCol}>
             <label>
-              Typical range <Suggested show={suggested.has('typicalRange')} />
+              Typical range <Suggested show={suggested.has('typicalRange')} ai={aiFilled} />
               <input maxLength={SUPPLEMENT_TEXT_MAX.name} placeholder="e.g. 3–5 g" value={values.typicalRange} onChange={(e) => set('typicalRange', e.target.value, 'typicalRange')} />
             </label>
             <label>
@@ -423,7 +515,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
           </div>
 
           <label>
-            Timing <Suggested show={suggested.has('timing')} />
+            Timing <Suggested show={suggested.has('timing')} ai={aiFilled} />
             <input maxLength={SUPPLEMENT_TEXT_MAX.name} value={values.timing} onChange={(e) => set('timing', e.target.value, 'timing')} />
           </label>
           <label>

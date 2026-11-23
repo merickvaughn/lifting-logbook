@@ -72,7 +72,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
 // not the user's data. A Clear data snapshot (#1309) holds rows the lifter cleared, and its sets
 // download from the snapshot itself.
 // A pending Google link attempt (#1432) holds only a state hash and a PKCE verifier.
-const NOT_EXPORTED = ['DataSnapshot', 'GoogleOauthRequest', 'ImportBatch', 'ImportSuggestionUsage'];
+const NOT_EXPORTED = ['DataSnapshot', 'GoogleOauthRequest', 'ImportBatch', 'ImportSuggestionUsage', 'SupplementSuggestionUsage'];
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -109,6 +109,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.customProgram.deleteMany({ where });
   await prisma.importBatch.deleteMany({ where });
   await prisma.importSuggestionUsage.deleteMany({ where });
+  await prisma.supplementSuggestionUsage.deleteMany({ where });
 }
 
 /** At least one row in every user-scoped table. `mark` lands in a text column of most. */

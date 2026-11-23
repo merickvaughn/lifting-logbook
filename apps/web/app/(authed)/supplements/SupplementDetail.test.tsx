@@ -212,3 +212,30 @@ describe('SupplementDetail where to buy', () => {
     expect(within(dialog).getByRole('button', { name: 'Keep' })).toBeEnabled();
   });
 });
+
+describe('an unverified item (#1381)', () => {
+  const id = STACK.items[0]?.id ?? '';
+
+  it('shows the "AI · unverified" tag, and Confirm sends unverified: false through the item update', async () => {
+    (updateSupplementItem as jest.Mock).mockResolvedValue({});
+    open(id, withItem(id, { unverified: true }));
+    expect(screen.getByText('AI · unverified')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(updateSupplementItem).toHaveBeenCalledWith(id, { unverified: false }, '2026-11-21');
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('says so, and logs, when Confirm fails', async () => {
+    (updateSupplementItem as jest.Mock).mockRejectedValue(new Error('boom'));
+    open(id, withItem(id, { unverified: true }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t confirm the item');
+    expect(logClientError).toHaveBeenCalledWith('supplements.confirmItem', expect.any(Error), { itemId: id });
+  });
+
+  it('shows neither the tag nor Confirm for a verified item', () => {
+    open(id);
+    expect(screen.queryByText('AI · unverified')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
+  });
+});

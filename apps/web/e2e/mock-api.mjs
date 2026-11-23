@@ -1332,6 +1332,16 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Tiers 2 and 3 (#1381): no label matches and the AI is off, so a name the catalog lacks offers Suggest with AI.
+  if (method === 'GET' && url.pathname === '/supplements/label-lookup') {
+    json(res, { status: 'none' });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/supplements/ai-suggestion') {
+    json(res, { status: 'off' });
+    return;
+  }
+
   // GET /supplements/catalog (#1409): one entry, enough to autofill a name typed as "creatine".
   if (method === 'GET' && url.pathname === '/supplements/catalog') {
     const q = (url.searchParams.get('q') ?? '').toLowerCase();

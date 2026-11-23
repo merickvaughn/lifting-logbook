@@ -154,3 +154,34 @@ had none. The log line for the request shows `outcome: "ready"`.
 
 If suggestions are wrong often enough to mislead lifters, turn them off and open an issue with the
 log lines' counts. Never paste a prompt or a response from a lifter's file into an issue.
+
+## Supplement suggestions (#1381)
+
+The Supplements form fills itself in three tiers, stopping at the first that matches: the shared
+catalog (tier 1), a product label from the
+[NIH Dietary Supplement Label Database](https://dsldapi.od.nih.gov/) (tier 2), and an AI suggestion
+(tier 3). Tier 3 is a button, **Suggest with AI**, shown only after tiers 1 and 2 miss, so nothing
+goes to the AI unless the lifter presses it. An AI-suggested item is saved **unverified**: it is
+listed but left out of totals, protein and advisories until the lifter presses **Confirm** on its
+detail panel.
+
+**What leaves the app.** Only the typed name, cut to 80 characters with control characters
+removed: to the label database as the search query, and to the AI as one field,
+`untrustedName`, which the prompt says is data and not instructions. No stack, notes, user ID or
+email. `supplement-suggestion-payload.spec.ts` fails if the payload has any other field.
+
+**Configuration.** Tier 3 uses the import suggestions' provider (`IMPORT_SUGGESTIONS_PROVIDER` and
+the settings above), so it is off wherever import suggestions are. Tier 2 needs no configuration.
+
+**Limits.** 20 AI requests per lifter per hour, counted in `supplement_suggestion_usage` with its
+own advisory lock (class 1381). The label lookup has a 4-second timeout and an in-process cache
+(200 names, 6 hours); an outage is logged as `tier: "label"`, `outcome: "unavailable"` and the form
+falls through to tier 3.
+
+**Logs.** `apps/api/src/supplement-suggestions/supplement-suggestions.service.ts` logs one line per
+request with counts only: `tier` (`label` or `ai`), `outcome` (`ready`, `none`, `off`, `limited`,
+`unavailable`, `timeout`, `error`), `provider`, `suggestions`, `ingredients`, `sources`, token
+counts and durations. Never the name, the prompt or the reply.
+
+**The reply is checked, not trusted.** It must match the schema, text is clipped, ingredients in
+units other than mg, g and mcg are dropped, and only https sources with a host are kept.

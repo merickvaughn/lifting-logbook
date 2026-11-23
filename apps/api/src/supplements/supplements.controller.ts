@@ -36,7 +36,9 @@ import {
 import {
   SUPPLEMENT_TEXT_MAX,
   SupplementAsOfResponse,
+  SupplementAiSuggestionResponse,
   SupplementCatalogEntry,
+  SupplementLabelLookupResponse,
   SupplementChange,
   SupplementCreatedResponse,
   SupplementDose,
@@ -56,6 +58,7 @@ import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { SupplementSheetMirrorTrigger } from '../supplement-sheet-mirror/supplement-sheet-mirror.trigger';
 import { GoogleSheetFetchError, downloadGoogleSheetXlsx } from '../adapters/google-sheets/google-sheet-export.client';
 import { MAX_TABLE_COLUMNS, WorkbookTable, XlsxReadError, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
+import { SupplementSuggestionsService } from '../supplement-suggestions/supplement-suggestions.service';
 import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
 import {
   CreateMixDto,
@@ -65,6 +68,7 @@ import {
   RemoveItemsDto,
   SetStatusDto,
   SupplementSettingsDto,
+  SupplementAiSuggestionDto,
   SupplementSheetDto,
   UpdateSupplementItemDto,
 } from './supplements.dto';
@@ -151,6 +155,7 @@ export class SupplementsController {
   constructor(
     @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
     private readonly mirror: SupplementSheetMirrorTrigger,
+    private readonly suggestions: SupplementSuggestionsService,
   ) {}
 
   /** The stack and its day types. */
@@ -200,6 +205,20 @@ export class SupplementsController {
   catalog(@Query('q') q: string | string[] | undefined): SupplementCatalogEntry[] {
     if (Array.isArray(q)) throw new BadRequestException('q must be given once');
     return searchSupplements(q ?? '').map(toCatalogEntry);
+  }
+
+  /** Tier 2 (#1381): product labels from the NIH label database, for a name the catalog doesn't have. */
+  @Get('label-lookup')
+  labelLookup(@Query('q') q: string | string[] | undefined): Promise<SupplementLabelLookupResponse> {
+    if (Array.isArray(q)) throw new BadRequestException('q must be given once');
+    return this.suggestions.labelLookup(q ?? '');
+  }
+
+  /** Tier 3 (#1381): an AI suggestion from the typed name alone. The client saves it unverified. */
+  @Post('ai-suggestion')
+  @HttpCode(HttpStatus.OK)
+  aiSuggestion(@CurrentUser() user: AuthUser, @Body() body: SupplementAiSuggestionDto): Promise<SupplementAiSuggestionResponse> {
+    return this.suggestions.aiSuggest({ userId: user.id, name: body.name });
   }
 
   /**

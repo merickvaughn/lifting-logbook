@@ -190,6 +190,51 @@ export interface SupplementCatalogEntry {
   reference: SupplementReference;
 }
 
+/** Where a suggestion for a name not in the shared catalog came from (#1381). */
+export type SupplementSuggestionTier = 'catalog' | 'label' | 'ai';
+
+/** The longest typed name tiers 2 and 3 send; longer names are cut. */
+export const SUPPLEMENT_SUGGESTION_NAME_MAX = 80;
+
+/** A source for a suggestion. `url` is always https. */
+export interface SupplementSuggestionSource {
+  label: string;
+  url: string;
+}
+
+/** A catalog-shaped suggestion from a product label (tier 2) or the AI (tier 3). Per serving. */
+export interface SupplementSuggestion {
+  name: string;
+  keyCompound: string;
+  /** Free text such as "1 scoop (5 g)". */
+  suggestedDose: string;
+  timing: string;
+  suggestedSlot: SupplementSlot;
+  typicalRange: string;
+  ingredients: Ingredient[];
+  /** The label's product type, such as "Botanical"; empty when unknown. */
+  productType: string;
+  sources: SupplementSuggestionSource[];
+}
+
+/** `GET /supplements/label-lookup`: tier 2. `unavailable` means the label database didn't answer. */
+export type SupplementLabelLookupResponse =
+  | { status: 'ready'; suggestions: SupplementSuggestion[] }
+  | { status: 'none' }
+  | { status: 'unavailable' };
+
+/**
+ * `POST /supplements/ai-suggestion`: tier 3. The suggestion is saved unverified.
+ * - `off`: no AI provider is configured.
+ * - `limited`: the lifter used this hour's allowance.
+ */
+export type SupplementAiSuggestionResponse =
+  | { status: 'ready'; provider: string; suggestion: SupplementSuggestion }
+  | { status: 'none' }
+  | { status: 'off' }
+  | { status: 'limited'; retryAfterMinutes: number }
+  | { status: 'unavailable'; reason: 'timeout' | 'error' };
+
 /** The stored stack (#1374), returned by `GET /supplements` and by every write to it. */
 export interface SupplementStackResponse {
   items: SupplementItem[];

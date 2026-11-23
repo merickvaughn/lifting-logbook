@@ -51,7 +51,7 @@ describe('SupplementsController as-of', () => {
     (await factory.forUser(user)).supplement = new AnomalousLog();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never).asOf('2026-11-02', user);
+    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never, {} as never).asOf('2026-11-02', user);
 
     expect(res.items.map((i) => i.id)).toEqual(['a']);
     expect(res.firstChangeDate).toBe('2026-11-01');
@@ -68,7 +68,7 @@ describe('SupplementsController as-of', () => {
     (await factory.forUser(user)).supplement = new AnomalousLog();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never).asOf('2026-11-01', user);
+    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never, {} as never).asOf('2026-11-01', user);
 
     expect(res.anomalies).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
