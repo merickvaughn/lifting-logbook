@@ -199,6 +199,7 @@ const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
 
 const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
   getSkipsForMacrocycle: () => Promise.resolve(new Set<number>()),
+  getSkipReasonsForMacrocycle: () => Promise.resolve(new Map<number, string | null>()),
   skipWorkout: () => Promise.resolve(),
   unskipWorkout: () => Promise.resolve(),
 };
@@ -281,6 +282,7 @@ const _focusRepo: IFocusRepository = {
   getBudget: () => Promise.resolve({ ...DEFAULT_FOCUS_BUDGET }),
   setBudget: (budget) => Promise.resolve(budget),
   getDayState: () => Promise.resolve(null),
+  getDayStatesForMacrocycle: () => Promise.resolve(new Map()),
   saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
 };
 

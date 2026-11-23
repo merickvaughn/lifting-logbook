@@ -83,7 +83,7 @@ describe('Import: continue a run as current (#1180, e2e, in-memory adapters)', (
     });
   };
 
-  const page = (method: 'POST' | 'PATCH' | 'DELETE', url: string, body?: unknown) =>
+  const page = (method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, body?: unknown) =>
     injectPage(app, {
       method,
       url,

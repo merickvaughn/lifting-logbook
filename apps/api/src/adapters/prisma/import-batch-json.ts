@@ -50,7 +50,7 @@ function scheduledWorkout(value: Prisma.JsonValue): RemovedMacrocycle['schedule'
   return isWholeNumber(workoutNum) && isWholeNumber(weekNum) && isString(scheduledDate) ? { workoutNum, weekNum, scheduledDate } : null;
 }
 
-type Removed<K extends keyof RemovedMacrocycle> = RemovedMacrocycle[K][number];
+type Removed<K extends 'dateOverrides' | 'skips' | 'liftOverrides' | 'focus'> = RemovedMacrocycle[K][number];
 
 function dateOverride(value: Prisma.JsonValue): Removed<'dateOverrides'> | null {
   if (!isObject(value)) return null;
@@ -81,7 +81,7 @@ function workoutLiftOverrides(value: Prisma.JsonValue): Removed<'liftOverrides'>
 const LIFT_OVERRIDE_ACTIONS: Record<LiftOverrideAction, true> = { add: true, remove: true, replace: true };
 
 const isLiftOverrideAction = (value: Prisma.JsonValue | undefined): value is LiftOverrideAction =>
-  isString(value) && Object.hasOwn(LIFT_OVERRIDE_ACTIONS, value);
+  isString(value) && Object.prototype.hasOwnProperty.call(LIFT_OVERRIDE_ACTIONS, value);
 
 const isStringArray = (value: Prisma.JsonValue | undefined): value is string[] => Array.isArray(value) && value.every(isString);
 
@@ -92,7 +92,7 @@ const isPlacement = (value: Prisma.JsonValue | undefined): value is FocusPlaceme
   isString(value) && (FOCUS_PLACEMENTS as readonly string[]).includes(value);
 
 /** A record of `T`s, or null when it or any of its values is unreadable. */
-function recordOf<T>(value: Prisma.JsonValue | undefined, is: (item: Prisma.JsonValue | undefined) => item is T): Record<string, T> | null {
+function recordOf<T extends Prisma.JsonValue>(value: Prisma.JsonValue | undefined, is: (item: Prisma.JsonValue | undefined) => item is T): Record<string, T> | null {
   if (!isObject(value)) return null;
   const record: Record<string, T> = {};
   for (const [key, item] of Object.entries(value)) {
