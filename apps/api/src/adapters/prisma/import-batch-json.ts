@@ -77,30 +77,43 @@ function workoutLiftOverrides(value: Prisma.JsonValue): Removed<'liftOverrides'>
   return overrides ? { workoutNum: value['workoutNum'], overrides } : null;
 }
 
+/** Every lift override action, so an action added to the type is a compile error until listed here. */
+const LIFT_OVERRIDE_ACTIONS: Record<LiftOverrideAction, true> = { add: true, remove: true, replace: true };
+
 const isLiftOverrideAction = (value: Prisma.JsonValue | undefined): value is LiftOverrideAction =>
-  value === 'add' || value === 'remove' || value === 'replace';
+  isString(value) && Object.hasOwn(LIFT_OVERRIDE_ACTIONS, value);
 
 const isStringArray = (value: Prisma.JsonValue | undefined): value is string[] => Array.isArray(value) && value.every(isString);
 
+const isSelection = (value: Prisma.JsonValue | undefined): value is FocusSelection =>
+  isString(value) && (FOCUS_SELECTIONS as readonly string[]).includes(value);
+
+const isPlacement = (value: Prisma.JsonValue | undefined): value is FocusPlacement =>
+  isString(value) && (FOCUS_PLACEMENTS as readonly string[]).includes(value);
+
 /** A record of `T`s, or null when it or any of its values is unreadable. */
-function recordOf<T extends Prisma.JsonValue>(value: Prisma.JsonValue | undefined, is: (item: Prisma.JsonValue) => item is T): Record<string, T> | null {
+function recordOf<T>(value: Prisma.JsonValue | undefined, is: (item: Prisma.JsonValue | undefined) => item is T): Record<string, T> | null {
   if (!isObject(value)) return null;
-  const entries = Object.entries(value);
-  return entries.every(([, item]) => item !== undefined && is(item)) ? (Object.fromEntries(entries) as Record<string, T>) : null;
+  const record: Record<string, T> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!is(item)) return null;
+    record[key] = item;
+  }
+  return record;
 }
 
 /** A saved focus day state, read strictly: unlike `parseFocusDayState`, an unreadable field fails it. */
 function focusState(value: Prisma.JsonValue): Removed<'focus'> | null {
   if (!isObject(value) || !isWholeNumber(value['workoutNum']) || !isObject(value['state'])) return null;
   const { modes, picks, trims, placement, order, dismissed } = value['state'];
-  const modeRecord = recordOf(modes, (item): item is FocusSelection => isString(item) && (FOCUS_SELECTIONS as readonly string[]).includes(item));
+  const modeRecord = recordOf(modes, isSelection);
   const pickRecord = recordOf(picks, isStringArray);
   const trimRecord = recordOf(trims, isStringArray);
   if (
     !modeRecord ||
     !pickRecord ||
     !trimRecord ||
-    !(isString(placement) && (FOCUS_PLACEMENTS as readonly string[]).includes(placement)) ||
+    !isPlacement(placement) ||
     !(order === null || isStringArray(order)) ||
     typeof dismissed !== 'boolean'
   ) {
@@ -108,7 +121,7 @@ function focusState(value: Prisma.JsonValue): Removed<'focus'> | null {
   }
   return {
     workoutNum: value['workoutNum'],
-    state: { modes: modeRecord, picks: pickRecord, trims: trimRecord, placement: placement as FocusPlacement, order, dismissed },
+    state: { modes: modeRecord, picks: pickRecord, trims: trimRecord, placement, order, dismissed },
   };
 }
 
