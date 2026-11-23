@@ -17,8 +17,10 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import type { LiftProgressionType } from '@lifting-logbook/types';
+import type { LiftProgressionType, WeekType } from '@lifting-logbook/types';
 import { IsLiftProgression, IsProgressionReps } from '../lifts/progression.validation';
+
+const WEEK_TYPES: readonly WeekType[] = ['training', 'test', 'deload'];
 
 // Cross-field guard: the work percentage for set i is (1 - i * wtDecrementPct), so the
 // final set is (1 - (sets-1) * wtDecrementPct). When that goes below 0 the prescribed
@@ -56,7 +58,9 @@ export class CustomProgramSpecRowDto {
   // WtDecrementWithinSetBound enforces the exact cross-field bound (≤ 1/(sets-1)).
   @IsNumber() @Min(0) @Max(1) @Validate(WtDecrementWithinSetBound) wtDecrementPct!: number;
   @IsString() activation!: string;
-  @IsOptional() @IsString() weekType?: string;
+  // A closed set (WeekType). Checked on writes only: rows stored before this check keep
+  // whatever they hold, and the GET maps them back unvalidated (#1187).
+  @IsOptional() @IsIn(WEEK_TYPES) weekType?: WeekType;
   // The row's progression override (#1210). A row with none follows the lift's own value. On
   // an update, leaving either field out keeps the stored value and null clears it, except that
   // a kept `repsLow` above the row's `reps` is cleared. `repsLow` is the bottom of the range
