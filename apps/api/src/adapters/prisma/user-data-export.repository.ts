@@ -62,6 +62,20 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
       missingMaxDismissals: withoutUserId(await this.prisma.missingMaxDismissal.findMany({ where })),
       focusBlocks: withoutUserId(await this.prisma.focusBlock.findMany({ where })),
       focusDayStates: withoutUserId(await this.prisma.focusDayState.findMany({ where })),
+      supplementDayTypes: withoutUserId(await this.prisma.supplementDayType.findMany({ where, orderBy: { position: 'asc' } })),
+      supplementItems: withoutUserId(await this.prisma.supplementItem.findMany({ where, orderBy: { position: 'asc' } })),
+      supplementDoses: withoutUserId(
+        await this.prisma.supplementDose.findMany({ where, orderBy: [{ itemId: 'asc' }, { position: 'asc' }] }),
+      ),
+      supplementMixParts: withoutUserId(
+        await this.prisma.supplementMixPart.findMany({ where, orderBy: [{ mixId: 'asc' }, { position: 'asc' }] }),
+      ),
+      supplementChanges: withoutUserId(await this.prisma.supplementChange.findMany({ where, orderBy: { seq: 'asc' } })),
+      // Never the ciphertext columns, the spreadsheet ID on its own or the OAuth request (ADR-047).
+      googleSheetLinks: await this.prisma.googleSheetLink.findMany({
+        where,
+        select: { status: true, spreadsheetUrl: true, lastMirroredAt: true, createdAt: true },
+      }),
     };
   }
 

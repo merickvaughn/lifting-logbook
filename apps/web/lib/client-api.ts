@@ -106,8 +106,35 @@ export const {
   restoreSnapshot,
   deleteSnapshot,
   fetchSnapshotLiftRecordParts,
+  // Settings > Data > Google Sheet (#1433).
+  fetchGoogleSheetLink,
+  authorizeGoogleSheet,
+  createGoogleSheetSpreadsheet,
+  unlinkGoogleSheet,
+  syncGoogleSheet,
   downloadSnapshotLiftRecords,
   createCustomLift,
+  // Keep on the Supplements detail panel saves a suggested store search as the item's link (#1376).
+  updateSupplementItem,
+  // The Add/Edit supplement form (#1409).
+  createSupplementItem,
+  removeSupplementItem,
+  fetchSupplementCatalog,
+  // Edit stack mode's bulk bar and Start (#1410).
+  moveSupplementDoses,
+  setSupplementStatus,
+  createSupplementMix,
+  // Import from Google Sheets (#1379).
+  fetchSupplementSheet,
+  importSupplements,
+  // The bulk bar's Remove, in one write (#1414).
+  removeSupplementItems,
+  // Replace with… and Edit days (#1411).
+  updateSupplementSettings,
+  // The History dialog reads the log and the stack as of a date, and restores (#1378).
+  restoreSupplementItem,
+  fetchSupplementChanges,
+  fetchSupplementsAsOf,
   // Read, not just a write — but the 409 self-heal path needs to refetch the
   // live custom-lift list client-side (a stale/absent local copy otherwise
   // dead-ends the user with no way to recover short of a page reload; #911).

@@ -5,6 +5,7 @@
 // restricted lifting_app role) and LIFTING_TC_OWNER_DATABASE_URL (the owner). Seeding, cleanup
 // and the row counts use the owner; every request runs as lifting_app.
 import 'reflect-metadata';
+import { freemem, totalmem } from 'node:os';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -57,8 +58,26 @@ const USERS = [
 ];
 // Other import routes allow 30 s (IMPORT_TX_TIMEOUT_MS); this one allows 60 s
 // (IMPORT_REPLACE_TX_TIMEOUT_MS), but an import that replaces nothing, like the row-limit commit
-// and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s.
+// and its undo, should still finish well inside 30 s. CI measured the commit at 1.7 s, so the
+// 15 s CI bound (under 10x that) still fails a real slowdown there.
 const ROW_LIMIT_BUDGET_MS = 15_000;
+// On win32 the timing is logged, not asserted (#1397). With no code change, local Windows runs took
+// 3.3-3.9 s alone, 9.8 s idle, 15.45 s under CPU load and 37.2 s with 2.7 GB of 15.3 GB memory free.
+// A bound that catches what CI's catches would sit below those, and one above them adds nothing:
+// past the route's 60 s transaction timeout the request fails, and the status check catches that.
+// Free memory is logged with the timing as data for any later memory-keyed bound.
+const ASSERT_ROW_LIMIT_BUDGET = process.platform !== 'win32';
+
+function expectWithinRowLimitBudget(what: string, ms: number): void {
+  if (ASSERT_ROW_LIMIT_BUDGET) {
+    expect(ms).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+    return;
+  }
+  const freeGb = (freemem() / 1024 ** 3).toFixed(1);
+  const totalGb = (totalmem() / 1024 ** 3).toFixed(1);
+  const verdict = ms < ROW_LIMIT_BUDGET_MS ? 'within' : 'OVER';
+  console.log(`[#1397] ${what}: ${ms} ms, ${verdict} the ${ROW_LIMIT_BUDGET_MS} ms CI budget (not asserted on win32; ${freeGb} of ${totalGb} GB free)`);
+}
 
 async function cleanup(owner: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
@@ -310,7 +329,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ created: 5_000 });
-      expect(durationMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      expectWithinRowLimitBudget('the commit', durationMs);
       // The first stored import's keys now name macrocycle 2.
       expect((await keysOf(1)).sort()).toEqual(firstKeys(2).sort());
       const macrocycles = await owner.macrocycle.findMany({
@@ -335,7 +354,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       const undoMs = Date.now() - undoStarted;
       console.log(`[#1254] undoing it took ${undoMs} ms`);
       expect(undone.statusCode).toBe(200);
-      expect(undoMs).toBeLessThan(ROW_LIMIT_BUDGET_MS);
+      expectWithinRowLimitBudget('the undo', undoMs);
       expect(await written(USER_ROW_LIMIT)).toEqual({ sets: 20_000, macrocycles: STORED_MACROCYCLES, batches: STORED_MACROCYCLES });
       expect((await keysOf(1)).sort()).toEqual(firstKeys(1).sort());
     },
@@ -484,7 +503,7 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(await owner.userSettings.findUnique({ where: { userId: USER_CONTINUE } })).toMatchObject({ activeProgram: null });
   });
 
-  it('continues a run over an empty live macrocycle, removing it, and undo recreates it with its id (#1354)', async () => {
+  it('continues a run over an empty live macrocycle, removing it, and undo recreates it with its id, overrides and focus state (#1354, #1359)', async () => {
     const server = app.getHttpAdapter().getInstance();
     const authorization = `Bearer ${USER_CONTINUE_EMPTY}`;
     const where = { userId: USER_CONTINUE_EMPTY };
@@ -505,7 +524,33 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
       payload: JSON.stringify({ macrocycleDate: ymd(new Date(Date.now() - 2 * DAY_MS)) }),
     });
     expect(initialized.statusCode).toBe(201);
+    // A rescheduled workout, a skipped one, a swapped lift and focus choices on it (#1359).
+    const write = async (method: 'PATCH' | 'POST' | 'PUT', url: string, body: unknown) =>
+      (
+        await injectPage(app, {
+          method,
+          url,
+          headers: { 'content-type': 'application/json', authorization },
+          payload: JSON.stringify(body),
+        })
+      ).statusCode;
+    const workout = (n: number) => `/programs/rpt/macrocycles/1/workouts/${n}`;
+    expect(await write('PATCH', `${workout(1)}/reschedule`, { newDate: ymd(new Date(Date.now() - DAY_MS)) })).toBe(204);
+    expect(await write('POST', `${workout(2)}/skip`, { reason: 'travelling' })).toBe(204);
+    expect(await write('POST', `${workout(3)}/lift-overrides`, { action: 'replace', lift: 'Deadlift', replacedBy: 'Trap Bar Deadlift' })).toBe(201);
+    expect(await write('POST', `${workout(3)}/lift-overrides`, { action: 'add', lift: 'Face Pull' })).toBe(201);
+    const focusState = { modes: { b1: 'pick' }, picks: { b1: ['Hammer Curl'] }, trims: {}, placement: 'after', order: null, dismissed: true };
+    expect(await write('PUT', '/programs/rpt/workouts/3/focus-state', focusState)).toBe(200);
     const stored = async () => ({
+      dateOverrides: await owner.workoutDateOverride.findMany({ where, select: { macrocycleNum: true, workoutNum: true, newDate: true } }),
+      skips: await owner.workoutSkipOverride.findMany({ where, select: { macrocycleNum: true, workoutNum: true, reason: true } }),
+      // In the order they apply, which is the order they were saved.
+      liftOverrides: await owner.workoutLiftOverride.findMany({
+        where,
+        select: { macrocycleNum: true, workoutNum: true, lift: true, action: true, replacedBy: true },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      }),
+      focus: await owner.focusDayState.findMany({ where, select: { macrocycleNum: true, workoutNum: true, state: true } }),
       macrocycles: await owner.macrocycle.findMany({
         where,
         select: { id: true, macrocycleNum: true, startDate: true, endDate: true, status: true, origin: true, importedThrough: true },
@@ -524,6 +569,10 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     const [live] = before.macrocycles;
     if (!live) throw new Error('expected the live macrocycle');
     expect(before.schedule.length).toBeGreaterThan(0);
+    expect(before.dateOverrides).toHaveLength(1);
+    expect(before.skips).toEqual([{ macrocycleNum: 1, workoutNum: 2, reason: 'travelling' }]);
+    expect(before.liftOverrides.map((o) => o.action)).toEqual(['replace', 'add']);
+    expect(before.focus).toEqual([{ macrocycleNum: 1, workoutNum: 3, state: focusState }]);
 
     const post = (query: string, csv: string, fields: Record<string, string>) => {
       const boundary = '----ContinueEmptyDbBoundary';
@@ -562,8 +611,11 @@ describeOrSkip('import breakdown (#1254, e2e, lifting_app role)', () => {
     expect(committed.statusCode).toBe(200);
     const batchId = committed.json<{ batchId: string }>().batchId;
 
-    const [run, ...others] = (await stored()).macrocycles;
+    const continued = await stored();
+    const [run, ...others] = continued.macrocycles;
     expect(others).toEqual([]);
+    // Removing it removed its overrides and focus state, so undo is what brings them back.
+    expect([continued.dateOverrides, continued.skips, continued.liftOverrides, continued.focus]).toEqual([[], [], [], []]);
     expect(run).toMatchObject({ macrocycleNum: 1, origin: 'live', startDate: new Date(`${start}T00:00:00Z`) });
     expect(run?.id).not.toBe(live.id);
     expect((await owner.importBatch.findUnique({ where: { id: batchId } }))?.macrocycles).toMatchObject({

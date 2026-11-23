@@ -67,6 +67,8 @@ resource "google_project_service" "required_apis" {
     "run.googleapis.com",               # Cloud Run
     "sqladmin.googleapis.com",          # Cloud SQL
     "cloudkms.googleapis.com",          # Cloud KMS (ADR-014)
+    "cloudtasks.googleapis.com",        # Supplement sheet mirror queue (ADR-047)
+    "sheets.googleapis.com",            # Supplement sheet mirror (ADR-047)
     "artifactregistry.googleapis.com",  # Artifact Registry
     "compute.googleapis.com",           # VPC, Load Balancer
     "servicenetworking.googleapis.com", # Private service networking (Cloud SQL)
@@ -330,6 +332,25 @@ resource "google_secret_manager_secret_version" "clerk_publishable_key" {
   }
 }
 
+# The Google OAuth client secret for linking a sheet (#1432, ADR-047 decision 9).
+resource "google_secret_manager_secret" "google_oauth_client_secret" {
+  secret_id = "${local.name_prefix}-google-oauth-client-secret"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required_apis]
+}
+
+# Placeholder — value populated manually after the Google OAuth client is created (see docs/deploy.md)
+resource "google_secret_manager_secret_version" "google_oauth_client_secret" {
+  secret      = google_secret_manager_secret.google_oauth_client_secret.id
+  secret_data = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
+}
+
 # ── OTel Collector → Grafana Cloud auth headers (#474) ───────────────────────
 # These are intentionally NOT Terraform-managed. Unlike the Clerk/DB secrets
 # (created once at initial bootstrap), the OTel auth headers are created and
@@ -352,6 +373,18 @@ resource "google_kms_key_ring" "main" {
 
 resource "google_kms_crypto_key" "user_data_source" {
   name            = "user-data-source-kek"
+  key_ring        = google_kms_key_ring.main.id
+  rotation_period = "7776000s" # 90 days
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# The supplement sheet mirror's Google refresh tokens (#1432, ADR-047 decision 8). Its own key, so
+# disabling or rotating it touches only google_sheet_link.
+resource "google_kms_crypto_key" "google_oauth_token" {
+  name            = "google-oauth-token-kek"
   key_ring        = google_kms_key_ring.main.id
   rotation_period = "7776000s" # 90 days
 

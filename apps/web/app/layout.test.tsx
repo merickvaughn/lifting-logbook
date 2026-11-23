@@ -28,9 +28,16 @@ jest.mock('@/components/ClerkApiInitializer', () => ({
   },
 }));
 
+jest.mock('@/components/SignedInUserButton', () => ({
+  SignedInUserButton: function SignedInUserButton() {
+    return null;
+  },
+}));
+
 import RootLayout from './layout';
 import { ClerkProvider, SignedIn } from '@clerk/nextjs';
 import { ClerkApiInitializer } from '@/components/ClerkApiInitializer';
+import { SignedInUserButton } from '@/components/SignedInUserButton';
 
 /** Recursively true if any element in the tree has `.type === type`. */
 function containsType(node: React.ReactNode, type: React.ElementType): boolean {
@@ -88,7 +95,7 @@ describe('root layout — Clerk client tree gated on dev-auth mode (#834)', () =
     expect(element.type).toBe('html');
     expect(containsType(element, ClerkProvider)).toBe(false);
     expect(containsType(element, ClerkApiInitializer)).toBe(false);
-    expect(containsType(element, SignedIn)).toBe(false);
+    expect(containsType(element, SignedInUserButton)).toBe(false);
     // Page content still passes through verbatim.
     expect(containsNode(element, CHILDREN)).toBe(true);
   });
@@ -108,7 +115,10 @@ describe('root layout — Clerk client tree gated on dev-auth mode (#834)', () =
     expect(shell.type).toBe('html');
     // The Clerk client tree is mounted in this mode.
     expect(containsType(element, ClerkApiInitializer)).toBe(true);
-    expect(containsType(element, SignedIn)).toBe(true);
+    expect(containsType(element, SignedInUserButton)).toBe(true);
+    // The server-side <SignedIn> is never rendered here: it calls auth(), which throws
+    // when middleware hasn't run (#1388).
+    expect(containsType(element, SignedIn)).toBe(false);
     expect(containsNode(element, CHILDREN)).toBe(true);
   });
 });

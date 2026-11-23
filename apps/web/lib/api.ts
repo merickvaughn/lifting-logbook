@@ -90,6 +90,7 @@ export const {
   fetchTrainingMaxHistory,
   fetchMacrocycles,
   fetchImportBatches,
+  fetchTrainingMaxImportBatches,
   updateTrainingMaxHistoryEntry,
   updateTrainingMaxes,
   fetchWorkout,
@@ -116,4 +117,6 @@ export const {
   fetchFocusPlan,
   fetchNonCycleRecords,
   fetchNonCycleWorkout,
+  fetchSupplements,
+  completeGoogleSheetLink,
 } = createApiClient({ baseUrl: API_URL, getAuthHeaders });

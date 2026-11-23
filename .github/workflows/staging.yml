@@ -628,7 +628,17 @@ jobs:
           otel_mirror_repo: ${{ needs.terraform-staging.outputs.otel_mirror_repo }}
           # The importer's Assign step (#1173), on in staging first (#1295). Matches deploy.yml.
           # To turn it off, set it to "false" here and there: removing the line keeps the live value.
-          ingress_env: IMPORT_ASSIGN_ENABLED=true
+          # Linking a Google Sheet (#1432, ADR-047 decisions 5, 8-9). Matches deploy.yml.
+          ingress_env: |
+            IMPORT_ASSIGN_ENABLED=true
+            GOOGLE_OAUTH_CLIENT_ID=${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+            GOOGLE_OAUTH_REDIRECT_URI=${{ needs.terraform-staging.outputs.cloud_run_web_url }}/settings/data/google-sheet/callback
+            GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME=projects/${{ vars.GCP_STAGING_PROJECT_ID }}/locations/${{ env.REGION }}/keyRings/lifting-logbook-stg-keyring/cryptoKeys/google-oauth-token-kek
+            SHEET_MIRROR_QUEUE=supplement-sheet-mirror
+            SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
+            SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_STAGING_PROJECT_ID }}.iam.gserviceaccount.com
+            SHEET_MIRROR_API_URL=${{ needs.terraform-staging.outputs.cloud_run_api_url }}
+          ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-stg-google-oauth-client-secret
 
       # Guard against a HOLLOW GREEN (#823). The deploy step above intentionally
       # carries continue-on-error: true (#498 — a failed *revision* must still let

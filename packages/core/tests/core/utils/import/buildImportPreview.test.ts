@@ -116,6 +116,50 @@ describe("buildLiftRecordsPreviewSoft", () => {
     expect(preview.deltas).toHaveLength(4);
   });
 
+  // #1402: an incomplete row carries no `after`, so without its first error's message the Review
+  // table can only say "incomplete" and the lifter can't tell a bad date from a missing weight.
+  it("carries an incomplete row's first error message onto its delta (#1402)", () => {
+    const preview = buildLiftRecordsPreviewSoft(
+      {
+        validRows: [],
+        incomplete: [
+          {
+            record: liftRecord({ setNum: 1 }),
+            rowIndex: 7,
+            errors: [
+              {
+                row: 7,
+                field: "date",
+                code: "DATE_INVALID",
+                message: "Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22",
+              },
+              { row: 7, field: "weight", code: "WEIGHT_INVALID", message: "Weight is not a number" },
+            ],
+          },
+          { record: liftRecord({ setNum: 2 }), rowIndex: 8, errors: [] },
+        ],
+        ambiguous: [],
+        hardErrors: [],
+        undated: [],
+      },
+      [],
+      NO_CUSTOM_LIFTS,
+    );
+
+    expect(preview.deltas).toMatchObject([
+      {
+        key: "__incomplete_7",
+        status: "incomplete",
+        rowIndex: 7,
+        message: "Date 1969-12-31 must be after 1970-01-01 and no later than 2026-11-22",
+      },
+      { key: "__incomplete_8", status: "incomplete", rowIndex: 8 },
+    ]);
+    // A row with no errors to report carries no message, rather than an undefined one:
+    // `exactOptionalPropertyTypes` is on, so the property is omitted.
+    expect(preview.deltas[1]).not.toHaveProperty("message");
+  });
+
   it("labels a custom lift's create and skip rows by name, keeps the id in the key, and leaves other lifts alone (#1125)", () => {
     const preview = buildLiftRecordsPreviewSoft(
       {

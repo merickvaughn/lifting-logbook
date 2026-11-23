@@ -10,6 +10,7 @@ import { ClsService } from 'nestjs-cls';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { Observable, defaultIfEmpty, from, lastValueFrom } from 'rxjs';
 import { PrismaService } from './prisma.service';
+import { AfterCommitCallback, RLS_AFTER_COMMIT, settleAfterCommit } from './after-commit';
 import {
   DEFAULT_RLS_TX_TIMEOUT_MS,
   RLS_SKIP_TX,
@@ -54,6 +55,11 @@ import {
  * singleton that cannot become unavailable again for the process's lifetime, so paying for a
  * `strict: false` module-graph search on every request — including unauthenticated /health and
  * /readyz probe traffic — would be pure repeated overhead.
+ *
+ * It also runs the request's after-commit work (`runAfterCommit`, #1444): once the transaction
+ * has committed and before the response is sent, waiting at most 2 s, and only when the handler
+ * and the commit both succeeded. On the in-memory path, which has no transaction, that's once the
+ * handler has succeeded.
  */
 @Injectable()
 export class RlsInterceptor implements NestInterceptor {
@@ -94,7 +100,7 @@ export class RlsInterceptor implements NestInterceptor {
           ),
         });
       }
-      return next.handle();
+      return from(this.cls.run(() => this.withAfterCommit(() => this.handled(next))));
     }
     // routerPath is the Fastify property for the matched route pattern (e.g. /programs/:id).
     // request.url is the full URL with query params — used as fallback only.
@@ -119,7 +125,7 @@ export class RlsInterceptor implements NestInterceptor {
       return from(
         this.cls.run(() => {
           this.cls.set(RLS_USER_ID_KEY, userId);
-          return lastValueFrom(next.handle().pipe(defaultIfEmpty(undefined)));
+          return this.withAfterCommit(() => this.handled(next));
         }),
       );
     }
@@ -131,7 +137,28 @@ export class RlsInterceptor implements NestInterceptor {
       ]) ?? DEFAULT_RLS_TX_TIMEOUT_MS;
 
     const route = request?.routerPath ?? request?.url ?? 'unknown';
-    return from(this.cls.run(() => this.runWithRlsContext(prisma, userId, timeoutMs, route, next)));
+    return from(
+      this.cls.run(() => this.withAfterCommit(() => this.runWithRlsContext(prisma, userId, timeoutMs, route, next))),
+    );
+  }
+
+  private handled(next: CallHandler): Promise<unknown> {
+    return lastValueFrom(next.handle().pipe(defaultIfEmpty(undefined)));
+  }
+
+  /**
+   * Runs `work` with an empty after-commit list in CLS, then, only if `work` resolved (the handler
+   * succeeded and its transaction committed), the callbacks it registered. A rejection skips them
+   * and propagates unchanged. The settle never throws and waits at most 2 s.
+   */
+  private async withAfterCommit(work: () => Promise<unknown>): Promise<unknown> {
+    const callbacks: AfterCommitCallback[] = [];
+    this.cls.set(RLS_AFTER_COMMIT, callbacks);
+    const result = await work();
+    // The transaction has closed: nothing after it may route a query through its client.
+    this.cls.set(RLS_TX_CLIENT, undefined);
+    await settleAfterCommit(callbacks);
+    return result;
   }
 
   // Split out so unit tests can stub the "DB expected" signal without needing a real DATABASE_URL —
@@ -155,7 +182,7 @@ export class RlsInterceptor implements NestInterceptor {
           async (tx) => {
             await setRlsUserContext(this.tracer, tx, userId);
             this.cls.set(RLS_TX_CLIENT, tx);
-            return lastValueFrom(next.handle().pipe(defaultIfEmpty(undefined)));
+            return this.handled(next);
           },
           { timeout: timeoutMs },
         );

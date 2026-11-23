@@ -1,4 +1,5 @@
 import { StrengthGoalEntry, SpreadsheetCell } from '../../models';
+import { unescapeCsvFormula } from '../export/serializeExportCsv';
 import { parseDateStringUTC, toUTCMidnight } from '../jsUtil';
 
 /**
@@ -26,6 +27,8 @@ import { parseDateStringUTC, toUTCMidnight } from '../jsUtil';
  * NOTE (#477): full multi-tier goals + per-tier goal dates need a model change and
  * are tracked as a follow-up; the header/tier matching here is name-based and
  * tolerant so minor export variations still parse.
+ *
+ * A lift name loses the apostrophe the export put in front of a formula character (#1342).
  *
  * Optional `Ratio` and `Unit` columns, which Download My Data writes (#947), carry what the
  * ladder can't: a `Ratio` value makes the goal relative, and `Unit` of `kg` overrides lbs.
@@ -81,7 +84,7 @@ export function parseStrengthGoals(data: SpreadsheetCell[][]): StrengthGoalEntry
   const entries: StrengthGoalEntry[] = [];
   for (let i = headerIdx + 1; i < data.length; i++) {
     const row = data[i] ?? [];
-    const lift = String(row[0] ?? '').trim();
+    const lift = unescapeCsvFormula(String(row[0] ?? '').trim());
     const lc = lift.toLowerCase();
     if (!lift || (!isExport && (lc === 'weight' || STOP.some((s) => lc.startsWith(s))))) continue;
 

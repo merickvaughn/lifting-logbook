@@ -38,6 +38,7 @@ import {
   ImportUndoResponse,
   ImportWriteResult,
   NON_CYCLE_PROGRAM,
+  TrainingMaxImportBatchSummary,
 } from '@lifting-logbook/types';
 import {
   BUILT_IN_KNOWN_PROGRAMS,
@@ -472,13 +473,24 @@ export class ImportController {
    * so an import can be undone from the past-macrocycles list once the wizard is gone (#1257). One
    * through the Assign step that wrote to several programs is named by its Source program's batch,
    * which undoes it as a whole.
+   *
+   * With `destination=training-maxes`, the program's training-maxes imports instead, newest first,
+   * so one can be undone once the wizard is gone (#1405).
    */
   @Get('import/batches')
   async listImportBatches(
     @Param('program') program: string,
     @CurrentUser() user: AuthUser,
-  ): Promise<ImportBatchSummary[]> {
+    @Query('destination') destination = 'lift-records',
+  ): Promise<ImportBatchSummary[] | TrainingMaxImportBatchSummary[]> {
+    if (destination !== 'lift-records' && destination !== 'training-maxes') {
+      throw new BadRequestException('destination must be lift-records or training-maxes');
+    }
     const repos = await this.factory.forUser(user);
+    if (destination === 'training-maxes') {
+      const batches = await repos.importBatch.listSummaries(program, 'training-maxes');
+      return batches.map((b) => ({ id: b.id, program: b.program, createdAt: b.createdAt.toISOString() }));
+    }
     const [batches, rows] = await Promise.all([
       repos.importBatch.listSummaries(program, 'lift-records'),
       repos.macrocycle.list(program),

@@ -131,6 +131,15 @@ export class InMemoryFocusRepository implements IFocusRepository, NumberedStore,
     return state ? structuredClone(state) : null;
   }
 
+  async getDayStatesForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, FocusDayState>> {
+    const states = new Map<number, FocusDayState>();
+    for (const [key, state] of this.dayStates) {
+      const [p, m, workoutNum] = JSON.parse(key) as [string, number, number];
+      if (p === program && m === macrocycleNum) states.set(workoutNum, structuredClone(state));
+    }
+    return states;
+  }
+
   async saveDayState(
     program: string,
     macrocycleNum: number,

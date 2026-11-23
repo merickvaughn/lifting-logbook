@@ -5,6 +5,8 @@ import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
+import { InMemorySupplementRepository } from '../in-memory/supplement.adapter';
+import { InMemoryGoogleSheetLinkRepository } from '../in-memory/google-sheet-link.adapter';
 import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
 import { InMemoryMacrocycleRepository } from '../in-memory/macrocycle.adapter';
 import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macrocycle-scheduled-workout.adapter';
@@ -50,12 +52,15 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const userSettings = new InMemoryUserSettingsRepository();
       const macrocycle = new InMemoryMacrocycleRepository(preSeed ? [seedMacrocycleRow()] : []);
       const trainingData = new InMemoryTrainingDataRepository();
+      const supplement = new InMemorySupplementRepository();
+      const googleSheetLink = new InMemoryGoogleSheetLinkRepository();
       const bundle: RepositoryBundle = {
         dataSnapshot: new InMemoryDataSnapshotRepository(),
         trainingData,
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
+        googleSheetLink,
         macrocycle,
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),
@@ -66,6 +71,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         liftRecord: new InMemoryLiftRecordRepository(sharedRecords),
         programPhilosophy: new InMemoryProgramPhilosophyRepository(),
         strengthGoal,
+        supplement,
         trainingMax,
         trainingMaxHistory: new InMemoryTrainingMaxHistoryRepository(),
         userDataExport: new InMemoryUserDataExportRepository(
@@ -74,6 +80,8 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
           strengthGoal,
           customLift,
           userSettings,
+          supplement,
+          googleSheetLink,
         ),
         userSettings,
         workout: new InMemoryWorkoutRepository(sharedRecords),

@@ -10,6 +10,7 @@ import { PrismaCustomLiftRepository } from './custom-lift.repository';
 import { PrismaDataSnapshotRepository } from './data-snapshot.repository';
 import { PrismaTrainingDataRepository } from './training-data.repository';
 import { PrismaFocusRepository } from './focus.repository';
+import { PrismaGoogleSheetLinkRepository } from './google-sheet-link.repository';
 import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repository';
 import { PrismaMacrocycleRepository } from './macrocycle.repository';
 import { PrismaMacrocycleScheduledWorkoutRepository } from './macrocycle-scheduled-workout.repository';
@@ -18,6 +19,7 @@ import { PrismaLiftMetadataRepository } from './lift-metadata.repository';
 import { PrismaLiftModificationRepository } from './lift-modification.repository';
 import { PrismaLiftRecordRepository } from './lift-record.repository';
 import { PrismaStrengthGoalRepository } from './strength-goal.repository';
+import { PrismaSupplementRepository } from './supplement.repository';
 import { PrismaTrainingMaxRepository } from './training-max.repository';
 import { PrismaTrainingMaxHistoryRepository } from './training-max-history.repository';
 import { PrismaWorkoutDateOverrideRepository } from './workout-date-override.repository';
@@ -63,6 +65,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       customLift: new PrismaCustomLiftRepository(db, user.id),
       dataSnapshot: new PrismaDataSnapshotRepository(db, user.id),
       focus: new PrismaFocusRepository(db, user.id),
+      googleSheetLink: new PrismaGoogleSheetLinkRepository(db, user.id),
       macrocycle: new PrismaMacrocycleRepository(db, user.id),
       macrocycleDashboard: new PrismaMacrocycleDashboardRepository(db, user.id),
       macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(db, user.id),
@@ -72,6 +75,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       liftRecord: new PrismaLiftRecordRepository(db, user.id),
       programPhilosophy: this.philosophyRepo,
       strengthGoal: new PrismaStrengthGoalRepository(db, user.id),
+      supplement: new PrismaSupplementRepository(db, user.id),
       trainingMax: new PrismaTrainingMaxRepository(db, user.id),
       trainingMaxHistory: new PrismaTrainingMaxHistoryRepository(db, user.id),
       trainingData: new PrismaTrainingDataRepository(db, user.id),

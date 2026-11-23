@@ -152,10 +152,20 @@ export function buildLiftRecordsPreviewSoft(
   }
 
   // Incomplete rows — tag with status so REVIEW can filter/highlight them
-  for (const { rowIndex } of softResult.incomplete) {
+  for (const { rowIndex, errors } of softResult.incomplete) {
     const key = `__incomplete_${rowIndex}`;
     const label = `Row ${rowIndex} (incomplete)`;
-    deltas.push({ key, label, kind: 'create', status: 'incomplete', rowIndex });
+    // The row has no `after`, so its first error's message is the only thing Review can show to
+    // say what is wrong with it (#1402).
+    const message = errors[0]?.message;
+    deltas.push({
+      key,
+      label,
+      kind: 'create',
+      status: 'incomplete',
+      rowIndex,
+      ...(message !== undefined ? { message } : {}),
+    });
   }
 
   // Rows with no date, under the Assign step (#1253): left out of the import, so they write

@@ -22,6 +22,13 @@ export interface ColumnMapping {
   required: boolean;
   /** Transformation description (e.g., "Split 'Weight x Reps' into fields"). */
   transformationNote?: string;
+  /**
+   * The other destination fields that satisfy this requirement in place of
+   * `destinationField` — its one-of group (`EITHER_FIELDS`) less itself. Set only on a
+   * required field the file has no column for, so the Map columns gate accepts a column
+   * pointed at any one of them (#1442).
+   */
+  satisfiedBy?: string[];
   /** Up to 2 alternative field matches with lower confidence. */
   alternatives?: Array<{
     field: string;
@@ -100,6 +107,27 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
 }
 
 /**
+ * Required fields that are satisfied as a group: one mapped member covers the rest, so the
+ * others are not reported missing. A program spec states its per-set drop as either a single
+ * `WT Decrement %` or a `Weight %` list, and the parser reads a decrement from either (#1401).
+ * A file with neither still blocks, because no decrement can be derived from it at all.
+ */
+const EITHER_FIELDS: Partial<Record<ImportKind, readonly (readonly string[])[]>> = {
+  'program-spec': [['wtDecrementPct', 'weightPct']],
+};
+
+/**
+ * The members of `fieldKey`'s one-of group other than itself: the fields a column may feed
+ * instead to meet the same requirement. `undefined` when the field is in no group.
+ */
+function satisfiedByFor(kind: ImportKind, fieldKey: string): string[] | undefined {
+  const siblings = (EITHER_FIELDS[kind] ?? [])
+    .filter((group) => group.includes(fieldKey))
+    .flatMap((group) => group.filter((member) => member !== fieldKey));
+  return siblings.length > 0 ? siblings : undefined;
+}
+
+/**
  * Get the list of required fields for a given import kind. With `assign`, the Assign step
  * groups lift records into macrocycles, so the file needn't say program, macrocycle or
  * workout (proposal decision 9, #1253).
@@ -114,7 +142,10 @@ function getRequiredFields(kind: ImportKind, assign: boolean): Set<string> {
       ]),
     ],
     ['training-maxes', new Set(['lift', 'weight', 'dateUpdated'])],
-    ['program-spec', new Set(['week', 'offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct'])],
+    // No `week`: #1364 made the parser default a missing Week column to 1. Both percent
+    // columns are listed so the UI stars whichever the file has; EITHER_FIELDS below makes
+    // them one-of, since the parser reads a decrement from either (#1401).
+    ['program-spec', new Set(['offset', 'lift', 'increment', 'order', 'sets', 'reps', 'wtDecrementPct', 'weightPct'])],
     // Strength goals requires lift, goalType, unit, and either target or ratio
     // For now, mark lift, goalType, unit as required (target/ratio checked per-row)
     ['strength-goals', new Set<string>()],
@@ -227,14 +258,27 @@ export function fuzzyColumnMapper(
     }
   });
 
-  // Add unmapped required destination fields
+  // Add unmapped required destination fields. A one-of group reports at most one row: none when
+  // a member is mapped, since the requirement is met; otherwise the group's first member alone.
+  // One requirement, one row — a row per member would tell the lifter two columns are missing
+  // when the file needs either one.
+  const eitherGroups = EITHER_FIELDS[kind] ?? [];
+  const coveredByGroup = (fieldKey: string): boolean =>
+    eitherGroups.some(
+      (group) =>
+        group.includes(fieldKey) &&
+        (group.some((member) => mappedDestinationFields.has(member)) || group[0] !== fieldKey),
+    );
+
   requiredFields.forEach((fieldKey) => {
-    if (!mappedDestinationFields.has(fieldKey)) {
+    if (!mappedDestinationFields.has(fieldKey) && !coveredByGroup(fieldKey)) {
+      const satisfiedBy = satisfiedByFor(kind, fieldKey);
       mappings.push({
         sourceHeader: '',
         destinationField: fieldKey,
         confidence: 0,
         required: true,
+        ...(satisfiedBy ? { satisfiedBy } : {}),
         transformationNote: `Required field not found in CSV`,
       });
     }

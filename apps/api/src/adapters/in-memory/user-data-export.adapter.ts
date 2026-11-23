@@ -1,5 +1,6 @@
 import { LiftRecord, LiftRecordExportRow } from '@lifting-logbook/core';
 import { ICustomLiftRepository } from '../../ports/ICustomLiftRepository';
+import { InMemoryGoogleSheetLinkRepository } from './google-sheet-link.adapter';
 import {
   IUserDataExportRepository,
   LiftRecordExportFilter,
@@ -7,11 +8,13 @@ import {
 } from '../../ports/IUserDataExportRepository';
 import { IUserSettingsRepository } from '../../ports/IUserSettingsRepository';
 import { InMemoryStrengthGoalRepository } from './strength-goal.adapter';
+import { InMemorySupplementRepository } from './supplement.adapter';
 import { InMemoryTrainingMaxRepository } from './training-max.adapter';
 
 /**
- * Lift records, training maxes, strength goals, custom lifts and settings, which is what the
- * endpoint's in-memory tests read. Every other table is empty here, and row shapes and order
+ * Lift records, training maxes, strength goals, custom lifts, settings, supplements and the Google
+ * Sheet link, which is
+ * what the endpoint's in-memory tests read. Every other table is empty here, and row shapes and order
  * follow the in-memory stores. Only Postgres is authoritative for `logbook.json`, which is proven
  * in data-export.db.e2e.spec.ts.
  */
@@ -22,6 +25,8 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
     private readonly strengthGoal: InMemoryStrengthGoalRepository,
     private readonly customLift: ICustomLiftRepository,
     private readonly userSettings: IUserSettingsRepository,
+    private readonly supplement: InMemorySupplementRepository,
+    private readonly googleSheetLink: InMemoryGoogleSheetLinkRepository,
   ) {}
 
   private allLiftRecords(): LiftRecordExportRow[] {
@@ -71,6 +76,8 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       missingMaxDismissals: [],
       focusBlocks: [],
       focusDayStates: [],
+      googleSheetLinks: this.googleSheetLink.exportRows(),
+      ...this.supplement.exportRows(),
     };
   }
 }

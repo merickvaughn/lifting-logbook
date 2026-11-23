@@ -38,6 +38,14 @@ export interface UserDataRows {
   missingMaxDismissals: StoredRow[];
   focusBlocks: StoredRow[];
   focusDayStates: StoredRow[];
+  /** The supplement stack and its change log (#1374). */
+  supplementDayTypes: StoredRow[];
+  supplementItems: StoredRow[];
+  supplementDoses: StoredRow[];
+  supplementMixParts: StoredRow[];
+  supplementChanges: StoredRow[];
+  /** The Google Sheet link (#1432): status, spreadsheetUrl, lastMirroredAt and createdAt, never a token. */
+  googleSheetLinks: StoredRow[];
 }
 
 /**

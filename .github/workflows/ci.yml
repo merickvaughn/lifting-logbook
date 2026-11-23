@@ -71,7 +71,12 @@ jobs:
         run: npm ci
 
       - name: Lint, Typecheck & Test
-        run: npx turbo run lint typecheck test
+        run: npx turbo run lint typecheck test --summarize
+
+      # The cache is restored by prefix and saved whole, so without this every old task hash
+      # stays in the archive forever. Keeps only the entries the run above used (#1095).
+      - name: Prune turbo cache
+        run: node scripts/prune-turbo-cache.mjs
 
       - name: Validate analytics taxonomy
         run: node scripts/validate-analytics-taxonomy.mjs
@@ -99,6 +104,9 @@ jobs:
 
       - name: Unit test board-ID sync parsing
         run: node --test scripts/check-board-id-sync.test.mjs
+
+      - name: Unit test the project-board Epic label mapping
+        run: node --test scripts/project-board-epic.test.mjs
 
       - name: Verify turbo dev task builds workspace libraries
         run: node scripts/check-turbo-dev-build-dep.mjs
@@ -129,6 +137,9 @@ jobs:
 
       - name: Unit test CSS custom-property check parsing
         run: node --test scripts/check-css-custom-properties.test.mjs
+
+      - name: Unit test turbo cache pruning
+        run: node --test scripts/prune-turbo-cache.test.mjs
 
       # tempo-query-env.sh is sourced bash, so its test sources it for real against
       # fixture credentials in a throwaway directory (see #949) rather than importing it.
@@ -278,7 +289,7 @@ jobs:
         run: npm ci
 
       - name: Build workspace packages
-        run: npx turbo run build --filter=@lifting-logbook/web
+        run: npx turbo run build --filter=@lifting-logbook/web --summarize
         env:
           # Belt-and-suspenders for any residual build-time @clerk/clerk-react publishable-
           # key validation. The root layout now renders dynamically (force-dynamic) and
@@ -288,6 +299,11 @@ jobs:
           # non-functional test key (pk_test_ + base64("example.clerk.accounts.dev$")) is
           # kept so any build-time Clerk import that still reads the key sees a valid format.
           CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+
+      # Without this, every web build since the prefix chain began stays in the archive: it
+      # reached 459 MB on main, about 23 MB per web build. Keeps only this run's entries (#1095).
+      - name: Prune turbo cache
+        run: node scripts/prune-turbo-cache.mjs
 
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium

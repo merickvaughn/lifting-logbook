@@ -15,6 +15,14 @@ export class PrismaWorkoutSkipOverrideRepository implements IWorkoutSkipOverride
     return new Set(rows.map((r) => r.workoutNum));
   }
 
+  async getSkipReasonsForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, string | null>> {
+    const rows = await this.prisma.workoutSkipOverride.findMany({
+      where: { userId: this.userId, program, macrocycleNum },
+      select: { workoutNum: true, reason: true },
+    });
+    return new Map(rows.map((r) => [r.workoutNum, r.reason]));
+  }
+
   async skipWorkout(program: string, macrocycleNum: number, workoutNum: number, reason?: string): Promise<void> {
     await this.prisma.workoutSkipOverride.upsert({
       where: { userId_program_macrocycleNum_workoutNum: { userId: this.userId, program, macrocycleNum, workoutNum } },

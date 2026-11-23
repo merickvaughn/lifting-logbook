@@ -1,7 +1,8 @@
 /**
  * Caps every rendered list of import-time errors — ImportWizard.tsx's
- * REVIEW-step `preview.errors` list and its PREVIEW-step `commitErrors`
- * list, and LiftRecordsImportForm.tsx's error list — to the same size, so
+ * REVIEW-step `preview.errors` and `assignErrors` lists and its
+ * PREVIEW-step `commitErrors` list, and LiftRecordsImportForm.tsx's error
+ * list — to the same size, so
  * a bare `20` literal can't diverge across sites (#911 review, eighth
  * pass). Bounds the *render* only; the underlying response payload
  * (`errors`) is not capped server-side, so state/parse/transfer cost for a

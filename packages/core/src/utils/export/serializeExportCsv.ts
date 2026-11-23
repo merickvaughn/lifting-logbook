@@ -1,7 +1,6 @@
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import {
   LIFT_RECORD_HEADER_MAP,
-  LIFTING_PROGRAM_SPEC_HEADER_MAP,
   TRAINING_MAX_HEADER_MAP,
 } from '../../constants';
 import { SpreadsheetCell } from '../../models';
@@ -221,22 +220,38 @@ export function serializeStrengthGoals(goals: readonly StrengthGoalExportRow[], 
   ]);
 }
 
+/**
+ * The export's columns: each header paired with the value it carries, so the two cannot drift
+ * apart. They were a derived header list over a hand-written positional value row, and adding
+ * `Weight %` to `LIFTING_PROGRAM_SPEC_HEADER_MAP` for the column mapper (#1401) promptly gave
+ * every export a 13th header with 12 values — `Invalid Record Length` on re-import.
+ *
+ * These are the parser's header names, but deliberately not derived from its map: the map says
+ * what a *sheet may contain*, which is a wider set than what this export writes. `Weight %` is
+ * the case in point — a sheet may state its drop as a per-set list, while the export always
+ * writes a single `WT Decrement %`.
+ */
+const PROGRAM_SPEC_COLUMNS: readonly (readonly [
+  string,
+  (r: ProgramSpecExportRow) => SpreadsheetCell,
+])[] = [
+  ['Week', (r) => r.week],
+  ['Offset', (r) => r.offset],
+  ['Lift', (r) => escapeCsvFormula(r.lift)],
+  ['Increment', (r) => r.increment],
+  ['Order', (r) => r.order],
+  ['Sets', (r) => r.sets],
+  ['Reps', (r) => r.reps],
+  ['AMRAP?', (r) => r.amrap === true || r.amrap === 'TRUE'],
+  ['Warm-Up %', (r) => escapeCsvFormula(r.warmUpPct)],
+  ['WT Decrement %', (r) => r.wtDecrementPct],
+  ['Activation', (r) => escapeCsvFormula(r.activation)],
+  ['Week Type', (r) => escapeCsvFormula(r.weekType ?? '')],
+];
+
 export function serializeProgramSpec(rows: readonly ProgramSpecExportRow[]): string {
   return serializeCsvText([
-    Object.keys(LIFTING_PROGRAM_SPEC_HEADER_MAP),
-    ...rows.map((r) => [
-      r.week,
-      r.offset,
-      escapeCsvFormula(r.lift),
-      r.increment,
-      r.order,
-      r.sets,
-      r.reps,
-      r.amrap === true || r.amrap === 'TRUE',
-      escapeCsvFormula(r.warmUpPct),
-      r.wtDecrementPct,
-      escapeCsvFormula(r.activation),
-      escapeCsvFormula(r.weekType ?? ''),
-    ]),
+    PROGRAM_SPEC_COLUMNS.map(([header]) => header),
+    ...rows.map((r) => PROGRAM_SPEC_COLUMNS.map(([, value]) => value(r))),
   ]);
 }

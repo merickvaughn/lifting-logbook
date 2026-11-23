@@ -34,7 +34,7 @@ INJECTOR_VARS = (
     "OTEL_CONFIG_SECRET", "OTEL_OTLP_ENDPOINT", "OTEL_LOKI_ENDPOINT",
     "OTEL_OTLP_SECRET", "OTEL_LOKI_SECRET", "COLLECTOR_IMAGE", "COLLECTOR_CPU",
     "COLLECTOR_MEMORY", "OTEL_TAIL_SAMPLE_RATE", "OTEL_DECISION_WAIT",
-    "INGRESS_IMAGE", "INGRESS_CONTAINER_NAME", "INGRESS_EXTRA_ENV",
+    "INGRESS_IMAGE", "INGRESS_CONTAINER_NAME", "INGRESS_EXTRA_ENV", "INGRESS_SECRET_ENV",
 )
 
 API_IMAGE = "us-central1-docker.pkg.dev/example-project/lifting-logbook/api:newsha1234567"
@@ -399,6 +399,60 @@ class IngressExtraEnvTest(unittest.TestCase):
         self.assertEqual(
             [e for e in api["env"] if e["name"] == "IMPORT_ASSIGN_ENABLED"],
             [{"name": "IMPORT_ASSIGN_ENABLED", "value": "false"}],
+        )
+
+    def test_secret_env_reads_the_secrets_latest_version(self):
+        # #1432: the action's `ingress_secret_env` sets GOOGLE_OAUTH_CLIENT_SECRET from Secret
+        # Manager, replacing any live entry of that name rather than duplicating it.
+        env = clean_env(**{**REQUIRED_ENV, "INGRESS_SECRET_ENV": "GOOGLE_OAUTH_CLIENT_SECRET=stg-google-oauth-client-secret"})
+        proc = run_injector(FIXTURE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "once.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(proc.stdout)
+            again = run_injector(path, env=env)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        api = containers_by_name(yaml.safe_load(again.stdout))["api"]
+        self.assertEqual(
+            [e for e in api["env"] if e["name"] == "GOOGLE_OAUTH_CLIENT_SECRET"],
+            [{"name": "GOOGLE_OAUTH_CLIENT_SECRET",
+              "valueFrom": {"secretKeyRef": {"key": "latest", "name": "stg-google-oauth-client-secret"}}}],
+        )
+        self.assertIn("CLERK_SECRET_KEY", [e["name"] for e in api["env"]])
+
+    def test_secret_env_sets_each_of_two_entries(self):
+        env = clean_env(**{**REQUIRED_ENV, "INGRESS_SECRET_ENV": "SECRET_ONE=secret-one\n\nSECRET_TWO=secret-two\n"})
+        proc = run_injector(FIXTURE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        api = containers_by_name(yaml.safe_load(proc.stdout))["api"]
+        self.assertEqual(
+            [e for e in api["env"] if e["name"].startswith("SECRET_")],
+            [{"name": "SECRET_ONE", "valueFrom": {"secretKeyRef": {"key": "latest", "name": "secret-one"}}},
+             {"name": "SECRET_TWO", "valueFrom": {"secretKeyRef": {"key": "latest", "name": "secret-two"}}}],
+        )
+
+    def _assert_secret_env_fails(self, secret_env, message, extra_env=None):
+        overrides = {"INGRESS_SECRET_ENV": secret_env}
+        if extra_env is not None:
+            overrides["INGRESS_EXTRA_ENV"] = extra_env
+        proc = run_injector(FIXTURE, env=clean_env(**{**REQUIRED_ENV, **overrides}))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "", "no manifest should be emitted on the error path")
+        self.assertIn(message, proc.stderr)
+
+    def test_secret_env_rejects_an_empty_secret_name(self):
+        self._assert_secret_env_fails("GOOGLE_OAUTH_CLIENT_SECRET=", "INGRESS_SECRET_ENV entry has empty secret name")
+
+    def test_secret_env_rejects_a_malformed_line_naming_its_variable(self):
+        self._assert_secret_env_fails("NOEQUALS_HERE", "INGRESS_SECRET_ENV entry missing '='")
+        self._assert_secret_env_fails("=secret", "INGRESS_SECRET_ENV entry has empty key")
+
+    def test_secret_env_rejects_a_name_also_set_as_a_plain_value(self):
+        self._assert_secret_env_fails(
+            "GOOGLE_OAUTH_CLIENT_SECRET=secret",
+            "is in both INGRESS_EXTRA_ENV and INGRESS_SECRET_ENV",
+            extra_env="GOOGLE_OAUTH_CLIENT_SECRET=plain",
         )
 
     def test_malformed_extra_env_exits_nonzero(self):

@@ -1,0 +1,827 @@
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import {
+  SUPPLEMENT_NOT_REMOVED_CODE,
+  SupplementAsOfResponse,
+  SupplementCatalogEntry,
+  SupplementChange,
+  SupplementCreatedResponse,
+  SupplementSheetResponse,
+  SupplementStackResponse,
+} from '@lifting-logbook/types';
+import { supplementSourceUrl } from '@lifting-logbook/core';
+import { MAX_WORKBOOK_BYTES } from '../adapters/google-sheets/google-sheet-export.client';
+import { buildXlsx, zipFixture } from '../adapters/google-sheets/xlsx.fixture';
+import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
+import { AppModule } from '../app.module';
+import { DomainConflictFilter } from '../programs/conflict.filter';
+import { DomainNotFoundFilter } from '../programs/not-found.filter';
+import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
+
+const TODAY = '2026-11-20';
+const DAY_TYPES = [
+  { id: 'lift', name: 'Lift day', sessionTime: '17:00' },
+  { id: 'rest', name: 'Rest day' },
+];
+
+type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+describe('Supplements HTTP (e2e, in-memory adapters)', () => {
+  let app: NestFastifyApplication;
+  let userCount = 0;
+
+  beforeAll(async () => {
+    app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
+    app.useGlobalFilters(new DomainNotFoundFilter(), new DomainConflictFilter());
+    app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  /** A fresh user per test, so the in-memory store starts empty. */
+  function newUser() {
+    const headers = { authorization: `Bearer supplements-e2e-${++userCount}` };
+    const inject = (method: Method, url: string, body?: unknown) =>
+      app.inject({
+        method,
+        url,
+        headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
+        ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+      });
+    const get = async () => (await inject('GET', '/supplements')).json<SupplementStackResponse>();
+    const asOf = async (date: string) => (await inject('GET', `/supplements/as-of/${date}`)).json<SupplementAsOfResponse>();
+    const changes = async () => (await inject('GET', '/supplements/changes')).json<SupplementChange[]>();
+    /**
+     * A write that must succeed. After it, replaying the log through the write's date gives the
+     * stack `GET /` does: the two share applyChange (ADR-046).
+     */
+    const ok = async <R = SupplementStackResponse>(method: Method, url: string, body?: unknown): Promise<R> => {
+      const res = await inject(method, url, body);
+      expect([200, 201]).toContain(res.statusCode);
+      const today = new URL(url, 'http://x').searchParams.get('today');
+      if (today !== null) expect((await asOf(today)).items).toEqual((await get()).items);
+      return res.json<R>();
+    };
+    const add = async (name: string, extra: Record<string, unknown> = {}) => {
+      const created = await ok<SupplementCreatedResponse>('POST', `/supplements/items?today=${TODAY}`, { name, ...extra });
+      const item = created.items.find((i) => i.id === created.id);
+      if (!item) throw new Error(`POST /items didn't return item ${created.id} in the stack`);
+      return item;
+    };
+    const setDayTypes = () => ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: DAY_TYPES });
+    return { inject, ok, add, get, asOf, changes, setDayTypes };
+  }
+
+  it('lists an empty stack with the default caffeine cutoff', async () => {
+    const { get } = newUser();
+    expect(await get()).toEqual({ items: [], dayTypes: [], caffeineCutoff: '14:00' });
+  });
+
+  it('creates an item with its doses, returns its id, and logs it as added', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const item = await add('Creatine', {
+      ingredients: [{ key: 'creatine', amount: 5, unit: 'g' }],
+      doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+      links: [{ label: 'Examine', url: 'https://examine.com/supplements/creatine/' }],
+      category: 'Performance',
+      typicalRange: '3-5 g',
+    });
+    expect(item).toMatchObject({
+      name: 'Creatine',
+      status: 'active',
+      unverified: false,
+      doses: [{ slot: 'post' }],
+      links: [{ label: 'Examine', url: 'https://examine.com/supplements/creatine/' }],
+      category: 'Performance',
+      typicalRange: '3-5 g',
+    });
+    expect((await changes()).slice(-1)).toEqual([{ type: 'added', date: TODAY, seq: 2, item }]);
+
+    // Names can repeat; the returned id tells the two apart.
+    const again = await ok<SupplementCreatedResponse>('POST', `/supplements/items?today=${TODAY}`, { name: 'Creatine' });
+    expect(again.id).not.toBe(item.id);
+    expect(again.items.map((i) => i.id)).toEqual([item.id, again.id]);
+  });
+
+  it('rejects a workout-slot dose with no day type, and logs nothing', async () => {
+    const { inject, changes } = newUser();
+    const res = await inject('POST', `/supplements/items?today=${TODAY}`, {
+      name: 'Caffeine',
+      doses: [{ slot: 'pre', amount: '', servings: 1, dayTypes: [] }],
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toEqual(['Caffeine: a pre dose needs at least one day type']);
+    expect(await changes()).toEqual([]);
+  });
+
+  it('rejects a link that is not an http or https URL', async () => {
+    const { inject, changes } = newUser();
+    for (const url of ['javascript:alert(1)', 'examine.com', 'ftp://example.com/x']) {
+      const res = await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'Bad link', links: [{ label: '', url }] });
+      expect(res.statusCode).toBe(400);
+    }
+    // A plain string is the old form, which a write no longer takes; a label is at most 60 characters.
+    for (const link of ['https://example.com/x', { label: 'x'.repeat(61), url: 'https://example.com/x' }]) {
+      const res = await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'Bad link', links: [link] });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(await changes()).toEqual([]);
+  });
+
+  it('rejects an explicit null rather than storing it or failing on it', async () => {
+    const { inject, add, changes, get } = newUser();
+    const item = await add('Magnesium');
+    for (const field of ['name', 'status', 'doses', 'ingredients', 'links', 'keyCompound', 'unverified', 'category', 'typicalRange']) {
+      const res = await inject('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { [field]: null });
+      expect([field, res.statusCode]).toEqual([field, 400]);
+    }
+    for (const body of [{ dayTypes: null }, { caffeineCutoff: null }, { dayTypes: [{ id: 'x', name: 'X', sessionTime: null }] }]) {
+      expect((await inject('PUT', `/supplements/settings?today=${TODAY}`, body)).statusCode).toBe(400);
+    }
+    expect(await changes()).toHaveLength(1);
+    expect((await get()).items).toEqual([item]);
+  });
+
+  it('requires today on every write, and refuses one dated before the last change', async () => {
+    const { inject, ok, add, changes } = newUser();
+    const item = await add('Zinc');
+    const writes: [Method, string, unknown?][] = [
+      ['POST', '/supplements/items', { name: 'x' }],
+      ['PATCH', `/supplements/items/${item.id}`, { name: 'y' }],
+      ['DELETE', `/supplements/items/${item.id}`],
+      ['POST', `/supplements/items/${item.id}/restore`],
+      ['PUT', '/supplements/settings', { caffeineCutoff: '12:00' }],
+      ['POST', '/supplements/doses/move', { itemIds: [item.id], from: 'am', to: 'pm' }],
+      ['POST', '/supplements/items/status', { itemIds: [item.id], status: 'pending' }],
+      ['POST', '/supplements/items/remove', { itemIds: [item.id] }],
+      ['POST', '/supplements/mixes', { name: 'm', itemIds: [item.id, item.id] }],
+      ['POST', `/supplements/mixes/${item.id}/split`],
+    ];
+    for (const [method, url, body] of writes) {
+      const res = await inject(method, url, body);
+      expect([url, res.statusCode, res.json().message]).toEqual([url, 400, 'today is required (YYYY-MM-DD)']);
+    }
+
+    await ok('PATCH', `/supplements/items/${item.id}?today=2026-11-21`, { name: 'Zinc picolinate' });
+    const earlier = await inject('DELETE', `/supplements/items/${item.id}?today=${TODAY}`);
+    expect(earlier.statusCode).toBe(400);
+    expect(earlier.json().message).toMatch(/before the stack's last change \(2026-11-21\)/);
+    expect(await changes()).toHaveLength(2);
+    // The same date is fine.
+    await ok('DELETE', `/supplements/items/${item.id}?today=2026-11-21`);
+  });
+
+  it('refuses a today more than a day past the server date, so it can’t block the writes after it', async () => {
+    const { inject, ok, add, changes } = newUser();
+    const daysFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+    for (const future of ['2099-01-01', daysFromNow(2)]) {
+      const res = await inject('POST', `/supplements/items?today=${future}`, { name: 'Typo' });
+      expect([future, res.statusCode]).toEqual([future, 400]);
+      expect(res.json().message).toMatch(/more than a day past the server's date/);
+    }
+    expect(await changes()).toEqual([]);
+
+    // Writes dated from now on still succeed, up to a day ahead for a lifter east of UTC.
+    await add('Zinc');
+    await ok('POST', `/supplements/items?today=${daysFromNow(1)}`, { name: 'Magnesium' });
+    expect((await changes()).map((c) => c.type)).toEqual(['added', 'added']);
+  });
+
+  it('updates an item, one change per kind of edit', async () => {
+    const { ok, add, changes } = newUser();
+    const item = await add('Magnesium', { unverified: true });
+    const doses = [{ slot: 'pm', amount: '2 caps', servings: 2, dayTypes: [] }];
+    const stack = await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, {
+      shortNote: 'Glycinate',
+      doses,
+      status: 'pending',
+      unverified: false,
+    });
+    expect(stack.items[0]).toMatchObject({ shortNote: 'Glycinate', doses, status: 'pending', unverified: false });
+    expect((await changes()).slice(1)).toEqual([
+      { type: 'edited', date: TODAY, seq: 2, itemId: item.id, changes: { shortNote: 'Glycinate' } },
+      { type: 'moved', date: TODAY, seq: 3, itemId: item.id, doses },
+      { type: 'moved_to_pending', date: TODAY, seq: 4, itemId: item.id },
+      { type: 'confirmed', date: TODAY, seq: 5, itemId: item.id },
+    ]);
+  });
+
+  it('edits category, typical range and labelled links as one `edited` change', async () => {
+    const { ok, add, changes } = newUser();
+    const item = await add('Magnesium');
+    const links = [{ label: 'Amazon', url: 'https://www.amazon.com/dp/B1' }];
+    const stack = await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { category: 'Sleep', typicalRange: '200-400 mg', links });
+    expect(stack.items[0]).toMatchObject({ category: 'Sleep', typicalRange: '200-400 mg', links });
+    expect((await changes()).slice(1)).toEqual([
+      { type: 'edited', date: TODAY, seq: 2, itemId: item.id, changes: { links, category: 'Sleep', typicalRange: '200-400 mg' } },
+    ]);
+  });
+
+  it('logs only the fields an update changes, and nothing for an update that changes nothing', async () => {
+    const { ok, add, changes } = newUser();
+    const item = await add('Fish oil', { shortNote: 'EPA/DHA', doses: [{ slot: 'am', amount: '2', servings: 1, dayTypes: [] }] });
+    const { id: _id, parts: _parts, ...whole } = item;
+    await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, whole);
+    await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, {});
+    await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { ...whole, longNote: 'With food' });
+    expect((await changes()).slice(1)).toEqual([
+      { type: 'edited', date: TODAY, seq: 2, itemId: item.id, changes: { longNote: 'With food' } },
+    ]);
+  });
+
+  it('404s an update to an item the user does not have', async () => {
+    const { inject } = newUser();
+    expect((await inject('PATCH', `/supplements/items/nope?today=${TODAY}`, { name: 'x' })).statusCode).toBe(404);
+  });
+
+  it('removes an item, restores it from the log, and 409s a second restore', async () => {
+    const { ok, add, inject, changes } = newUser();
+    const item = await add('Ashwagandha', { longNote: 'KSM-66' });
+    expect((await ok('DELETE', `/supplements/items/${item.id}?today=${TODAY}`)).items).toEqual([]);
+    expect((await changes())[1]).toEqual({ type: 'removed', date: TODAY, seq: 2, item });
+
+    expect((await ok('POST', `/supplements/items/${item.id}/restore?today=${TODAY}`)).items).toEqual([item]);
+    expect((await changes())[2]).toEqual({ type: 'restored', date: TODAY, seq: 3, itemId: item.id });
+
+    const again = await inject('POST', `/supplements/items/${item.id}/restore?today=${TODAY}`);
+    expect(again.statusCode).toBe(409);
+    expect(again.json().code).toBe(SUPPLEMENT_NOT_REMOVED_CODE);
+    expect(await changes()).toHaveLength(3);
+  });
+
+  it('puts a restored item at the end of the stack', async () => {
+    const { ok, add } = newUser();
+    const a = await add('A');
+    const b = await add('B');
+    await ok('DELETE', `/supplements/items/${a.id}?today=${TODAY}`);
+    const stack = await ok('POST', `/supplements/items/${a.id}/restore?today=${TODAY}`);
+    expect(stack.items.map((i) => i.id)).toEqual([b.id, a.id]);
+  });
+
+  it('404s restoring an item that was never removed', async () => {
+    const { inject } = newUser();
+    expect((await inject('POST', `/supplements/items/nope/restore?today=${TODAY}`)).statusCode).toBe(404);
+  });
+
+  it('sets the caffeine cutoff and day types, taking a removed day type off every dose, each logged', async () => {
+    const { ok, add, changes } = newUser();
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: DAY_TYPES, caffeineCutoff: '13:30' });
+    const item = await add('Electrolytes', { doses: [{ slot: 'all', amount: '1', servings: 1, dayTypes: ['lift', 'rest'] }] });
+
+    const stack = await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
+    expect(stack.caffeineCutoff).toBe('13:30');
+    expect(stack.dayTypes).toEqual([DAY_TYPES[0]]);
+    expect(stack.items[0]?.doses[0]?.dayTypes).toEqual(['lift']);
+    expect(await changes()).toEqual([
+      { type: 'caffeine_cutoff_set', date: TODAY, seq: 1, caffeineCutoff: '13:30' },
+      { type: 'day_types_set', date: TODAY, seq: 2, dayTypes: DAY_TYPES },
+      { type: 'added', date: TODAY, seq: 3, item },
+      { type: 'day_types_set', date: TODAY, seq: 4, dayTypes: [DAY_TYPES[0]] },
+      { type: 'moved', date: TODAY, seq: 5, itemId: item.id, doses: [{ slot: 'all', amount: '1', servings: 1, dayTypes: ['lift'] }] },
+    ]);
+
+    // Settings that match what's stored change nothing and log nothing.
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]], caffeineCutoff: '13:30' });
+    expect(await changes()).toHaveLength(5);
+  });
+
+  it('400s removing the only day type of a workout-slot dose, and saves nothing', async () => {
+    const { ok, add, inject, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    await add('Pre-workout', { doses: [{ slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }] });
+
+    const res = await inject('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[1]] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toEqual(['Pre-workout: a pre dose needs at least one day type']);
+    expect((await ok('GET', '/supplements')).dayTypes).toEqual(DAY_TYPES);
+    expect(await changes()).toHaveLength(2);
+  });
+
+  it('restores an item after one of its day types was removed, taking it off the doses', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const kept = await add('Creatine', {
+      doses: [{ slot: 'post', amount: '1', servings: 1, dayTypes: ['lift', 'rest'] }],
+    });
+    await ok('DELETE', `/supplements/items/${kept.id}?today=${TODAY}`);
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
+
+    const stack = await ok('POST', `/supplements/items/${kept.id}/restore?today=${TODAY}`);
+    const cleaned = [{ slot: 'post', amount: '1', servings: 1, dayTypes: ['lift'] }];
+    expect(stack.items).toEqual([{ ...kept, doses: cleaned }]);
+    expect((await changes()).slice(-2)).toEqual([
+      { type: 'restored', date: TODAY, seq: 5, itemId: kept.id },
+      { type: 'moved', date: TODAY, seq: 6, itemId: kept.id, doses: cleaned },
+    ]);
+  });
+
+  it('restores an item pending, without the workout dose a removed day type left with none', async () => {
+    const { ok, add, get, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const anytime = { slot: 'am', amount: '1', servings: 1, dayTypes: [] };
+    const item = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['rest'] }, anytime] });
+    await ok('DELETE', `/supplements/items/${item.id}?today=${TODAY}`);
+    // Removing its only workout day type doesn't touch the removed item.
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
+    expect((await changes()).at(-1)?.type).toBe('day_types_set');
+
+    const stack = await ok('POST', `/supplements/items/${item.id}/restore?today=${TODAY}`);
+    expect(stack.items).toEqual([{ ...item, status: 'pending', doses: [anytime] }]);
+    expect((await changes()).slice(-3)).toEqual([
+      { type: 'restored', date: TODAY, seq: 5, itemId: item.id },
+      { type: 'moved', date: TODAY, seq: 6, itemId: item.id, doses: [anytime] },
+      { type: 'moved_to_pending', date: TODAY, seq: 7, itemId: item.id },
+    ]);
+    expect((await get()).items).toEqual(stack.items);
+  });
+
+  it('splits a mix after a day type was removed, bringing its parts back without it', async () => {
+    const { ok, add, inject, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const dose = { slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift', 'rest'] };
+    const a = await add('Citrulline', { doses: [dose] });
+    const b = await add('Beta-alanine', { doses: [dose] });
+    const mix = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Pump', itemIds: [a.id, b.id] });
+
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[0]] });
+    // The mix took the first part's doses; the parts' own doses were cleaned while folded.
+    expect((await changes()).slice(-3).map((c) => [c.type, 'itemId' in c && c.itemId])).toEqual([
+      ['moved', mix.id],
+      ['moved', a.id],
+      ['moved', b.id],
+    ]);
+
+    const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
+    const cleaned = [{ ...dose, dayTypes: ['lift'] }];
+    expect(split.items).toEqual([
+      { ...a, doses: cleaned },
+      { ...b, doses: cleaned },
+    ]);
+
+    // A folded part whose workout dose would be left with no day type blocks the removal, and
+    // the 400 names the mix it's in.
+    const c = await add('Caffeine', { doses: [{ ...dose, dayTypes: ['lift'] }] });
+    const d = await add('Taurine');
+    await ok('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Stim', itemIds: [d.id, c.id] });
+    const res = await inject('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('Stim (Caffeine): a pre dose needs at least one day type');
+  });
+
+  it('leaves the parts of a removed mix alone, and restores a part a removed day type emptied as pending', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const c = await add('Caffeine', { doses: [{ slot: 'pre', amount: '1', servings: 1, dayTypes: ['lift'] }] });
+    const d = await add('Taurine', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: ['rest'] }] });
+    const mix = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Stim', itemIds: [d.id, c.id] });
+    await ok('DELETE', `/supplements/items/${mix.id}?today=${TODAY}`);
+
+    // Caffeine, folded into a removed mix, can't block removing its only day type, and isn't moved.
+    await ok('PUT', `/supplements/settings?today=${TODAY}`, { dayTypes: [DAY_TYPES[1]] });
+    expect((await changes()).slice(-1)).toEqual([{ type: 'day_types_set', date: TODAY, seq: 6, dayTypes: [DAY_TYPES[1]] }]);
+
+    // Restoring the mix drops Caffeine's emptied pre dose and leaves it pending; Taurine is as it was.
+    const restored = await ok('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(restored.items.map((i) => i.id)).toEqual([mix.id]);
+    expect((await changes()).slice(-3)).toEqual([
+      { type: 'restored', date: TODAY, seq: 7, itemId: mix.id },
+      { type: 'moved', date: TODAY, seq: 8, itemId: c.id, doses: [] },
+      { type: 'moved_to_pending', date: TODAY, seq: 9, itemId: c.id },
+    ]);
+
+    const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
+    expect(split.items).toEqual([d, { ...c, status: 'pending', doses: [] }]);
+  });
+
+  it('409s restoring a part of a mix, naming the mix, and brings it back through the mix', async () => {
+    const { ok, add, inject } = newUser();
+    const a = await add('Citrulline');
+    const b = await add('Beta-alanine');
+    const mix = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, { name: 'Pump mix', itemIds: [a.id, b.id] });
+
+    const inMix = await inject('POST', `/supplements/items/${a.id}/restore?today=${TODAY}`);
+    expect(inMix.statusCode).toBe(409);
+    expect(inMix.json()).toMatchObject({ code: SUPPLEMENT_NOT_REMOVED_CODE, message: expect.stringMatching(/"Pump mix": split the mix/) });
+
+    await ok('DELETE', `/supplements/items/${mix.id}?today=${TODAY}`);
+    const mixRemoved = await inject('POST', `/supplements/items/${a.id}/restore?today=${TODAY}`);
+    expect(mixRemoved.statusCode).toBe(409);
+    expect(mixRemoved.json().message).toMatch(/"Pump mix", which is removed: restore the mix, then split it/);
+
+    await ok('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    const split = await ok('POST', `/supplements/mixes/${mix.id}/split?today=${TODAY}`);
+    expect(split.items).toEqual([a, b]);
+
+    // The split undid the mix's removal: restoring the mix again would bring its parts back a
+    // second time, beside the items the split returned.
+    const again = await inject('POST', `/supplements/items/${mix.id}/restore?today=${TODAY}`);
+    expect(again.statusCode).toBe(404);
+    expect((await ok('GET', '/supplements')).items).toEqual([a, b]);
+  });
+
+  it('bulk moves doses from one slot to another', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    const a = await add('A', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const b = await add('B', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const c = await add('C', { doses: [{ slot: 'pm', amount: '1', servings: 1, dayTypes: [] }] });
+
+    const stack = await ok('POST', `/supplements/doses/move?today=${TODAY}`, {
+      itemIds: [a.id, b.id, c.id],
+      from: 'am',
+      to: 'post',
+      dayTypes: ['lift'],
+    });
+    expect(stack.items.map((i) => i.doses[0]?.slot)).toEqual(['post', 'post', 'pm']);
+    expect((await changes()).slice(4).map((ch) => [ch.type, 'itemId' in ch && ch.itemId])).toEqual([
+      ['moved', a.id],
+      ['moved', b.id],
+    ]);
+  });
+
+  it('bulk moves exactly the named doses, leaving an item’s other dose in the same slot', async () => {
+    const { ok, add, changes, setDayTypes } = newUser();
+    await setDayTypes();
+    // Two pre-workout doses on different day types, and a second item with a dose in another slot.
+    const a = await add('A', {
+      doses: [
+        { slot: 'pre', amount: '3 g', servings: 1, dayTypes: ['lift'] },
+        { slot: 'pre', amount: '1 g', servings: 1, dayTypes: ['rest'] },
+      ],
+    });
+    const b = await add('B', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+
+    const stack = await ok('POST', `/supplements/doses/move?today=${TODAY}`, {
+      itemIds: [a.id, b.id],
+      doses: [
+        { itemId: a.id, index: 1, slot: 'pre' },
+        { itemId: b.id, index: 0, slot: 'am' },
+      ],
+      to: 'pm',
+      dayTypes: [],
+    });
+    expect(stack.items.map((i) => i.doses.map((d) => [d.slot, d.amount, d.dayTypes]))).toEqual([
+      [
+        ['pre', '3 g', ['lift']],
+        ['pm', '1 g', []],
+      ],
+      [['pm', '1', []]],
+    ]);
+    expect((await changes()).slice(3).map((ch) => [ch.type, 'itemId' in ch && ch.itemId])).toEqual([
+      ['moved', a.id],
+      ['moved', b.id],
+    ]);
+  });
+
+  it('refuses a dose move that is stale, names an item not listed, or names neither from nor doses, changing nothing', async () => {
+    const { inject, ok, add, get, setDayTypes } = newUser();
+    await setDayTypes();
+    const a = await add('A', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const b = await add('B', { doses: [{ slot: 'am', amount: '1', servings: 1, dayTypes: [] }] });
+    const before = await get();
+    const move = (body: unknown) => inject('POST', `/supplements/doses/move?today=${TODAY}`, body);
+
+    // The client saw A's dose 0 in the morning, but it's been moved to night since.
+    await ok('POST', `/supplements/doses/move?today=${TODAY}`, { itemIds: [a.id], from: 'am', to: 'pm' });
+    const moved = await get();
+    const stale = await move({ itemIds: [a.id, b.id], doses: [{ itemId: b.id, index: 0, slot: 'am' }, { itemId: a.id, index: 0, slot: 'am' }], to: 'noon' });
+    expect([stale.statusCode, stale.json().message]).toEqual([400, '"A" has no am dose at position 0; reload and try again']);
+    const outOfRange = await move({ itemIds: [b.id], doses: [{ itemId: b.id, index: 3, slot: 'am' }], to: 'noon' });
+    expect(outOfRange.statusCode).toBe(400);
+    const stray = await move({ itemIds: [a.id], doses: [{ itemId: b.id, index: 0, slot: 'am' }], to: 'noon' });
+    expect([stray.statusCode, stray.json().message]).toEqual([400, `doses names ${b.id}, which isn't in itemIds`]);
+    expect((await move({ itemIds: [a.id], to: 'noon' })).statusCode).toBe(400);
+    expect((await move({ itemIds: [a.id], doses: [{ itemId: a.id, index: -1, slot: 'pm' }], to: 'noon' })).statusCode).toBe(400);
+    // Nothing from the refused requests landed, B's valid ref included.
+    expect(await get()).toEqual(moved);
+    expect(moved.items[1]).toEqual(before.items[1]);
+  });
+
+  it('bulk marks items pending and active', async () => {
+    const { ok, add, changes } = newUser();
+    const a = await add('A');
+    const b = await add('B', { status: 'pending' });
+    const stack = await ok('POST', `/supplements/items/status?today=${TODAY}`, { itemIds: [a.id, b.id], status: 'pending' });
+    expect(stack.items.map((i) => i.status)).toEqual(['pending', 'pending']);
+    await ok('POST', `/supplements/items/status?today=${TODAY}`, { itemIds: [a.id, b.id], status: 'active' });
+    expect((await changes()).slice(2).map((ch) => ch.type)).toEqual(['moved_to_pending', 'started', 'started']);
+  });
+
+  it('bulk removes items in one write, one removed change each, and each can be restored', async () => {
+    const { ok, add, changes } = newUser();
+    const a = await add('A');
+    const b = await add('B');
+    const c = await add('C');
+    // A repeated id removes the item once.
+    const stack = await ok('POST', `/supplements/items/remove?today=${TODAY}`, { itemIds: [c.id, a.id, c.id] });
+    expect(stack.items.map((i) => i.id)).toEqual([b.id]);
+    expect((await changes()).slice(3)).toEqual([
+      { type: 'removed', date: TODAY, seq: 4, item: c },
+      { type: 'removed', date: TODAY, seq: 5, item: a },
+    ]);
+    const restored = await ok('POST', `/supplements/items/${a.id}/restore?today=${TODAY}`);
+    expect(restored.items.map((i) => i.id)).toEqual([b.id, a.id]);
+  });
+
+  it('refuses a bulk remove naming an unknown item, or none, or more than 100, removing nothing', async () => {
+    const { inject, add, get, changes } = newUser();
+    const a = await add('A');
+    const before = await get();
+    const remove = (itemIds: unknown) => inject('POST', `/supplements/items/remove?today=${TODAY}`, { itemIds });
+
+    const unknown = await remove([a.id, 'no-such-item']);
+    expect([unknown.statusCode, unknown.json().message]).toEqual([404, 'No supplement item no-such-item']);
+    expect((await remove([])).statusCode).toBe(400);
+    expect((await remove(Array.from({ length: 101 }, () => a.id))).statusCode).toBe(400);
+    expect((await remove(undefined)).statusCode).toBe(400);
+    expect(await get()).toEqual(before);
+    expect(await changes()).toHaveLength(1);
+  });
+
+  it('combines items into a mix in the first one’s place, returns its id, and splits it back', async () => {
+    const { ok, add, inject, changes } = newUser();
+    const a = await add('Citrulline', { ingredients: [{ key: 'citrulline', amount: 6, unit: 'g' }] });
+    const b = await add('Beta-alanine', { ingredients: [{ key: 'beta-alanine', amount: 3.2, unit: 'g' }] });
+    const c = await add('Fish oil');
+
+    const mixed = await ok<SupplementCreatedResponse>('POST', `/supplements/mixes?today=${TODAY}`, {
+      name: 'Pump mix',
+      itemIds: [b.id, a.id],
+    });
+    expect(mixed.items.map((i) => i.name)).toEqual(['Pump mix', 'Fish oil']);
+    const mix = mixed.items[0];
+    expect(mix?.id).toBe(mixed.id);
+    expect(mix?.parts).toEqual([
+      { itemId: b.id, name: b.name, ingredients: b.ingredients },
+      { itemId: a.id, name: a.name, ingredients: a.ingredients },
+    ]);
+    expect((await changes()).slice(-1)[0]).toEqual({ type: 'mix_created', date: TODAY, seq: 4, mix, partIds: [b.id, a.id] });
+
+    expect((await inject('POST', `/supplements/mixes/${c.id}/split?today=${TODAY}`)).statusCode).toBe(400);
+    const split = await ok('POST', `/supplements/mixes/${mixed.id}/split?today=${TODAY}`);
+    expect(split.items).toEqual([b, a, c]);
+    expect((await changes()).slice(-1)[0]).toEqual({ type: 'mix_split', date: TODAY, seq: 5, mixId: mixed.id });
+  });
+
+  it('reads the stack as of a date by replaying the log, with the first change date', async () => {
+    const { ok, asOf, inject } = newUser();
+    await ok('POST', '/supplements/items?today=2026-11-01', { name: 'Old' });
+    const recent = await ok<SupplementCreatedResponse>('POST', '/supplements/items?today=2026-11-10', { name: 'New' });
+    await ok('DELETE', `/supplements/items/${recent.id}?today=2026-11-15`);
+
+    const names = async (date: string) => (await asOf(date)).items.map((i) => i.name);
+    expect(await names('2026-10-31')).toEqual([]);
+    expect(await names('2026-11-10')).toEqual(['Old', 'New']);
+    expect(await names('2026-11-15')).toEqual(['Old']);
+    expect(await asOf('2026-10-31')).toEqual({ items: [], dayTypes: [], firstChangeDate: '2026-11-01', anomalies: [] });
+    expect((await inject('GET', '/supplements/as-of/2026-02-30')).statusCode).toBe(400);
+  });
+
+  it('returns the day types as they were on the date, not as they are now', async () => {
+    const { ok, asOf } = newUser();
+    await ok('PUT', '/supplements/settings?today=2026-11-01', { dayTypes: DAY_TYPES });
+    await ok('PUT', '/supplements/settings?today=2026-11-10', { dayTypes: [{ id: 'lift', name: 'Push day' }] });
+
+    expect((await asOf('2026-11-05')).dayTypes).toEqual(DAY_TYPES);
+    expect((await asOf('2026-11-10')).dayTypes).toEqual([{ id: 'lift', name: 'Push day' }]);
+    expect((await asOf('2026-10-31')).dayTypes).toEqual([]);
+  });
+
+  it('pages the change log back from a seq', async () => {
+    const { add, inject } = newUser();
+    for (const name of ['A', 'B', 'C', 'D', 'E']) await add(name);
+    const page = async (query: string) =>
+      (await inject('GET', `/supplements/changes${query}`)).json<SupplementChange[]>().map((c) => c.seq);
+    expect(await page('')).toEqual([1, 2, 3, 4, 5]);
+    expect(await page('?limit=2')).toEqual([4, 5]);
+    expect(await page('?limit=2&beforeSeq=4')).toEqual([2, 3]);
+    expect(await page('?limit=2&beforeSeq=2')).toEqual([1]);
+    for (const bad of ['?limit=0', '?limit=1001', '?limit=x', '?beforeSeq=0', '?beforeSeq=-1', '?beforeSeq=2147483648']) {
+      expect([bad, (await inject('GET', `/supplements/changes${bad}`)).statusCode]).toEqual([bad, 400]);
+    }
+    // The largest seq the log's integer column holds is still a page boundary.
+    expect(await page('?beforeSeq=2147483647')).toEqual([1, 2, 3, 4, 5]);
+  });
+  describe('catalog (#1375)', () => {
+    it('returns matches for q by name or alias, ignoring case, with reference content', async () => {
+      const { inject } = newUser();
+      const find = async (q: string) => (await inject('GET', `/supplements/catalog?q=${q}`)).json<SupplementCatalogEntry[]>();
+      const [first] = await find('CREATINE');
+      expect(first).toMatchObject({ key: 'creatine-monohydrate', name: 'Creatine monohydrate', kind: 'compound', suggestedSlot: 'all' });
+      expect(first?.reference.evidence.level).toBe('strong');
+      expect(first?.reference.sources.length).toBeGreaterThan(0);
+      expect(first?.reference.sources.every((key) => supplementSourceUrl(key)?.startsWith('https://'))).toBe(true);
+      expect((await find('magnes')).map((e) => e.key)).toEqual(expect.arrayContaining(['magnesium', 'magnesium-glycinate', 'magnesium-citrate']));
+      expect(await find('zzz-not-a-supplement')).toEqual([]);
+      expect((await inject('GET', '/supplements/catalog')).json()).toEqual([]);
+    });
+
+    it('refuses a repeated q with a 400, not a 500', async () => {
+      const { inject } = newUser();
+      expect((await inject('GET', '/supplements/catalog?q=zinc&q=iron')).statusCode).toBe(400);
+    });
+
+    it('copies reference content onto an item created from a catalog entry, and keeps typed fields', async () => {
+      const { add, get } = newUser();
+      const item = await add('My creatine', { catalogKey: 'creatine-monohydrate', timing: 'With breakfast' });
+      expect(item).toMatchObject({ name: 'My creatine', timing: 'With breakfast', keyCompound: 'Creatine', catalogKey: 'creatine-monohydrate' });
+      expect(item.ingredients).toEqual([{ key: 'creatine', amount: 5, unit: 'g' }]);
+      expect(item.reference?.typicalRange).toBe('3-5 g/day');
+      expect((await get()).items).toEqual([item]);
+    });
+
+    it('rejects an unknown catalog key', async () => {
+      const { inject } = newUser();
+      expect((await inject('POST', `/supplements/items?today=${TODAY}`, { name: 'X', catalogKey: 'nope' })).statusCode).toBe(400);
+    });
+
+    it('leaves reference content read-only: a PATCH cannot set it, and editing details keeps it', async () => {
+      const { add, inject, ok } = newUser();
+      const item = await add('Creatine', { catalogKey: 'creatine-monohydrate' });
+      for (const body of [{ reference: { uses: [] } }, { catalogKey: 'caffeine' }]) {
+        expect((await inject('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, body)).statusCode).toBe(400);
+      }
+      const after = await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { shortNote: 'Daily', ingredients: [{ key: 'creatine', amount: 3, unit: 'g' }] });
+      expect(after.items[0]).toMatchObject({ shortNote: 'Daily', catalogKey: 'creatine-monohydrate', reference: item.reference });
+      expect(after.items[0]?.ingredients).toEqual([{ key: 'creatine', amount: 3, unit: 'g' }]);
+    });
+
+    it('keeps an item without a catalog entry free of both fields', async () => {
+      const { add } = newUser();
+      const item = await add('Homemade');
+      expect(item).not.toHaveProperty('catalogKey');
+      expect(item).not.toHaveProperty('reference');
+    });
+  });
+
+  describe('POST /supplements/import (#1379)', () => {
+    const row = (name: string, extra: Record<string, unknown> = {}) => ({
+      name,
+      amount: '',
+      timing: '',
+      shortNote: '',
+      longNote: '',
+      links: [],
+      doses: [],
+      status: 'active',
+      ...extra,
+    });
+
+    it('saves every item in one write, one noted added change each, and History starts there', async () => {
+      const { ok, setDayTypes, get, changes } = newUser();
+      await setDayTypes();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'Supplements',
+        rows: [
+          row('Creatine', { catalogKey: 'creatine-monohydrate', timing: 'preworkout', doses: [{ slot: 'pre', amount: '3-5g', servings: 1, dayTypes: [] }] }),
+          row('Probiotic', { status: 'pending', links: [{ label: '', url: 'https://www.amazon.com/dp/B000GZSJEM' }] }),
+        ],
+      });
+      expect(stack.items.map((i) => [i.name, i.status])).toEqual([
+        ['Creatine', 'active'],
+        ['Probiotic', 'pending'],
+      ]);
+      // The pre-workout dose took the day types there are.
+      expect(stack.items[0]?.doses[0]?.dayTypes).toEqual(['lift', 'rest']);
+      expect(stack.items[0]?.catalogKey).toBe('creatine-monohydrate');
+      const added = (await changes()).filter((c) => c.type === 'added');
+      expect(added.map((c) => ('note' in c ? c.note : undefined))).toEqual(['Imported from Supplements', 'Imported from Supplements']);
+      expect((await get()).items).toHaveLength(2);
+    });
+
+    it('drops a workout-slot dose when there are no day types, keeping its amount in front of the timing text', async () => {
+      const { ok } = newUser();
+      const stack = await ok('POST', `/supplements/import?today=${TODAY}`, {
+        source: 'S',
+        rows: [
+          row('Creatine', { amount: '3-5g', timing: 'preworkout', doses: [{ slot: 'pre', amount: '3-5g', servings: 1, dayTypes: [] }] }),
+          // A kept dose has the dropped one's amount, so the timing is left as it was.
+          row('Citrulline', {
+            amount: '6g',
+            timing: 'anytime; preworkout',
+            doses: [
+              { slot: 'all', amount: '6g', servings: 1, dayTypes: [] },
+              { slot: 'pre', amount: '6g', servings: 1, dayTypes: [] },
+            ],
+          }),
+        ],
+        skipped: 3,
+      });
+      expect(stack.items[0]).toMatchObject({ timing: '3-5g preworkout', doses: [] });
+      expect(stack.items[1]).toMatchObject({ timing: 'anytime; preworkout', doses: [{ slot: 'all', amount: '6g' }] });
+    });
+
+    it('refuses a skipped count outside 0-500', async () => {
+      const { inject } = newUser();
+      const res = await inject('POST', `/supplements/import?today=${TODAY}`, { source: 'S', rows: [row('A')], skipped: 501 });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('is all or nothing: an unknown catalog key imports no item', async () => {
+      const { inject, get, changes } = newUser();
+      const res = await inject('POST', `/supplements/import?today=${TODAY}`, { source: 'S', rows: [row('A'), row('B', { catalogKey: 'nope' })] });
+      expect(res.statusCode).toBe(400);
+      expect((await get()).items).toEqual([]);
+      expect(await changes()).toEqual([]);
+    });
+  });
+
+  describe('POST /supplements/import/google-sheet (#1379)', () => {
+    const SHEET_URL = 'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/edit#gid=0';
+    const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    type ResponseArgs = ConstructorParameters<typeof Response>;
+    const serve = (body: ResponseArgs[0], init: ResponseArgs[1] = { headers: { 'content-type': XLSX_TYPE } }) =>
+      jest.spyOn(global, 'fetch').mockResolvedValue(new Response(body, init));
+    const fetchSheet = (url = SHEET_URL) => newUser().inject('POST', '/supplements/import/google-sheet', { url });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it('returns each tab with its rows, sheet row numbers and web links only', async () => {
+      const fetchSpy = serve(
+        buildXlsx([
+          {
+            name: 'Supplements',
+            rows: [['Compound', 'Amount'], [null, null], ['Creatine', '5g'], ['Iron', '18mg']],
+            links: { A3: 'https://www.amazon.com/dp/B000GZSJEM', A4: 'javascript:alert(1)' },
+          },
+          { name: 'Empty', rows: [] },
+        ]),
+      );
+
+      const res = await fetchSheet();
+
+      expect(res.statusCode).toBe(200);
+      expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+        'https://docs.google.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q/export?format=xlsx',
+      );
+      expect(res.json<SupplementSheetResponse>().tabs).toEqual([
+        {
+          name: 'Supplements',
+          rows: [
+            ['Compound', 'Amount'],
+            ['Creatine', '5g'],
+            ['Iron', '18mg'],
+          ],
+          links: [
+            ['', ''],
+            ['https://www.amazon.com/dp/B000GZSJEM', ''],
+            ['', ''],
+          ],
+          rowNumbers: [1, 3, 4],
+          skipReason: null,
+        },
+      ]);
+    });
+
+    it('returns a tab over 500 rows with no rows and a reason it cannot be imported', async () => {
+      const rows = [['Compound'], ...Array.from({ length: 501 }, (_, i) => [`Item ${i}`])];
+      serve(buildXlsx([{ name: 'BIG', rows }]));
+
+      const res = await fetchSheet();
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json<SupplementSheetResponse>().tabs).toEqual([
+        { name: 'BIG', rows: [], links: [], skipReason: 'More than 500 rows, the per-import limit.' },
+      ]);
+    });
+
+    it('returns 422 with sharing instructions when the sheet is private', async () => {
+      serve(null, { status: 307, headers: { location: 'https://accounts.google.com/ServiceLogin' } });
+      const res = await fetchSheet();
+      expect(res.statusCode).toBe(422);
+      expect(res.json().message).toContain('Anyone with the link');
+    });
+
+    it('returns 404 when there is no sheet at the link', async () => {
+      serve(null, { status: 404 });
+      expect((await fetchSheet()).statusCode).toBe(404);
+    });
+
+    it('returns 413 when the download or the workbook is too large', async () => {
+      serve(null, { headers: { 'content-type': XLSX_TYPE, 'content-length': String(MAX_WORKBOOK_BYTES + 1) } });
+      expect((await fetchSheet()).statusCode).toBe(413);
+      jest.restoreAllMocks();
+      serve(zipFixture({ 'xl/worksheets/sheet1.xml': new Uint8Array(MAX_XLSX_PART_BYTES + 1) }));
+      expect((await fetchSheet()).statusCode).toBe(413);
+    });
+
+    it('returns 502 when Google sends something that is not a workbook', async () => {
+      serve('not a zip');
+      expect((await fetchSheet()).statusCode).toBe(502);
+    });
+
+    it('returns 400 and fetches nothing for a link that is not a Google Sheet', async () => {
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      const res = await fetchSheet('https://example.com/spreadsheets/d/15s6_k614x9FzQtHxQDxh82CjDKYqHaS-VZtmS0he-8Q');
+      expect(res.statusCode).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+});

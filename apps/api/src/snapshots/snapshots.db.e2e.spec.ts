@@ -56,7 +56,10 @@ const CLEARED = [
   'FocusDayState',
   'ImportBatch',
 ];
-/** Setup Clear data keeps, plus the hourly count of import suggestion requests. */
+/**
+ * Setup Clear data keeps, plus the hourly count of import suggestion requests and the Google Sheet
+ * link, which Clear data leaves alone along with the stack it mirrors (ADR-047 decision 14).
+ */
 const KEPT = [
   'BodyWeight',
   'StrengthGoal',
@@ -66,9 +69,16 @@ const KEPT = [
   'MissingMaxDismissal',
   'UserSettings',
   'FocusBlock',
+  'SupplementDayType',
+  'SupplementItem',
+  'SupplementDose',
+  'SupplementMixPart',
+  'SupplementChange',
   'CustomProgram',
   'CustomProgramSpec',
   'ImportSuggestionUsage',
+  'GoogleSheetLink',
+  'GoogleOauthRequest',
 ];
 
 /** Each cleared table's Prisma model. */
@@ -293,6 +303,31 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
       pool: [],
     },
   });
+  await prisma.supplementDayType.create({ data: { userId, id: 'lift', name: 'Lift', position: 0 } });
+  await prisma.supplementItem.create({
+    data: {
+      id: `${userId}-mix`,
+      userId,
+      name: 'Pre-workout',
+      keyCompound: '',
+      timing: '',
+      shortNote: '',
+      longNote: '',
+      status: 'active',
+      unverified: false,
+      links: [],
+      ingredients: [],
+      isMix: true,
+      position: 0,
+    },
+  });
+  await prisma.supplementDose.create({
+    data: { userId, itemId: `${userId}-mix`, position: 0, slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] },
+  });
+  await prisma.supplementMixPart.create({
+    data: { userId, mixId: `${userId}-mix`, position: 0, partItemId: `${userId}-part`, name: 'Creatine', ingredients: [] },
+  });
+  await prisma.supplementChange.create({ data: { userId, seq: 1, date: day('2025-06-01'), type: 'mix_split', payload: {} } });
   const customProgramId = CUSTOM_PROGRAM_IDS[userId];
   if (customProgramId) {
     await prisma.customProgram.create({
@@ -307,6 +342,21 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
     });
   }
   await prisma.importSuggestionUsage.create({ data: { userId } });
+  await prisma.googleSheetLink.create({
+    data: {
+      userId,
+      status: 'linked',
+      spreadsheetId: `sheet-${userId}`,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/sheet-${userId}`,
+      grantedScope: 'https://www.googleapis.com/auth/drive.file',
+      refreshTokenCiphertext: Buffer.from('ciphertext'),
+      refreshTokenDekCiphertext: Buffer.from('wrapped-key'),
+      refreshTokenNonce: Buffer.alloc(12),
+    },
+  });
+  await prisma.googleOauthRequest.create({
+    data: { userId, stateHash: Buffer.alloc(32), codeVerifier: 'verifier', expiresAt: new Date(Date.now() + 600_000) },
+  });
 }
 
 /** An exported CSV's rows as objects keyed by header. */
@@ -532,12 +582,24 @@ describeOrSkip('Clear data and snapshots (#1309, e2e, PrismaRepositoryFactory)',
   it('clears nothing when the snapshot can’t be saved', async () => {
     const before = await countsOf(prisma, USER_NO_BACKUP);
     const counts = await apiCounts(USER_NO_BACKUP);
-    await prisma.$executeRawUnsafe('REVOKE INSERT ON "data_snapshot" FROM lifting_app');
+    // Refused for this test's user only. Revoking the insert from lifting_app also failed an
+    // import-overwrite suite saving its backup in another worker at the same moment (#1408).
+    // Created with OR REPLACE, so a run killed before the cleanup doesn't fail the next one.
     let status: number;
     try {
+      await prisma.$executeRawUnsafe(`
+        CREATE OR REPLACE FUNCTION snapshots_e2e_refuse_backup() RETURNS trigger AS $$
+        BEGIN
+          IF NEW."userId" = '${USER_NO_BACKUP}' THEN RAISE EXCEPTION 'backup refused by the test'; END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`);
+      await prisma.$executeRawUnsafe(
+        'CREATE OR REPLACE TRIGGER snapshots_e2e_refuse_backup BEFORE INSERT ON "data_snapshot" FOR EACH ROW EXECUTE FUNCTION snapshots_e2e_refuse_backup()',
+      );
       status = (await inject(USER_NO_BACKUP, 'POST', '/users/me/training-data/clear', { counts })).statusCode;
     } finally {
-      await prisma.$executeRawUnsafe('GRANT INSERT ON "data_snapshot" TO lifting_app');
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS snapshots_e2e_refuse_backup ON "data_snapshot"');
+      await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS snapshots_e2e_refuse_backup()');
     }
 
     expect(status).toBe(503);

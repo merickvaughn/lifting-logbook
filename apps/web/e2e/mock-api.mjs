@@ -227,6 +227,14 @@ const CUSTOM_PROGRAM = {
   createdAt: '2026-01-01',
 };
 
+const GOOGLE_SHEET_LINKED = {
+  configured: true,
+  status: 'linked',
+  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/mock-sheet/edit',
+  lastMirroredAt: '2026-11-22T15:30:00.000Z',
+  syncFailed: false,
+};
+
 function createInitialState() {
   return {
     noCurrentMacrocycle: false,
@@ -235,6 +243,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|failed|unconfigured
+    // starts it linked, linked with a failed last sync (#1444), or as an API with no Google client.
+    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false },
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -274,6 +285,9 @@ function createInitialState() {
     assignedMacrocycles: [],
     assignedProgram: null,
     importBatches: [],
+    // A training-maxes import Settings lists and undoes (#1405): /__reset?withTrainingMaxImport=true
+    // seeds one that raised bench-press from 200 to 210.
+    trainingMaxImport: null,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
@@ -800,6 +814,18 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get('withClearError') === 'true') {
       state.clearError = true;
     }
+    const googleSheet = url.searchParams.get('googleSheet');
+    if (googleSheet === 'linked') state.sheetLink = { ...GOOGLE_SHEET_LINKED };
+    if (googleSheet === 'failed') state.sheetLink = { ...GOOGLE_SHEET_LINKED, syncFailed: true };
+    if (googleSheet === 'unconfigured') state.sheetLink.configured = false;
+    if (url.searchParams.get('withTrainingMaxImport') === 'true') {
+      state.trainingMaxImport = {
+        batch: { id: 'tm-import-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' },
+        lift: 'bench-press',
+        before: 200,
+      };
+      state.trainingMaxes.find((m) => m.lift === 'bench-press').weight = 210;
+    }
     if (url.searchParams.get('withMissingMax') === 'true') {
       state.missingMaxes = [
         {
@@ -1119,6 +1145,62 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // Link a Google Sheet (#1433). Stands in for the API's OAuth routes: `authorize` returns a
+  // Google URL for the spec to intercept, and the callback accepts only the code and state that
+  // URL carries.
+  // -------------------------------------------------------------------------
+  if (url.pathname.startsWith('/integrations/google-sheet')) {
+    const sheet = url.pathname.slice('/integrations/google-sheet'.length);
+    if (method === 'GET' && sheet === '') {
+      json(res, state.sheetLink);
+      return;
+    }
+    if (!state.sheetLink.configured) {
+      json(res, { statusCode: 503, error: 'google-sheet-unconfigured', message: 'Linking a Google Sheet is not set up here.' }, 503);
+      return;
+    }
+    if (method === 'POST' && sheet === '/authorize') {
+      json(res, { url: 'https://accounts.google.test/consent?state=mock-state' });
+      return;
+    }
+    if (method === 'POST' && sheet === '/callback') {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      if (body.code !== 'mock-code' || body.state !== 'mock-state') {
+        json(res, { statusCode: 400, error: 'google-sheet-state-invalid', message: 'This link attempt expired or is not yours. Try again.' }, 400);
+        return;
+      }
+      state.sheetLink = { ...GOOGLE_SHEET_LINKED, lastMirroredAt: null };
+      json(res, state.sheetLink);
+      return;
+    }
+    if (method === 'DELETE' && sheet === '') {
+      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false };
+      json(res, { revoked: true });
+      return;
+    }
+    if (method === 'POST' && sheet === '/sync') {
+      // The API's 409s name the link's state (#1444).
+      if (state.sheetLink.status === 'needs_relink') {
+        json(res, { statusCode: 409, error: 'google-sheet-needs-relink', message: 'Google access was removed. Link again.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status === 'sheet_missing') {
+        json(res, { statusCode: 409, error: 'google-sheet-missing', message: 'The sheet was deleted or can’t be found.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status !== 'linked') {
+        json(res, { statusCode: 409, error: 'google-sheet-not-linked', message: 'No Google Sheet is linked.' }, 409);
+        return;
+      }
+      // The run finishes at once here: the mirror time moves and a failure clears.
+      state.sheetLink = { ...state.sheetLink, lastMirroredAt: '2026-11-23T09:00:00.000Z', syncFailed: false };
+      json(res, { queued: true }, 202);
+      return;
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Clear data and its backups (#1310). Clear refuses counts that differ from the stored ones,
   // as the API does, and leaves a 30-day backup.
   // -------------------------------------------------------------------------
@@ -1152,6 +1234,229 @@ const server = createServer(async (req, res) => {
   }
   if (method === 'GET' && url.pathname === '/users/me/snapshots') {
     json(res, state.snapshots);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /supplements (#1376): a small stack, product names and amounts only
+  // -------------------------------------------------------------------------
+  const supplementItem = (id, name, over = {}) => ({
+    id, name, keyCompound: '', timing: '', shortNote: '', longNote: '', status: 'active',
+    unverified: false, links: [], category: '', typicalRange: '', ingredients: [], doses: [], ...over,
+  });
+  const supplementStack = () => ({
+    caffeineCutoff: '15:00',
+    dayTypes: [
+      { id: 'lift', name: 'Lift day', sessionTime: '16:30' },
+      { id: 'rest', name: 'Rest day' },
+    ],
+    items: (state.supplementItems ??= supplementSeed()),
+  });
+  function supplementSeed() {
+    const item = supplementItem;
+    return [
+      item('pre-x', 'Nutricost Pre-X', {
+        keyCompound: '300 mg caffeine', timing: '30–60 min before',
+        ingredients: [{ key: 'caffeine', amount: 300, unit: 'mg' }],
+        doses: [{ slot: 'pre', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+        reference: {
+          uses: ['Alertness and focus before a hard session'],
+          evidence: { level: 'strong', reason: 'Caffeine reliably improves performance.' },
+          cautions: ['Can disturb sleep when taken late'],
+          typicalRange: '3-6 mg/kg', sources: ['issn-caffeine'],
+        },
+      }),
+      item('quest', 'Quest protein (vanilla milkshake)', {
+        ingredients: [{ key: 'protein', amount: 24, unit: 'g' }],
+        doses: [{ slot: 'post', amount: '1 scoop', servings: 1, dayTypes: ['lift'] }],
+      }),
+      item('glycine', 'Glycine', {
+        doses: [{ slot: 'am', amount: '3 g', servings: 1, dayTypes: [] }],
+      }),
+      item('collagen', 'Hydrolyzed collagen peptides', {
+        status: 'pending',
+        doses: [{ slot: 'am', amount: '10 g', servings: 1, dayTypes: [] }],
+      }),
+    ];
+  }
+
+  if (method === 'GET' && url.pathname === '/supplements') {
+    json(res, supplementStack());
+    return;
+  }
+
+  // GET /supplements/changes, GET /supplements/as-of/:date and POST /supplements/items/:id/restore
+  // (#1378): a change log kept in the mock's state, seeded with the stack's items added on Nov 18.
+  // As-of is simplified: the current stack when the date is on or after the first change.
+  const supplementChanges = () =>
+    (state.supplementChanges ??= supplementSeed().map((item, i) => ({ seq: i + 1, date: '2026-11-18', type: 'added', item })));
+  function supplementLog(type, body, date) {
+    const log = supplementChanges();
+    log.push({ seq: log.length + 1, date: date ?? '2026-11-21', type, ...body });
+  }
+  if (method === 'GET' && url.pathname === '/supplements/changes') {
+    // The latest `limit` changes before `beforeSeq`, oldest first, as the API pages them.
+    const beforeSeq = Number(url.searchParams.get('beforeSeq') ?? Infinity);
+    const limit = Number(url.searchParams.get('limit') ?? 200);
+    const page = supplementChanges().filter((c) => c.seq < beforeSeq);
+    json(res, structuredClone(page.slice(Math.max(0, page.length - limit))));
+    return;
+  }
+  const asOfPath = url.pathname.match(/^\/supplements\/as-of\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === 'GET' && asOfPath) {
+    const first = supplementChanges()[0].date;
+    json(res, structuredClone({
+      items: asOfPath[1] < first ? [] : supplementStack().items,
+      dayTypes: supplementStack().dayTypes,
+      firstChangeDate: first,
+      anomalies: [],
+    }));
+    return;
+  }
+  const restorePath = url.pathname.match(/^\/supplements\/items\/([^/]+)\/restore$/);
+  if (method === 'POST' && restorePath) {
+    const id = decodeURIComponent(restorePath[1]);
+    const stack = supplementStack();
+    if (stack.items.some((i) => i.id === id)) {
+      json(res, { statusCode: 409, message: `Supplement item ${id} is in the stack` }, 409);
+      return;
+    }
+    const removed = supplementChanges().filter((c) => c.type === 'removed' && c.item.id === id).pop();
+    if (!removed) {
+      json(res, { statusCode: 404, message: `No removed supplement item ${id}` }, 404);
+      return;
+    }
+    stack.items.push(structuredClone(removed.item));
+    supplementLog('restored', { itemId: id }, url.searchParams.get('today'));
+    json(res, stack);
+    return;
+  }
+
+  // GET /supplements/catalog (#1409): one entry, enough to autofill a name typed as "creatine".
+  if (method === 'GET' && url.pathname === '/supplements/catalog') {
+    const q = (url.searchParams.get('q') ?? '').toLowerCase();
+    json(res, q !== '' && 'creatine monohydrate'.includes(q) ? [{
+      key: 'creatine-monohydrate', name: 'Creatine monohydrate', aliases: ['creatine'], kind: 'compound',
+      keyCompound: 'Creatine monohydrate', suggestedDose: '5 g', timing: 'Anytime or pre-workout', suggestedSlot: 'am',
+      ingredients: [{ key: 'creatine', amount: 5, unit: 'g' }],
+      reference: { uses: ['Strength'], evidence: { level: 'strong', reason: 'Well studied.' }, cautions: [], typicalRange: '3-5 g', sources: [] },
+    }] : []);
+    return;
+  }
+
+  // POST /supplements/items, PATCH and DELETE /supplements/items/:id (#1409): kept in the mock's state.
+  if (method === 'POST' && url.pathname === '/supplements/items') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const created = supplementItem(`supp-new-${(state.supplementNextId = (state.supplementNextId ?? 0) + 1)}`, body.name, body);
+    stack.items.push(created);
+    json(res, { ...stack, id: created.id }, 201);
+    return;
+  }
+  const supplementPath = url.pathname.match(/^\/supplements\/items\/([^/]+)$/);
+  if (supplementPath && (method === 'PATCH' || method === 'DELETE')) {
+    const stack = supplementStack();
+    const index = stack.items.findIndex((i) => i.id === decodeURIComponent(supplementPath[1]));
+    if (index < 0) {
+      json(res, { statusCode: 404, message: 'No such item' }, 404);
+      return;
+    }
+    if (method === 'DELETE') {
+      const [removed] = stack.items.splice(index, 1);
+      supplementLog('removed', { item: removed }, url.searchParams.get('today'));
+    }
+    else {
+      const body = await readBody(req);
+      if (rejectIfInvalidBody(res, body)) return;
+      Object.assign(stack.items[index], body);
+    }
+    json(res, stack);
+    return;
+  }
+
+  // POST /supplements/doses/move (#1410): the doses `doses` names, or the listed items' doses in
+  // `from`, go to `to`.
+  if (method === 'POST' && url.pathname === '/supplements/doses/move') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) {
+      const named = body.doses?.filter((r) => r.itemId === item.id);
+      const moves = (d, i) => (named ? named.some((r) => r.index === i && r.slot === d.slot) : d.slot === body.from);
+      item.doses = item.doses.map((d, i) => (moves(d, i) ? { ...d, slot: body.to, dayTypes: body.dayTypes ?? d.dayTypes } : d));
+    }
+    json(res, stack);
+    return;
+  }
+
+  // POST /supplements/items/remove (#1414): the listed items go in one write, or a 404 removes none.
+  if (method === 'POST' && url.pathname === '/supplements/items/remove') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const unknown = body.itemIds.find((id) => !stack.items.some((i) => i.id === id));
+    if (unknown !== undefined) {
+      json(res, { statusCode: 404, message: `No supplement item ${unknown}` }, 404);
+      return;
+    }
+    // Each one is logged as removed, for History's Restore (#1378).
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) {
+      supplementLog('removed', { item }, url.searchParams.get('today'));
+    }
+    state.supplementItems = stack.items.filter((i) => !body.itemIds.includes(i.id));
+    json(res, supplementStack());
+    return;
+  }
+
+  // POST /supplements/import/google-sheet (#1379): a canned sheet, whatever the link. One tab has no
+  // Compound column, as a lifter's workbook often does.
+  if (method === 'POST' && url.pathname === '/supplements/import/google-sheet') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const tab = (name, rows) => ({ name, rows, links: rows.map((r) => r.map(() => '')), skipReason: null });
+    json(res, {
+      tabs: [
+        tab('Notes', [['Date', 'Text'], ['11/1/2026', 'Started the stack']]),
+        tab('Supplements', [
+          ['Compound', 'Amount', 'Timing', 'Purpose', 'Notes'],
+          ['Melatonin', '1-10mg', 'bedtime', 'sleep induction', 'more doesn’t induce sleep faster'],
+          ['Iron', '18mg', 'anytime', 'red blood cells', ''],
+          ['Nitrates', '???', '???', 'exercise agonist', ''],
+        ]),
+      ],
+    });
+    return;
+  }
+
+  // POST /supplements/import (#1379): the reviewed rows become items in one write, each logged as an
+  // `added` change noted "Imported from <source>", as the API does, so History shows where they came from.
+  if (method === 'POST' && url.pathname === '/supplements/import') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    const dayTypeIds = stack.dayTypes.map((d) => d.id);
+    for (const row of body.rows) {
+      const created = supplementItem(`supp-new-${(state.supplementNextId = (state.supplementNextId ?? 0) + 1)}`, row.name, {
+        timing: row.timing, shortNote: row.shortNote, longNote: row.longNote, links: row.links, status: row.status,
+        ...(row.catalogKey === undefined ? {} : { catalogKey: row.catalogKey }),
+        // A workout-slot dose takes every day type, as the API does.
+        doses: row.doses.map((d) => (['pre', 'intra', 'post'].includes(d.slot) && d.dayTypes.length === 0 ? { ...d, dayTypes: dayTypeIds } : d)),
+      });
+      stack.items.push(created);
+      supplementLog('added', { item: structuredClone(created), note: `Imported from ${body.source}` }, url.searchParams.get('today'));
+    }
+    json(res, supplementStack());
+    return;
+  }
+
+  // POST /supplements/items/status (#1410, #1411): the listed items' status.
+  if (method === 'POST' && url.pathname === '/supplements/items/status') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const stack = supplementStack();
+    for (const item of stack.items.filter((i) => body.itemIds.includes(i.id))) item.status = body.status;
+    json(res, stack);
     return;
   }
 
@@ -1330,8 +1635,14 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for.
+    // GET /programs/:p/import/batches (#1257): the imports History offers Undo for, or with
+    // destination=training-maxes the one Settings offers Undo for (#1405).
     if (method === 'GET' && rest[0] === 'import' && rest[1] === 'batches' && rest.length === 2) {
+      if (url.searchParams.get('destination') === 'training-maxes') {
+        const tm = state.trainingMaxImport;
+        json(res, tm && tm.batch.program === decodeURIComponent(parts[1]) ? [tm.batch] : []);
+        return;
+      }
       json(res, state.importBatches.filter((b) => b.program === decodeURIComponent(parts[1])));
       return;
     }
@@ -1847,8 +2158,12 @@ const server = createServer(async (req, res) => {
             ? {
                 columnMappings: [
                   { sourceHeader: 'Date', destinationField: 'dateUpdated', confidence: 0.65, required: true, transformationNote: null },
-                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: true, transformationNote: null },
+                  // `fuzzyColumnMapper` never marks an unmatched source column required: it
+                  // reports the field the file lacks as a row of its own, which is where the
+                  // wizard asks which column holds it (#1442).
+                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: false, transformationNote: 'No matching field found' },
                   { sourceHeader: 'Max Weight', destinationField: 'weight', confidence: 0.72, required: true, transformationNote: null },
+                  { sourceHeader: '', destinationField: 'lift', confidence: 0, required: true, transformationNote: 'Required field not found in CSV' },
                 ],
               }
             : {}),
@@ -1941,6 +2256,14 @@ const server = createServer(async (req, res) => {
     }
     // POST /programs/:p/import/:batchId/undo — Phase 3 undo
     if (method === 'POST' && rest[0] === 'import' && rest.length === 3 && rest[2] === 'undo') {
+      // Undoing the seeded training-maxes import puts back the max it raised (#1405).
+      const tm = state.trainingMaxImport;
+      if (tm && tm.batch.id === rest[1]) {
+        state.trainingMaxes.find((m) => m.lift === tm.lift).weight = tm.before;
+        state.trainingMaxImport = null;
+        json(res, { batchId: rest[1], restored: 1, skipped: 0, flagged: [] });
+        return;
+      }
       // Undoing a recorded batch removes its macrocycles (#1257).
       const batch = state.importBatches.find((b) => b.id === rest[1]);
       if (batch) {

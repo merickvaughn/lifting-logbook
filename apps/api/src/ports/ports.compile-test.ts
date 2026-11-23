@@ -199,6 +199,7 @@ const _macrocycleScheduledWorkoutRepo: IMacrocycleScheduledWorkoutRepository = {
 
 const _workoutSkipOverrideRepo: IWorkoutSkipOverrideRepository = {
   getSkipsForMacrocycle: () => Promise.resolve(new Set<number>()),
+  getSkipReasonsForMacrocycle: () => Promise.resolve(new Map<number, string | null>()),
   skipWorkout: () => Promise.resolve(),
   unskipWorkout: () => Promise.resolve(),
 };
@@ -281,6 +282,7 @@ const _focusRepo: IFocusRepository = {
   getBudget: () => Promise.resolve({ ...DEFAULT_FOCUS_BUDGET }),
   setBudget: (budget) => Promise.resolve(budget),
   getDayState: () => Promise.resolve(null),
+  getDayStatesForMacrocycle: () => Promise.resolve(new Map()),
   saveDayState: (_program, _macrocycleNum, _workoutNum, state) => Promise.resolve(state),
 };
 
@@ -340,6 +342,27 @@ const _repositoryBundle: RepositoryBundle = {
   liftRecord: _liftRecordRepo,
   programPhilosophy: _programPhilosophyRepo,
   strengthGoal: _strengthGoalRepo,
+  supplement: {
+    load: () => Promise.reject(new Error('not implemented')),
+    changes: () => Promise.resolve([]),
+    allChanges: () => Promise.resolve([]),
+    changesThrough: () => Promise.resolve([]),
+    firstChangeDate: () => Promise.resolve(null),
+    lastRemoved: () => Promise.resolve(undefined),
+    write: () => Promise.reject(new Error('not implemented')),
+  },
+  googleSheetLink: {
+    getLink: () => Promise.resolve(null),
+    saveLink: (): Promise<void> => Promise.resolve(),
+    deleteLink: (): Promise<void> => Promise.resolve(),
+    takeMirrorLease: () => Promise.resolve(null),
+    releaseMirrorLease: (): Promise<void> => Promise.resolve(),
+    recordMirrored: () => Promise.resolve(false),
+    markNeedsRelink: (): Promise<void> => Promise.resolve(),
+    markSheetMissing: (): Promise<void> => Promise.resolve(),
+    putOauthRequest: (): Promise<void> => Promise.resolve(),
+    takeOauthRequest: () => Promise.resolve(null),
+  },
   trainingMax: _trainingMaxRepo,
   trainingMaxHistory: _trainingMaxHistoryRepo,
   trainingData: {

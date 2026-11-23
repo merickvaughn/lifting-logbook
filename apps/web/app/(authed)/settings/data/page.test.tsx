@@ -7,6 +7,10 @@ jest.mock('@/lib/api', () => ({
   fetchUserSettings: jest.fn(),
 }));
 jest.mock('./DownloadAll', () => ({ __esModule: true, default: () => <div data-download-all /> }));
+jest.mock('./GoogleSheet', () => ({
+  __esModule: true,
+  default: ({ notice }: { notice?: string }) => <div data-google-sheet={notice ?? ''} />,
+}));
 jest.mock('./TrainingData', () => ({ __esModule: true, default: () => <div data-training-data /> }));
 jest.mock('./SetsExport', () => ({
   __esModule: true,
@@ -58,5 +62,17 @@ describe('Settings → Data page', () => {
 
     expect((await renderPrograms()).map((p) => p.id)).toEqual(['5-3-1']);
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('custom programs fetch failed'), expect.any(Error));
+  });
+
+  it('shows the Google Sheet section, with the callback’s result when it sent one', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([]);
+
+    expect(renderToStaticMarkup((await DataSettingsPage()) as ReactElement)).toContain('data-google-sheet=""');
+    const withNotice = await DataSettingsPage({ searchParams: Promise.resolve({ google_sheet: 'denied' }) });
+    expect(renderToStaticMarkup(withNotice as ReactElement)).toContain('data-google-sheet="denied"');
+    // A value the route never sends is ignored, so the query can't put text on the page.
+    const forged = await DataSettingsPage({ searchParams: Promise.resolve({ google_sheet: 'hello' }) });
+    expect(renderToStaticMarkup(forged as ReactElement)).toContain('data-google-sheet=""');
   });
 });

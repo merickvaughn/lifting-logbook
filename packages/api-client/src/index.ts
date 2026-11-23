@@ -1,4 +1,6 @@
 import type {
+  GoogleSheetLinkView,
+  GoogleSheetUnlinkResult,
   BodyWeightResponse,
   CreateCustomLiftRequest,
   CreateFocusBlockRequest,
@@ -35,6 +37,7 @@ import type {
   ImportPreviewResponse,
   ImportBatchSummary,
   ImportUndoResponse,
+  TrainingMaxImportBatchSummary,
   LiftMetadataResponse,
   LiftModificationResponse,
   LiftModificationsByLiftResponse,
@@ -69,6 +72,18 @@ import type {
   UpsertStrengthGoalRequest,
   UserSettingsResponse,
   WorkoutResponse,
+  SupplementAsOfResponse,
+  SupplementCatalogEntry,
+  SupplementChange,
+  SupplementCreatedResponse,
+  SupplementDayType,
+  SupplementDose,
+  SupplementImportBody,
+  SupplementItemDetails,
+  SupplementSheetResponse,
+  SupplementSlot,
+  SupplementStackResponse,
+  SupplementStatus,
 } from '@lifting-logbook/types';
 import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-logbook/types';
 
@@ -85,6 +100,33 @@ import { IMPORT_SUGGESTION_DEADLINE_MS, MACROCYCLE_ID_HEADER } from '@lifting-lo
 // Consolidates apps/web/lib/api.ts (server) and lib/client-api.ts (browser).
 // See issue #466 / flag 3 of the 2026-06-08 architecture review (#464).
 // ---------------------------------------------------------------------------
+
+/**
+ * The body of `POST /supplements/doses/move` (#1410): moves the items' doses in `from` to `to`, or
+ * exactly the doses `doses` names. A named dose no longer where the client saw it is a 400.
+ */
+export interface MoveSupplementDosesBody {
+  itemIds: string[];
+  from?: SupplementSlot;
+  doses?: { itemId: string; index: number; slot: SupplementSlot }[];
+  to: SupplementSlot;
+  /** Replaces the moved doses' day types when given; `[]` means every day. */
+  dayTypes?: string[];
+}
+
+/** The body of `PUT /supplements/settings` (#1411): the day types, and/or the caffeine cutoff, both 24-hour `HH:MM`. */
+export interface SupplementSettingsBody {
+  dayTypes?: SupplementDayType[];
+  caffeineCutoff?: string;
+}
+
+/** The body of `POST /supplements/items` and `PATCH /supplements/items/:id` (#1409). */
+export type SupplementItemBody = Partial<SupplementItemDetails> & {
+  status?: SupplementStatus;
+  doses?: SupplementDose[];
+  /** Create only: the catalog entry to copy blanks and reference content from. */
+  catalogKey?: string;
+};
 
 export interface ApiClientConfig {
   /**
@@ -414,6 +456,10 @@ export function createApiClient(config: ApiClientConfig) {
     /** The imports that touched the program's past macrocycles, newest first, each undoable (#1257). */
     fetchImportBatches(program: string): Promise<ImportBatchSummary[]> {
       return request(`/programs/${enc(program)}/import/batches`, { cache: 'no-store' });
+    },
+    /** The program's training-maxes imports, newest first, each undoable (#1405). */
+    fetchTrainingMaxImportBatches(program: string): Promise<TrainingMaxImportBatchSummary[]> {
+      return request(`/programs/${enc(program)}/import/batches?destination=training-maxes`, { cache: 'no-store' });
     },
     /** What overwriting all or all imported history would remove, for Assign (#1182). */
     fetchOverwriteCounts(program: string): Promise<ImportOverwriteCountsResponse> {
@@ -802,6 +848,156 @@ export function createApiClient(config: ApiClientConfig) {
         body: JSON.stringify(body),
         cache: 'no-store',
       });
+    },
+
+    // -- Link a Google Sheet (#1433, ADR-047) --------------------------------
+    /** The lifter's link; `configured: false` when this API has no Google client. */
+    fetchGoogleSheetLink(): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet', { cache: 'no-store' });
+    },
+    /** Google's consent URL for the browser to go to. 503 `google-sheet-unconfigured` when not set up. */
+    authorizeGoogleSheet(): Promise<{ url: string }> {
+      return request('/integrations/google-sheet/authorize', { method: 'POST', cache: 'no-store' });
+    },
+    /** Completes the link from the `code` and `state` Google redirected back with. */
+    completeGoogleSheetLink(code: string, state: string): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet/callback', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ code, state }),
+        cache: 'no-store',
+      });
+    },
+    /** Makes a new spreadsheet when the linked one is gone. */
+    createGoogleSheetSpreadsheet(): Promise<GoogleSheetLinkView> {
+      return request('/integrations/google-sheet/sheet', { method: 'POST', cache: 'no-store' });
+    },
+    /**
+     * Sync now: enqueues a mirror run. 409 `google-sheet-not-linked` when nothing is linked,
+     * `google-sheet-needs-relink` when Google access was removed, `google-sheet-missing` when the
+     * sheet is gone; 502 `sheet-mirror-enqueue-failed`.
+     */
+    syncGoogleSheet(): Promise<{ queued: true }> {
+      return request('/integrations/google-sheet/sync', { method: 'POST', cache: 'no-store' });
+    },
+    /** Deletes the link, revoking Google's grant if it can. */
+    unlinkGoogleSheet(): Promise<GoogleSheetUnlinkResult> {
+      return request('/integrations/google-sheet', { method: 'DELETE', cache: 'no-store' });
+    },
+
+    // -- Supplements (#1376) ------------------------------------------------
+    /** The lifter's stack, day types and caffeine cutoff. */
+    fetchSupplements(): Promise<SupplementStackResponse> {
+      return request('/supplements', { cache: 'no-store' });
+    },
+    /** Reads a link-shared Google Sheet for the supplement import: each tab's rows and hyperlinks (#1379). */
+    fetchSupplementSheet(url: string): Promise<SupplementSheetResponse> {
+      return request('/supplements/import/google-sheet', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ url }),
+        cache: 'no-store',
+      });
+    },
+    /** Saves the reviewed rows as items in one write, each logged as "Imported from <source>" (#1379). */
+    importSupplements(body: SupplementImportBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/import?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /** Catalog entries whose name or alias contains `q`, for autofill (#1409). */
+    fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {
+      return request(`/supplements/catalog?q=${enc(q)}`, { cache: 'no-store' });
+    },
+    /** Adds an item. With `catalogKey`, the API fills blanks from that entry and attaches its reference content. */
+    createSupplementItem(body: SupplementItemBody, today: string): Promise<SupplementCreatedResponse> {
+      return request(`/supplements/items?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /** Removes an item; the API keeps it in the change log so it can be restored. */
+    removeSupplementItem(id: string, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, { method: 'DELETE', cache: 'no-store' });
+    },
+    /** Removes the listed items in one write: all of them, or none if any is unknown (#1414). */
+    removeSupplementItems(itemIds: string[], today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/remove?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ itemIds }),
+        cache: 'no-store',
+      });
+    },
+    /** Edits an item, such as the links Keep saves. `today` is the lifter's local date (YYYY-MM-DD). */
+    updateSupplementItem(id: string, body: SupplementItemBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}?today=${enc(today)}`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    /** Moves the listed items' doses from one slot to another (#1410). */
+    moveSupplementDoses(body: MoveSupplementDosesBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/doses/move?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    /** Marks the listed items active or pending (#1410). */
+    setSupplementStatus(itemIds: string[], status: SupplementStatus, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/status?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ itemIds, status }),
+        cache: 'no-store',
+      });
+    },
+    /** Combines two or more items into a new mix (#1410). */
+    createSupplementMix(name: string, itemIds: string[], today: string): Promise<SupplementCreatedResponse> {
+      return request(`/supplements/mixes?today=${enc(today)}`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name, itemIds }),
+        cache: 'no-store',
+      });
+    },
+
+    /** Replaces the day types and/or sets the caffeine cutoff (#1411). A 400 names a workout dose left with no day type. */
+    updateSupplementSettings(body: SupplementSettingsBody, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/settings?today=${enc(today)}`, {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+
+    // -- Supplement history (#1378) -----------------------------------------
+    /** A page of the change log, oldest first. The next page back is `beforeSeq` = the first change's `seq`. */
+    fetchSupplementChanges(opts: { beforeSeq?: number; limit?: number } = {}): Promise<SupplementChange[]> {
+      const q = new URLSearchParams();
+      if (opts.beforeSeq !== undefined) q.set('beforeSeq', String(opts.beforeSeq));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request(`/supplements/changes${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
+    },
+    /** The stack and day types at the end of `date` (`YYYY-MM-DD`), replayed from the change log. */
+    fetchSupplementsAsOf(date: string): Promise<SupplementAsOfResponse> {
+      return request(`/supplements/as-of/${enc(date)}`, { cache: 'no-store' });
+    },
+    /** Brings a removed item back with its doses and status. `today` is the lifter's local date. */
+    restoreSupplementItem(id: string, today: string): Promise<SupplementStackResponse> {
+      return request(`/supplements/items/${enc(id)}/restore?today=${enc(today)}`, { method: 'POST', cache: 'no-store' });
     },
 
     // -- Body weight -------------------------------------------------------

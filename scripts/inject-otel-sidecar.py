@@ -58,7 +58,12 @@ Optional env vars:
   INGRESS_EXTRA_ENV (unset)   newline-separated KEY=VALUE pairs merged into (overriding) the
                        ingress container's env. Used by the web deploy for the #806/#809
                        same-origin guard: CLIENT_ERROR_ALLOWED_ORIGINS (the web service's own
-                       public URL) + CLIENT_ERROR_DROP_CROSS_ORIGIN. Unset for the api service.
+                       public URL) + CLIENT_ERROR_DROP_CROSS_ORIGIN, and by the deploy action's
+                       `ingress_env` input for a caller's own pairs (#1295).
+  INGRESS_SECRET_ENV (unset)   newline-separated NAME=SECRET pairs, each set on the ingress
+                       container from that Secret Manager secret's latest version, replacing any
+                       live entry of that name (#1432: GOOGLE_OAUTH_CLIENT_SECRET on the api). An
+                       empty secret name, or a NAME also in INGRESS_EXTRA_ENV, fails the deploy.
 
 Reads the manifest from a path argument if given, else stdin. Writes YAML to stdout.
 """
@@ -78,12 +83,13 @@ def req(name):
     return value
 
 
-def parse_extra_env(raw):
+def parse_extra_env(raw, var="INGRESS_EXTRA_ENV"):
     """Parse newline-separated ``KEY=VALUE`` pairs into an ordered ``[{name, value}]`` list.
 
     Blank lines are skipped; only the first ``=`` splits (so a value may itself contain ``=``).
-    A non-blank line with no ``=`` or an empty key is a hard error — a malformed INGRESS_EXTRA_ENV
-    must fail the deploy loudly rather than silently drop guard config onto the live service.
+    A non-blank line with no ``=`` or an empty key is a hard error — a malformed entry must fail
+    the deploy loudly rather than silently drop config onto the live service. ``var`` names the
+    env var being parsed, for the error message.
     """
     pairs = []
     for line in (raw or "").splitlines():
@@ -91,12 +97,30 @@ def parse_extra_env(raw):
         if not line:
             continue
         if "=" not in line:
-            sys.exit(f"inject-otel-sidecar: INGRESS_EXTRA_ENV entry missing '=': {line!r}")
+            sys.exit(f"inject-otel-sidecar: {var} entry missing '=': {line!r}")
         name, value = line.split("=", 1)
         if not name.strip():
-            sys.exit(f"inject-otel-sidecar: INGRESS_EXTRA_ENV entry has empty key: {line!r}")
+            sys.exit(f"inject-otel-sidecar: {var} entry has empty key: {line!r}")
         pairs.append({"name": name.strip(), "value": value})
     return pairs
+
+
+def parse_secret_env(raw, plain_names):
+    """Parse INGRESS_SECRET_ENV's ``NAME=secret-name`` lines into secret-backed env entries.
+
+    Each entry reads that Secret Manager secret's latest version. An empty secret name is a hard
+    error, and so is a name also set as a plain value in INGRESS_EXTRA_ENV, since one entry would
+    silently replace the other.
+    """
+    entries = []
+    for e in parse_extra_env(raw, "INGRESS_SECRET_ENV"):
+        secret = e["value"].strip()
+        if not secret:
+            sys.exit(f"inject-otel-sidecar: INGRESS_SECRET_ENV entry has empty secret name: {e['name']!r}")
+        if e["name"] in plain_names:
+            sys.exit(f"inject-otel-sidecar: {e['name']!r} is in both INGRESS_EXTRA_ENV and INGRESS_SECRET_ENV")
+        entries.append({"name": e["name"], "valueFrom": {"secretKeyRef": {"key": "latest", "name": secret}}})
+    return entries
 
 
 def main():
@@ -118,6 +142,11 @@ def main():
     # Optional extra ingress env (KEY=VALUE per line), merged into — and overriding — the live
     # ingress env below. The web deploy uses it for the #806/#809 same-origin guard; unset for api.
     extra_ingress_env = parse_extra_env(os.environ.get("INGRESS_EXTRA_ENV"))
+    # Optional secret env (NAME=secret-name per line), each read from the secret's latest version
+    # (#1432: GOOGLE_OAUTH_CLIENT_SECRET). Merged and overriding like INGRESS_EXTRA_ENV.
+    extra_ingress_env += parse_secret_env(
+        os.environ.get("INGRESS_SECRET_ENV"), {e["name"] for e in extra_ingress_env}
+    )
 
     src = sys.argv[1] if len(sys.argv) > 1 else "-"
     text = sys.stdin.read() if src == "-" else open(src, encoding="utf-8").read()

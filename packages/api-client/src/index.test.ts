@@ -698,6 +698,13 @@ describe('createApiClient', () => {
       await makeClient().undoImport('5-3-1', 'b-1', '2026-11-13');
       expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/programs/5-3-1/import/b-1/undo?today=2026-11-13');
     });
+
+    it('fetchTrainingMaxImportBatches lists the training-maxes destination (#1405)', async () => {
+      const batch = { id: 'tm-1', program: '5-3-1', createdAt: '2026-11-21T18:04:09.000Z' };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([batch])));
+      await expect(makeClient().fetchTrainingMaxImportBatches('5-3-1')).resolves.toEqual([batch]);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe('http://api.test/programs/5-3-1/import/batches?destination=training-maxes');
+    });
   });
 
   describe('smart import (previewImport / commitImport)', () => {
@@ -1077,5 +1084,123 @@ describe('createApiClient', () => {
       mockFetch.mockResolvedValue(new Response('upstream down', { status: 503 }));
       await expect(makeClient().skipWorkout('5-3-1', 1, 2)).rejects.toMatchObject({ status: 503, code: undefined });
     });
+  });
+});
+
+describe('supplements', () => {
+  it('fetchSupplements reads GET /supplements uncached', async () => {
+    const stack = { items: [], dayTypes: [], caffeineCutoff: '15:00' };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(stack), { status: 200 }));
+    await expect(makeClient().fetchSupplements()).resolves.toEqual(stack);
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('updateSupplementItem PATCHes the links with the lifter\'s date, escaping the id', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().updateSupplementItem('a b', { links: [{ label: '', url: 'https://www.amazon.com/s?k=Glycine' }] }, '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b?today=2026-11-21');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(String(init.body))).toEqual({ links: [{ label: '', url: 'https://www.amazon.com/s?k=Glycine' }] });
+  });
+
+  it('createSupplementItem POSTs the item with the lifter\'s date, and removeSupplementItem DELETEs it', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [], id: 'n' }), { status: 201 }));
+    await expect(makeClient().createSupplementItem({ name: 'Creatine', catalogKey: 'creatine' }, '2026-11-21')).resolves.toEqual({ items: [], id: 'n' });
+    let [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Creatine', catalogKey: 'creatine' });
+
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().removeSupplementItem('a b', '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b?today=2026-11-21');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('removeSupplementItems POSTs the ids to the bulk remove endpoint with the lifter\'s date', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    await makeClient().removeSupplementItems(['a', 'b'], '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/remove?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a', 'b'] });
+  });
+
+  it('fetchSupplementCatalog reads GET /supplements/catalog with the escaped query, uncached', async () => {
+    mockFetch.mockResolvedValue(new Response('[]', { status: 200 }));
+    await makeClient().fetchSupplementCatalog('vitamin d&k');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/catalog?q=vitamin%20d%26k');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('moveSupplementDoses, setSupplementStatus and createSupplementMix POST their bodies with the lifter\'s date', async () => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const client = makeClient();
+    await client.moveSupplementDoses({ itemIds: ['a'], from: 'pre', to: 'pm', dayTypes: [] }, '2026-11-21');
+    let [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/doses/move?today=2026-11-21');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a'], from: 'pre', to: 'pm', dayTypes: [] });
+    const doses = [{ itemId: 'a', index: 1, slot: 'pre' as const }];
+    await client.moveSupplementDoses({ itemIds: ['a'], doses, to: 'pm' }, '2026-11-21');
+    [url, init] = lastCall();
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a'], doses, to: 'pm' });
+    await client.setSupplementStatus(['a', 'b'], 'active', '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/status?today=2026-11-21');
+    expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a', 'b'], status: 'active' });
+    await client.createSupplementMix('Broth', ['a', 'b'], '2026-11-21');
+    [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/mixes?today=2026-11-21');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Broth', itemIds: ['a', 'b'] });
+  });
+
+  it('fetchSupplementChanges reads GET /supplements/changes, with the paging params only when given, uncached', async () => {
+    mockFetch.mockImplementation(async () => new Response('[]', { status: 200 }));
+    const client = makeClient();
+    await client.fetchSupplementChanges();
+    expect(lastCall()[0]).toBe('http://api.test/supplements/changes');
+    await client.fetchSupplementChanges({ beforeSeq: 40, limit: 25 });
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/changes?beforeSeq=40&limit=25');
+    expect(init.cache).toBe('no-store');
+  });
+
+  it('fetchSupplementsAsOf reads GET /supplements/as-of/:date uncached, and restoreSupplementItem POSTs the restore with the lifter\'s date', async () => {
+    const asOf = { items: [], dayTypes: [], firstChangeDate: null, anomalies: [] };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(asOf), { status: 200 }));
+    await expect(makeClient().fetchSupplementsAsOf('2026-11-20')).resolves.toEqual(asOf);
+    expect(lastCall()[0]).toBe('http://api.test/supplements/as-of/2026-11-20');
+    expect(lastCall()[1].cache).toBe('no-store');
+
+    mockFetch.mockResolvedValue(new Response('{"items":[]}', { status: 200 }));
+    await makeClient().restoreSupplementItem('a b', '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/items/a%20b/restore?today=2026-11-21');
+    expect(init.method).toBe('POST');
+  });
+
+  it('updateSupplementSettings PUTs the day types and cutoff with the lifter\'s date, and throws a 400\'s reason', async () => {
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const client = makeClient();
+    const body = { dayTypes: [{ id: 'lift', name: 'Lift day', sessionTime: '16:30' }], caffeineCutoff: '15:00' };
+    await client.updateSupplementSettings(body, '2026-11-21');
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/settings?today=2026-11-21');
+    expect(init.method).toBe('PUT');
+    expect(init.cache).toBe('no-store');
+    expect(JSON.parse(String(init.body))).toEqual(body);
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'leaves Creatine on no day' }), { status: 400 }));
+    await expect(client.updateSupplementSettings(body, '2026-11-21')).rejects.toThrow('leaves Creatine on no day');
+  });
+
+  it('updateSupplementItem throws the server message on failure', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'stale' }), { status: 409 }));
+    await expect(makeClient().updateSupplementItem('x', { links: [] }, '2026-11-21')).rejects.toThrow('stale');
   });
 });

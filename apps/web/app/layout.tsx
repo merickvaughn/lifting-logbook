@@ -1,7 +1,8 @@
-import { ClerkProvider, SignedIn, UserButton } from '@clerk/nextjs';
+import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata } from "next";
 import { ClerkApiInitializer } from '@/components/ClerkApiInitializer';
 import { PublicConfigProvider } from '@/components/PublicConfigProvider';
+import { SignedInUserButton } from '@/components/SignedInUserButton';
 import {
   publicConfigScript,
   readServerClerkPublishableKey,
@@ -46,8 +47,10 @@ export default function RootLayout({
   //   • <ClerkApiInitializer> — calls useAuth(), which requires a <ClerkProvider>
   //     ancestor; it is unused here anyway (getClientAuthHeaders in lib/client-api.ts
   //     uses the dev token first and never calls Clerk's getToken).
-  //   • <SignedIn>/<UserButton> — <SignedIn> would call auth() server-side without
-  //     middleware having run, which throws and crashes the page tree.
+  //   • <SignedInUserButton> — its <SignedIn>/<UserButton> need a <ClerkProvider>.
+  //     It is a Client Component so that <SignedIn> never calls auth() server-side:
+  //     a 404 for a static-extension path renders this layout without middleware,
+  //     where auth() throws (#1388).
   // The sign-in page carries the same DEV_AUTH_TOKEN guard so /sign-in does not render
   // a <ClerkProvider>-less <SignIn/> in this mode (#834). Real-Clerk mode is unchanged.
   const devAuthMode = Boolean(process.env.DEV_AUTH_TOKEN);
@@ -79,20 +82,7 @@ export default function RootLayout({
       <body>
         <PublicConfigProvider config={publicConfig}>
           {!devAuthMode && <ClerkApiInitializer />}
-          {!devAuthMode && (
-            <SignedIn>
-              <div
-                style={{
-                  position: 'fixed',
-                  top: '1rem',
-                  right: '1rem',
-                  zIndex: 50,
-                }}
-              >
-                <UserButton afterSignOutUrl="/sign-in" />
-              </div>
-            </SignedIn>
-          )}
+          {!devAuthMode && <SignedInUserButton />}
           {children}
         </PublicConfigProvider>
       </body>

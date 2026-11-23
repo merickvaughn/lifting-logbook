@@ -904,6 +904,12 @@ export interface ImportDelta {
   /** Phase 3: row health; undefined means 'ok'. */
   status?: ImportRowStatus;
   /**
+   * Why the row is not 'ok', from the first of its validation errors. An incomplete row has no
+   * `after` to show, so without this the Review table says only "incomplete" and the lifter can't
+   * tell a bad date from a missing weight (#1402).
+   */
+  message?: string;
+  /**
    * Phase 3: 1-based position among the parsed rows (used by liftOverrides and
    * `__row_<rowIndex>` excludeKeys on commit). It is the CSV data row for lift records. It
    * isn't for program specs, which parse sorted, or strength goals, which skip non-lift
@@ -999,6 +1005,13 @@ export interface ColumnMapping {
   required: boolean;
   /** Human-readable note about data transformations that will be applied (normalization, split, etc.). */
   transformationNote?: string;
+  /**
+   * The other destination fields that meet this requirement in place of `destinationField`
+   * — a one-of group, such as a program spec stating its per-set drop as either
+   * `WT Decrement %` or `Weight %`. Set only on a required field the file has no column
+   * for; the Map columns gate is met when a column is pointed at any one of them (#1442).
+   */
+  satisfiedBy?: string[];
   /** Up to 2 alternative field matches with lower confidence (omitted when no alternatives exist). */
   alternatives?: Array<{
     field: string;
@@ -1612,6 +1625,19 @@ export interface ImportBatchSummary {
   createdAt: string;
   /** The listed program's macrocycles the import created or added sets to, by id. */
   macrocycleIds: string[];
+}
+
+/**
+ * One training-maxes import of a program, from
+ * `GET /programs/:program/import/batches?destination=training-maxes` (#1405), so it can be undone
+ * after leaving the wizard.
+ */
+export interface TrainingMaxImportBatchSummary {
+  /** The batch to undo: `POST /programs/{program}/import/{id}/undo`. */
+  id: string;
+  program: string;
+  /** When the import was committed, as an ISO 8601 timestamp. */
+  createdAt: string;
 }
 
 /** Request body for `POST /programs/:program/import/google-sheet` (#1111). */
