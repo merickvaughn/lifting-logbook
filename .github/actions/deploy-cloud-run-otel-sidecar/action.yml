@@ -92,6 +92,12 @@ inputs:
       it set: turn a flag off by setting it to 'false' rather than removing it.
     required: false
     default: ""
+  ingress_secret_env:
+    description: >-
+      Newline-separated NAME=SECRET pairs set on the ingress container on every deploy, each read
+      from that Secret Manager secret's latest version (#1432). Kept like ingress_env otherwise.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -173,6 +179,7 @@ runs:
       shell: bash
       env:
         INGRESS_ENV_INPUT: ${{ inputs.ingress_env }}
+        INGRESS_SECRET_ENV: ${{ inputs.ingress_secret_env }}
       run: |
         source infra/observability/grafana-endpoints.env
         source infra/observability/otel-collector-image.env
@@ -202,6 +209,10 @@ runs:
         if [ -n "$INGRESS_ENV_INPUT" ]; then
           INGRESS_EXTRA_ENV=$(printf '%s\n%s\n' "$INGRESS_EXTRA_ENV" "$INGRESS_ENV_INPUT")
           echo "Ingress env (#1295): $(printf '%s\n' "$INGRESS_ENV_INPUT" | sed -n 's/=.*//p' | paste -sd, -)"
+        fi
+        # The env var names only, as above (#1432).
+        if [ -n "$INGRESS_SECRET_ENV" ]; then
+          echo "Ingress secret env (#1432): $(printf '%s\n' "$INGRESS_SECRET_ENV" | sed -n 's/=.*//p' | paste -sd, -)"
         fi
         INGRESS_CONTAINER_NAME="${{ inputs.ingress_container_name }}" \
         INGRESS_IMAGE="${{ inputs.image }}" \

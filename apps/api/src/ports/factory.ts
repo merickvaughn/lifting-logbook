@@ -3,6 +3,7 @@ import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
 import { IDataSnapshotRepository } from './IDataSnapshotRepository';
 import { IFocusRepository } from './IFocusRepository';
+import { IGoogleSheetLinkRepository } from './IGoogleSheetLinkRepository';
 import { IMacrocycleDashboardRepository } from './IMacrocycleDashboardRepository';
 import { IMacrocycleRepository } from './IMacrocycleRepository';
 import { IMacrocycleScheduledWorkoutRepository } from './IMacrocycleScheduledWorkoutRepository';
@@ -29,6 +30,7 @@ export interface RepositoryBundle {
   customLift: ICustomLiftRepository;
   dataSnapshot: IDataSnapshotRepository;
   focus: IFocusRepository;
+  googleSheetLink: IGoogleSheetLinkRepository;
   macrocycle: IMacrocycleRepository;
   macrocycleDashboard: IMacrocycleDashboardRepository;
   macrocycleScheduledWorkout: IMacrocycleScheduledWorkoutRepository;

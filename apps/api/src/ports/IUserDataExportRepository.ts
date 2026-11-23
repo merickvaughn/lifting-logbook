@@ -44,6 +44,8 @@ export interface UserDataRows {
   supplementDoses: StoredRow[];
   supplementMixParts: StoredRow[];
   supplementChanges: StoredRow[];
+  /** The Google Sheet link (#1432): status, spreadsheetUrl, lastMirroredAt and createdAt, never a token. */
+  googleSheetLinks: StoredRow[];
 }
 
 /**

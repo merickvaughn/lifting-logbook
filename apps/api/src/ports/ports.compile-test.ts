@@ -348,6 +348,13 @@ const _repositoryBundle: RepositoryBundle = {
     lastRemoved: () => Promise.resolve(undefined),
     write: () => Promise.reject(new Error('not implemented')),
   },
+  googleSheetLink: {
+    getLink: () => Promise.resolve(null),
+    saveLink: (): Promise<void> => Promise.resolve(),
+    deleteLink: (): Promise<void> => Promise.resolve(),
+    putOauthRequest: (): Promise<void> => Promise.resolve(),
+    takeOauthRequest: () => Promise.resolve(null),
+  },
   trainingMax: _trainingMaxRepo,
   trainingMaxHistory: _trainingMaxHistoryRepo,
   trainingData: {

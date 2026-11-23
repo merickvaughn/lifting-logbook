@@ -1,5 +1,6 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { redactSpreadsheetIdAttributes } from './google-sheet/span-redaction';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
@@ -115,7 +116,12 @@ export function startOtel(): NodeSDK | undefined {
       }),
     ],
     logRecordProcessors: buildLogRecordProcessors(),
-    instrumentations: [getNodeAutoInstrumentations()],
+    instrumentations: [
+      getNodeAutoInstrumentations({
+        // A Sheets call's URL carries the spreadsheet ID (#1432, ADR-047 decision 24).
+        '@opentelemetry/instrumentation-undici': { startSpanHook: redactSpreadsheetIdAttributes },
+      }),
+    ],
   });
 
   sdk.start();
