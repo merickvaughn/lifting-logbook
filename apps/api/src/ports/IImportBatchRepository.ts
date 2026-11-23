@@ -1,5 +1,5 @@
-import { ImportPreImage, Weekday } from '@lifting-logbook/core';
-import { ImportKind } from '@lifting-logbook/types';
+import { ImportPreImage, LiftOverride, Weekday } from '@lifting-logbook/core';
+import { FocusDayState, ImportKind } from '@lifting-logbook/types';
 import { MacrocycleOrigin, MacrocycleStatus } from '@lifting-logbook/types';
 
 export interface ImportBatchRecord {
@@ -82,9 +82,11 @@ export interface ContinuedRun {
 
 /**
  * A live macrocycle with no sets that continuing a run removed (#1354), as undo recreates it: its
- * row, under the same id, and its schedule. Its number isn't kept, since undo numbers it by date.
- * Its dates are `YYYY-MM-DD` strings, and its scheduled workouts' ISO timestamps. A type rather
- * than an interface, so it's assignable to the JSON column's type.
+ * row, under the same id, its schedule, and its workouts' overrides and focus day states (#1359).
+ * Its number isn't kept, since undo numbers it by date. Its dates are `YYYY-MM-DD` strings, and
+ * its scheduled workouts' and rescheduled workouts' ISO timestamps. A batch from before #1359 has
+ * no overrides or focus day states recorded, and reads with none. A type rather than an
+ * interface, so it's assignable to the JSON column's type.
  */
 export type RemovedMacrocycle = {
   id: string;
@@ -96,7 +98,18 @@ export type RemovedMacrocycle = {
   unmatched: boolean;
   importedThrough: string | null;
   schedule: Array<{ workoutNum: number; weekNum: number; scheduledDate: string }>;
+  /** Rescheduled workouts. */
+  dateOverrides: Array<{ workoutNum: number; newDate: string }>;
+  /** Skipped workouts, with the reason given, if any. */
+  skips: Array<{ workoutNum: number; reason: string | null }>;
+  /** Each workout's lift overrides, in the order they were saved, which undo saves them in. */
+  liftOverrides: Array<{ workoutNum: number; overrides: Array<JsonCopy<LiftOverride>> }>;
+  /** Saved focus choices. */
+  focus: Array<{ workoutNum: number; state: JsonCopy<FocusDayState> }>;
 };
+
+/** An interface's fields as a type, which, unlike the interface, is assignable to a JSON type. */
+type JsonCopy<T> = { [K in keyof T]: T[K] };
 
 /**
  * How a lift-records pre-image key's macrocycle number is read: the leading number of a set key

@@ -215,6 +215,11 @@ export class PrismaFocusRepository implements IFocusRepository {
     return row ? parseFocusDayState(row.state) : null;
   }
 
+  async getDayStatesForMacrocycle(program: string, macrocycleNum: number): Promise<Map<number, FocusDayState>> {
+    const rows = await this.prisma.focusDayState.findMany({ where: { userId: this.userId, program, macrocycleNum } });
+    return new Map(rows.map((r) => [r.workoutNum, parseFocusDayState(r.state)]));
+  }
+
   async saveDayState(
     program: string,
     macrocycleNum: number,
