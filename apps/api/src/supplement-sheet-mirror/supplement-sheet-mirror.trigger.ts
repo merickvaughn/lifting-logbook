@@ -97,12 +97,19 @@ export class SupplementSheetMirrorTrigger {
     runAfterCommit(this.cls, () => this.enqueue(user, 'change', async () => link));
   }
 
-  /** Sync now: 409 when nothing is linked, 502 when the queue refused (the lifter can press it again). */
+  /**
+   * Sync now: 409 when there's no linked sheet to sync, with an error name for each state so
+   * Settings can show it, and 502 when the queue refused (the lifter can press it again).
+   */
   async syncNow(user: AuthUser): Promise<{ queued: true }> {
-    const { outcome } = await this.enqueue(user, 'sync', () =>
+    const { outcome, linkStatus } = await this.enqueue(user, 'sync', () =>
       this.rls.withUserContext(async () => (await this.factory.forUser(user)).googleSheetLink.getLink()),
     );
-    if (outcome === 'no_link') throw fail(HttpStatus.CONFLICT, 'google-sheet-not-linked', 'No Google Sheet is linked.');
+    if (outcome === 'no_link') {
+      if (linkStatus === 'needs_relink') throw fail(HttpStatus.CONFLICT, 'google-sheet-needs-relink', 'Google access was removed. Link again.');
+      if (linkStatus === 'sheet_missing') throw fail(HttpStatus.CONFLICT, 'google-sheet-missing', 'The sheet was deleted or can’t be found.');
+      throw fail(HttpStatus.CONFLICT, 'google-sheet-not-linked', 'No Google Sheet is linked.');
+    }
     if (outcome === 'failed') throw fail(HttpStatus.BAD_GATEWAY, 'sheet-mirror-enqueue-failed', 'The sync could not be started.');
     return { queued: true };
   }

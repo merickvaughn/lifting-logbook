@@ -872,7 +872,11 @@ export function createApiClient(config: ApiClientConfig) {
     createGoogleSheetSpreadsheet(): Promise<GoogleSheetLinkView> {
       return request('/integrations/google-sheet/sheet', { method: 'POST', cache: 'no-store' });
     },
-    /** Sync now: enqueues a mirror run. 409 `google-sheet-not-linked`, 502 `sheet-mirror-enqueue-failed`. */
+    /**
+     * Sync now: enqueues a mirror run. 409 `google-sheet-not-linked` when nothing is linked,
+     * `google-sheet-needs-relink` when Google access was removed, `google-sheet-missing` when the
+     * sheet is gone; 502 `sheet-mirror-enqueue-failed`.
+     */
     syncGoogleSheet(): Promise<{ queued: true }> {
       return request('/integrations/google-sheet/sync', { method: 'POST', cache: 'no-store' });
     },

@@ -1180,6 +1180,15 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (method === 'POST' && sheet === '/sync') {
+      // The API's 409s name the link's state (#1444).
+      if (state.sheetLink.status === 'needs_relink') {
+        json(res, { statusCode: 409, error: 'google-sheet-needs-relink', message: 'Google access was removed. Link again.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status === 'sheet_missing') {
+        json(res, { statusCode: 409, error: 'google-sheet-missing', message: 'The sheet was deleted or can’t be found.' }, 409);
+        return;
+      }
       if (state.sheetLink.status !== 'linked') {
         json(res, { statusCode: 409, error: 'google-sheet-not-linked', message: 'No Google Sheet is linked.' }, 409);
         return;

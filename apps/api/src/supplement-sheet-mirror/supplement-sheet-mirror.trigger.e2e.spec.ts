@@ -247,7 +247,10 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
       expect(google.calls).toEqual([]);
     });
 
-    it.each(['needs_relink', 'sheet_missing'] as const)('also enqueues nothing while the link is %s', async (status) => {
+    it.each([
+      ['needs_relink', 'google-sheet-needs-relink'],
+      ['sheet_missing', 'google-sheet-missing'],
+    ] as const)('also enqueues nothing while the link is %s, and Sync now answers 409 %s', async (status, error) => {
       const queue = new ForbiddenQueue();
       await start(queue);
       const user = `trigger_${status}`;
@@ -261,8 +264,10 @@ describe('Supplement sheet mirror triggers (e2e, in-memory)', () => {
         lastErrorCode: status,
       });
 
-      await addItem(user);
-      expect((await sync(user)).statusCode).toBe(409);
+      expect((await addItem(user)).statusCode).toBe(201);
+      const res = await sync(user);
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error });
       await settle();
 
       expect(queue.calls).toBe(0);
