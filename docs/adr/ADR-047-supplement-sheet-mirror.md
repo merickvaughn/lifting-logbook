@@ -229,7 +229,9 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     since Cloud Tasks keeps retrying until both `max-attempts` and `max-retry-duration` are reached,
     which would mean retries, each logged at `error`, for up to a day. On that attempt a failure
     that would be retried instead stores its error code, releases the lease, logs once at `error`
-    and answers 204, and Settings shows "Last sync failed" with Sync now.
+    and answers 204, and Settings shows "Last sync failed" with Sync now. If the code can't be
+    stored (the database fails), the run answers 5xx as before, so the failure isn't silently
+    dropped and Cloud Tasks retries until `max-retry-duration`.
     Any other Google 4xx but a 408 (a 400, say) is terminal too, since a retry would send the same
     request: the run stores `google_<status>` as the last error, releases the lease, logs at `error`
     and answers 204. A 409 is expected contention, logged at `info` and never as a failure.

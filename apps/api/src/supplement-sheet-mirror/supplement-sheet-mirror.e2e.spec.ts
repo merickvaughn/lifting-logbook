@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { SupplementChange } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { InMemoryGoogleSheetLinkRepository } from '../adapters/in-memory/google-sheet-link.adapter';
 import { InMemorySupplementRepository } from '../adapters/in-memory/supplement.adapter';
 import { GoogleApiError } from '../google-sheet/google-sheet.client';
 import { GOOGLE_SHEET_CLIENT, GOOGLE_TOKEN_CIPHER } from '../google-sheet/google-sheet.service';
@@ -445,6 +446,25 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '6' })).statusCode).toBe(503);
 
       expect(await link(user)).toMatchObject({ status: 'linked', lastErrorCode: null });
+    });
+
+    it('answers 503 on the last attempt when the code could not be stored, so Cloud Tasks keeps retrying', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      google.failNextBatch = new GoogleApiError(503, 'UNAVAILABLE', { googleStatus: 'UNAVAILABLE' });
+      jest.spyOn(InMemoryGoogleSheetLinkRepository.prototype, 'releaseMirrorLease').mockRejectedValueOnce(new Error('connection terminated'));
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+      expect((await link(user))?.lastErrorCode).toBeNull();
+    });
+
+    it('answers 503 on the last attempt when the database fails before the lease', async () => {
+      const user = await linkedUser();
+      jest.spyOn(Logger.prototype, 'error').mockImplementation();
+      jest.spyOn(InMemoryGoogleSheetLinkRepository.prototype, 'getLink').mockRejectedValueOnce(new Error('connection terminated'));
+
+      expect((await run(user, { authorization: `Bearer ${token()}`, 'x-cloudtasks-taskretrycount': '7' })).statusCode).toBe(503);
+      expect(google.calls).toEqual([]);
     });
 
     it('answers 5xx for a KMS or database failure, not 204', async () => {

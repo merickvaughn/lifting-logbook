@@ -51,6 +51,8 @@ interface RunRecord {
   supplementRows?: number;
   historyRows?: number;
   seq?: number;
+  /** The last attempt stored its error code for Settings, so it may end the task with a 204. */
+  lastErrorStored?: boolean;
 }
 
 const fail = (status: HttpStatus, error: string, message: string) =>
@@ -94,8 +96,10 @@ export class SupplementSheetMirrorService {
           this.logFailure(record);
           // The last attempt ends the task itself: Cloud Tasks keeps retrying until both
           // `max-attempts` and `max-retry-duration` (24 h) are reached, so a 5xx here would bring
-          // retries, each logged at error, for hours after the code was stored (decision 21).
-          if (isLastAttempt(record.attempt) && record.outcome.startsWith('retry')) return;
+          // retries, each logged at error, for hours after the code was stored (decision 21). Only
+          // once the code is stored, though: otherwise nothing would show "Last sync failed", so
+          // the 5xx stands and Cloud Tasks keeps retrying until max-retry-duration.
+          if (isLastAttempt(record.attempt) && record.outcome.startsWith('retry') && record.lastErrorStored) return;
         }
         throw err instanceof HttpException ? err : fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed.');
       } finally {
@@ -250,7 +254,11 @@ export class SupplementSheetMirrorService {
     // shows "Last sync failed" (decision 21).
     const code = isLastAttempt(record.attempt) ? (err instanceof GoogleApiError ? `google_${err.status}` : 'mirror_failed') : undefined;
     // allow-skewed: best effort; the run's own error is what's thrown, and a lease that isn't released expires after five minutes.
-    await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code)).catch(() => undefined);
+    await this.db(user, (r) => r.googleSheetLink.releaseMirrorLease(lease, code))
+      .then(() => {
+        record.lastErrorStored = code !== undefined;
+      })
+      .catch(() => undefined);
     throw fail(HttpStatus.SERVICE_UNAVAILABLE, 'sheet-mirror-failed', 'The mirror run failed and will be retried.');
   }
 }
