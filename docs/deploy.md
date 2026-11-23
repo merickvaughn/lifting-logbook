@@ -318,11 +318,12 @@ nothing else changes. In each project:
    gcloud services enable sheets.googleapis.com --project=lifting-logbook-prod
    ```
 
-2. Create the OAuth client with this redirect URI, which the deploy pipeline also passes to the
-   API as `GOOGLE_OAUTH_REDIRECT_URI`. The two must match exactly.
+2. Create the OAuth client with exactly one redirect URI, which the deploy pipeline also passes to
+   the API as `GOOGLE_OAUTH_REDIRECT_URI`. The two must match exactly.
    - **Production:** `https://liftinglogbook.com/settings/data/google-sheet/callback`, the domain
-     lifters sign in on. Add the `www` form too only if `www` serves the app itself rather than
-     redirecting to the bare domain.
+     lifters sign in on. Don't register a `www` form: the web app redirects every `www` request to
+     the bare domain ([Mapping a custom domain to Cloud Run](#mapping-a-custom-domain-to-cloud-run),
+     #1436), so a lifter is never signed in on `www` and Google never returns there.
    - **Staging:** the web service's `run.app` URL, from `terraform output cloud_run_web_url` in the
      staging workspace, followed by `/settings/data/google-sheet/callback`. The deploy derives it
      from the same output, so if that URL ever changes, update the staging client's registered
@@ -1181,6 +1182,20 @@ For the full walkthrough — `www` subdomain mapping, the A/AAAA/CNAME DNS recor
 SSL provisioning status — see [`deploy-single-user.md` Step 6](deploy-single-user.md#step-6--map-a-custom-domain-optional),
 which documents the same verification gotcha and carries the rest of the procedure this summary
 omits.
+
+**`www` redirects to the bare domain.** The `www` mapping points at the same web service, and the
+web app answers every request for `www.liftinglogbook.com` with a 308 to the same path and query on
+`https://liftinglogbook.com` (`redirects()` in [`apps/web/next.config.ts`](../apps/web/next.config.ts)).
+Clerk's session cookie is host-only, so this keeps lifters signed in on the one host the Google
+Sheet OAuth callback returns to ([ADR-047](adr/ADR-047-supplement-sheet-mirror.md), decision 5;
+#1436). It needs no DNS or Terraform change and still applies behind the edge load balancer below,
+which passes the `Host` header through. Check it with:
+
+```bash
+curl -sI https://www.liftinglogbook.com/settings/data | grep -iE "^HTTP|^location"
+# HTTP/1.1 308 Permanent Redirect
+# location: https://liftinglogbook.com/settings/data
+```
 
 ### Edge rate limit (Cloud Armor) — `/api/client-errors`
 

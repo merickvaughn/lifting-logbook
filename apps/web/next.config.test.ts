@@ -18,3 +18,31 @@ test('turbopack.root is the monorepo root that declares the apps/* workspace', (
   expect(pkg.workspaces).toContain('apps/*');
   expect(path.relative(root, __dirname)).toBe(path.join('apps', 'web'));
 });
+
+// A lifter signed in on www isn't signed in on the bare domain, where the
+// Google Sheet OAuth callback returns, so www must redirect there (#1436).
+test('www.liftinglogbook.com redirects every path permanently to the bare domain', async () => {
+  const redirects = (await nextConfig.redirects?.()) ?? [];
+  const www = redirects.filter((r) =>
+    r.has?.some((h) => h.type === 'host' && h.value === 'www.liftinglogbook.com'),
+  );
+
+  expect(www).toEqual([
+    {
+      source: '/:path*',
+      has: [{ type: 'host', value: 'www.liftinglogbook.com' }],
+      destination: 'https://liftinglogbook.com/:path*',
+      permanent: true,
+    },
+  ]);
+});
+
+// The www rule sends lifters to the bare domain, so a redirect that also
+// caught the bare domain, or every host, would loop.
+test('every redirect is scoped to a host, and none to the bare domain', async () => {
+  const redirects = (await nextConfig.redirects?.()) ?? [];
+  const hosts = redirects.map((r) => r.has?.find((h) => h.type === 'host')?.value);
+
+  expect(hosts).not.toContain(undefined);
+  expect(hosts).not.toContain('liftinglogbook.com');
+});
