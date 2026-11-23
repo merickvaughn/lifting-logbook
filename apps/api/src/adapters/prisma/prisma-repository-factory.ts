@@ -10,6 +10,7 @@ import { PrismaCustomLiftRepository } from './custom-lift.repository';
 import { PrismaDataSnapshotRepository } from './data-snapshot.repository';
 import { PrismaTrainingDataRepository } from './training-data.repository';
 import { PrismaFocusRepository } from './focus.repository';
+import { PrismaGoogleSheetLinkRepository } from './google-sheet-link.repository';
 import { PrismaMacrocycleDashboardRepository } from './macrocycle-dashboard.repository';
 import { PrismaMacrocycleRepository } from './macrocycle.repository';
 import { PrismaMacrocycleScheduledWorkoutRepository } from './macrocycle-scheduled-workout.repository';
@@ -64,6 +65,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
       customLift: new PrismaCustomLiftRepository(db, user.id),
       dataSnapshot: new PrismaDataSnapshotRepository(db, user.id),
       focus: new PrismaFocusRepository(db, user.id),
+      googleSheetLink: new PrismaGoogleSheetLinkRepository(db, user.id),
       macrocycle: new PrismaMacrocycleRepository(db, user.id),
       macrocycleDashboard: new PrismaMacrocycleDashboardRepository(db, user.id),
       macrocycleScheduledWorkout: new PrismaMacrocycleScheduledWorkoutRepository(db, user.id),

@@ -94,6 +94,29 @@ resource "google_cloud_run_v2_service" "api" {
         value = google_kms_crypto_key.user_data_source.id
       }
 
+      # Linking a Google Sheet (#1432, ADR-047 decisions 8-9). With no client ID the API answers
+      # 503 google-sheet-unconfigured. The deploy pipeline sets these on the live service too, and
+      # GOOGLE_OAUTH_REDIRECT_URI from the web service's URL (set here, it would be a cycle).
+      env {
+        name  = "GOOGLE_OAUTH_CLIENT_ID"
+        value = var.google_oauth_client_id
+      }
+
+      env {
+        name = "GOOGLE_OAUTH_CLIENT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.google_oauth_client_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name  = "GOOGLE_OAUTH_TOKEN_KMS_KEY_NAME"
+        value = google_kms_crypto_key.google_oauth_token.id
+      }
+
       # Point the API's OTel SDK (apps/api/src/otel.ts) at the otel-collector
       # sidecar co-located in the same Cloud Run instance (#768). The sidecar is
       # injected at deploy time by scripts/inject-otel-sidecar.py (describe →

@@ -118,6 +118,12 @@ def main():
     # Optional extra ingress env (KEY=VALUE per line), merged into — and overriding — the live
     # ingress env below. The web deploy uses it for the #806/#809 same-origin guard; unset for api.
     extra_ingress_env = parse_extra_env(os.environ.get("INGRESS_EXTRA_ENV"))
+    # Optional secret env (NAME=secret-name per line), each read from the secret's latest version
+    # (#1432: GOOGLE_OAUTH_CLIENT_SECRET). Merged and overriding like INGRESS_EXTRA_ENV.
+    extra_ingress_env += [
+        {"name": e["name"], "valueFrom": {"secretKeyRef": {"key": "latest", "name": e["value"]}}}
+        for e in parse_extra_env(os.environ.get("INGRESS_SECRET_ENV"))
+    ]
 
     src = sys.argv[1] if len(sys.argv) > 1 else "-"
     text = sys.stdin.read() if src == "-" else open(src, encoding="utf-8").read()

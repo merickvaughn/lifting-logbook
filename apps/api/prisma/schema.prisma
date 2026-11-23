@@ -570,3 +570,54 @@ model SupplementChange {
   @@index([userId, date])
   @@map("supplement_change")
 }
+
+// The supplement sheet mirror's Google link (#1432, ADR-047). Migration 20261122000000 adds a
+// check that the three ciphertext columns are all set for linked and sheet_missing and all null
+// for needs_relink. Download My Data exports only status, spreadsheetUrl, lastMirroredAt and
+// createdAt.
+enum GoogleSheetLinkStatus {
+  linked
+  needs_relink
+  sheet_missing
+
+  @@map("google_sheet_link_status")
+}
+
+model GoogleSheetLink {
+  userId                    String                @id
+  status                    GoogleSheetLinkStatus
+  spreadsheetId             String
+  spreadsheetUrl            String
+  // As returned by the token endpoint.
+  grantedScope              String
+  // Null once status is needs_relink.
+  refreshTokenCiphertext    Bytes?
+  // The data key, wrapped by google-oauth-token-kek.
+  refreshTokenDekCiphertext Bytes?
+  // The 12-byte GCM nonce.
+  refreshTokenNonce         Bytes?
+  // The highest supplement_change.seq written.
+  lastMirroredSeq           Int?
+  lastMirroredAt            DateTime?
+  // A code only, e.g. invalid_grant.
+  lastErrorCode             String?
+  mirrorLeaseUntil          DateTime?
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+
+  @@map("google_sheet_link")
+}
+
+// One pending link attempt per user; not exported. Expired rows are ignored when read and
+// replaced by the next attempt.
+model GoogleOauthRequest {
+  userId       String   @id
+  // SHA-256 of state.
+  stateHash    Bytes
+  // The PKCE verifier; deleted at callback.
+  codeVerifier String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@map("google_oauth_request")
+}

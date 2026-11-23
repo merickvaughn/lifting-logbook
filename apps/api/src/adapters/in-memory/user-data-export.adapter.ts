@@ -73,6 +73,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       missingMaxDismissals: [],
       focusBlocks: [],
       focusDayStates: [],
+      googleSheetLinks: [],
       ...this.supplement.exportRows(),
     };
   }

@@ -302,6 +302,22 @@ echo -n "pk_live_YOUR_KEY" | gcloud secrets versions add \
   --project=lifting-logbook-prod
 ```
 
+### Google OAuth client for linking a supplement sheet (#1432)
+
+Linking a Google Sheet ([ADR-047](adr/ADR-047-supplement-sheet-mirror.md)) needs a Google OAuth
+client of type **Web application** in each project, with the `drive.file` scope on its consent
+screen and the redirect URI `<web URL>/settings/data/google-sheet/callback`. Until it exists, the
+API answers 503 `google-sheet-unconfigured` and nothing else changes. Terraform creates
+`lifting-logbook-<env>-google-oauth-client-secret` with a `REPLACE_ME` version; store the client
+secret in it, and set the repository variable `GOOGLE_OAUTH_CLIENT_ID` (scoped to the `production`
+environment for production's client), which the deploy pipeline passes to the API:
+
+```bash
+echo -n "GOCSPX-YOUR_SECRET" | gcloud secrets versions add \
+  lifting-logbook-stg-google-oauth-client-secret --data-file=- \
+  --project=lifting-logbook-staging
+```
+
 > **Staging test account.** The staging Clerk app also needs a dedicated test user for the
 > Playwright integration suite (`STAGING_CLERK_TEST_EMAIL`) — see
 > [`apps/web/e2e/README.md`](../apps/web/e2e/README.md#test-account-setup) for setup steps. As of

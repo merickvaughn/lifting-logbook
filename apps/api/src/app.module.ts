@@ -10,6 +10,7 @@ import { CustomProgramsModule } from './custom-programs/custom-programs.module';
 import { DataExportModule } from './data-export/data-export.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
 import { FocusModule } from './focus/focus.module';
+import { GoogleSheetModule } from './google-sheet/google-sheet.module';
 import { SupplementsModule } from './supplements/supplements.module';
 import { HealthModule } from './health/health.module';
 import { LiftsModule } from './lifts/lifts.module';
@@ -131,6 +132,7 @@ export const pinoHttpOptions: PinoHttpOptions = {
     CustomProgramsModule,
     DataExportModule,
     FocusModule,
+    GoogleSheetModule,
     HealthModule,
     LiftsModule,
     ProgramsModule,

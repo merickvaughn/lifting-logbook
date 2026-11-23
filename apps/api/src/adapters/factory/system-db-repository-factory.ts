@@ -7,6 +7,8 @@ import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { PrismaBodyWeightRepository } from '../prisma/body-weight.repository';
 import { PrismaCustomLiftRepository } from '../prisma/custom-lift.repository';
 import { PrismaFocusRepository } from '../prisma/focus.repository';
+import { PrismaGoogleSheetLinkRepository } from '../prisma/google-sheet-link.repository';
+import { InMemoryGoogleSheetLinkRepository } from '../in-memory/google-sheet-link.adapter';
 import { PrismaSupplementRepository } from '../prisma/supplement.repository';
 import { InMemorySupplementRepository } from '../in-memory/supplement.adapter';
 import { PrismaImportBatchRepository } from '../prisma/import-batch.repository';
@@ -109,6 +111,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
         focus: new PrismaFocusRepository(prisma, userId),
+        googleSheetLink: new PrismaGoogleSheetLinkRepository(prisma, userId),
         supplement: new PrismaSupplementRepository(prisma, userId),
         macrocycle: new PrismaMacrocycleRepository(prisma, userId),
         macrocycleDashboard: new PrismaMacrocycleDashboardRepository(prisma, userId),
@@ -150,6 +153,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
+      googleSheetLink: new InMemoryGoogleSheetLinkRepository(),
       supplement,
       macrocycle,
       macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(),

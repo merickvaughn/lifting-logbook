@@ -265,4 +265,6 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.customProgram.deleteMany({ where });
   await tx.importBatch.deleteMany({ where });
   await tx.dataSnapshot.deleteMany({ where });
+  await tx.googleSheetLink.deleteMany({ where });
+  await tx.googleOauthRequest.deleteMany({ where });
 }

@@ -71,6 +71,11 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
         await this.prisma.supplementMixPart.findMany({ where, orderBy: [{ mixId: 'asc' }, { position: 'asc' }] }),
       ),
       supplementChanges: withoutUserId(await this.prisma.supplementChange.findMany({ where, orderBy: { seq: 'asc' } })),
+      // Never the ciphertext columns, the spreadsheet ID on its own or the OAuth request (ADR-047).
+      googleSheetLinks: await this.prisma.googleSheetLink.findMany({
+        where,
+        select: { status: true, spreadsheetUrl: true, lastMirroredAt: true, createdAt: true },
+      }),
     };
   }
 

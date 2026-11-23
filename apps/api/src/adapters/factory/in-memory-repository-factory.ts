@@ -6,6 +6,7 @@ import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
 import { InMemorySupplementRepository } from '../in-memory/supplement.adapter';
+import { InMemoryGoogleSheetLinkRepository } from '../in-memory/google-sheet-link.adapter';
 import { InMemoryMacrocycleDashboardRepository } from '../in-memory/macrocycle-dashboard.adapter';
 import { InMemoryMacrocycleRepository } from '../in-memory/macrocycle.adapter';
 import { InMemoryMacrocycleScheduledWorkoutRepository } from '../in-memory/macrocycle-scheduled-workout.adapter';
@@ -58,6 +59,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
+        googleSheetLink: new InMemoryGoogleSheetLinkRepository(),
         macrocycle,
         macrocycleDashboard: new InMemoryMacrocycleDashboardRepository(preSeed),
         macrocycleScheduledWorkout: new InMemoryMacrocycleScheduledWorkoutRepository(),

@@ -34,7 +34,7 @@ INJECTOR_VARS = (
     "OTEL_CONFIG_SECRET", "OTEL_OTLP_ENDPOINT", "OTEL_LOKI_ENDPOINT",
     "OTEL_OTLP_SECRET", "OTEL_LOKI_SECRET", "COLLECTOR_IMAGE", "COLLECTOR_CPU",
     "COLLECTOR_MEMORY", "OTEL_TAIL_SAMPLE_RATE", "OTEL_DECISION_WAIT",
-    "INGRESS_IMAGE", "INGRESS_CONTAINER_NAME", "INGRESS_EXTRA_ENV",
+    "INGRESS_IMAGE", "INGRESS_CONTAINER_NAME", "INGRESS_EXTRA_ENV", "INGRESS_SECRET_ENV",
 )
 
 API_IMAGE = "us-central1-docker.pkg.dev/example-project/lifting-logbook/api:newsha1234567"
@@ -400,6 +400,26 @@ class IngressExtraEnvTest(unittest.TestCase):
             [e for e in api["env"] if e["name"] == "IMPORT_ASSIGN_ENABLED"],
             [{"name": "IMPORT_ASSIGN_ENABLED", "value": "false"}],
         )
+
+    def test_secret_env_reads_the_secrets_latest_version(self):
+        # #1432: the action's `ingress_secret_env` sets GOOGLE_OAUTH_CLIENT_SECRET from Secret
+        # Manager, replacing any live entry of that name rather than duplicating it.
+        env = clean_env(**{**REQUIRED_ENV, "INGRESS_SECRET_ENV": "GOOGLE_OAUTH_CLIENT_SECRET=stg-google-oauth-client-secret"})
+        proc = run_injector(FIXTURE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "once.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(proc.stdout)
+            again = run_injector(path, env=env)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        api = containers_by_name(yaml.safe_load(again.stdout))["api"]
+        self.assertEqual(
+            [e for e in api["env"] if e["name"] == "GOOGLE_OAUTH_CLIENT_SECRET"],
+            [{"name": "GOOGLE_OAUTH_CLIENT_SECRET",
+              "valueFrom": {"secretKeyRef": {"key": "latest", "name": "stg-google-oauth-client-secret"}}}],
+        )
+        self.assertIn("CLERK_SECRET_KEY", [e["name"] for e in api["env"]])
 
     def test_malformed_extra_env_exits_nonzero(self):
         # A line with no '=' must fail the deploy loudly — no manifest emitted.

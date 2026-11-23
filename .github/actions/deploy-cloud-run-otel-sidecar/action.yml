@@ -92,6 +92,12 @@ inputs:
       it set: turn a flag off by setting it to 'false' rather than removing it.
     required: false
     default: ""
+  ingress_secret_env:
+    description: >-
+      Newline-separated NAME=SECRET pairs set on the ingress container on every deploy, each read
+      from that Secret Manager secret's latest version (#1432). Kept like ingress_env otherwise.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -173,6 +179,7 @@ runs:
       shell: bash
       env:
         INGRESS_ENV_INPUT: ${{ inputs.ingress_env }}
+        INGRESS_SECRET_ENV: ${{ inputs.ingress_secret_env }}
       run: |
         source infra/observability/grafana-endpoints.env
         source infra/observability/otel-collector-image.env

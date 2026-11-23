@@ -213,3 +213,12 @@ variable "client_error_rate_limit_count" {
   type        = number
   default     = 120
 }
+
+variable "google_oauth_client_id" {
+  description = <<-EOT
+    The Google OAuth client ID for linking a supplement sheet (#1432, ADR-047 decision 9). Not a
+    secret. Empty leaves linking off: the API answers 503 google-sheet-unconfigured.
+  EOT
+  type        = string
+  default     = ""
+}

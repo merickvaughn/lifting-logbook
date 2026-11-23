@@ -63,6 +63,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   SupplementDose: 'supplementDoses',
   SupplementMixPart: 'supplementMixParts',
   SupplementChange: 'supplementChanges',
+  GoogleSheetLink: 'googleSheetLinks',
   MacrocycleScheduledWorkout: 'macrocycleScheduledWorkouts',
   CustomProgram: 'customPrograms',
   CustomProgramSpec: 'customProgramSpecs',
@@ -70,7 +71,8 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
 // Internal undo state for an import, and the hourly count of import suggestion requests (#1174):
 // not the user's data. A Clear data snapshot (#1309) holds rows the lifter cleared, and its sets
 // download from the snapshot itself.
-const NOT_EXPORTED = ['DataSnapshot', 'ImportBatch', 'ImportSuggestionUsage'];
+// A pending Google link attempt (#1432) holds only a state hash and a PKCE verifier.
+const NOT_EXPORTED = ['DataSnapshot', 'GoogleOauthRequest', 'ImportBatch', 'ImportSuggestionUsage'];
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;
@@ -102,6 +104,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.supplementItem.deleteMany({ where }); // Doses and mix parts cascade.
   await prisma.supplementDayType.deleteMany({ where });
   await prisma.supplementChange.deleteMany({ where });
+  await prisma.googleSheetLink.deleteMany({ where });
   await prisma.macrocycleScheduledWorkout.deleteMany({ where });
   await prisma.customProgram.deleteMany({ where });
   await prisma.importBatch.deleteMany({ where });
@@ -221,6 +224,18 @@ async function seedUser(
     data: { userId, mixId: `${mark}-mix`, position: 0, partItemId: `${mark}-part`, name: mark, ingredients: [] },
   });
   await prisma.supplementChange.create({ data: { userId, seq: 1, date: DAY, type: 'mix_split', payload: { mixId: mark } } });
+  await prisma.googleSheetLink.create({
+    data: {
+      userId,
+      status: 'linked',
+      spreadsheetId: `${mark}-spreadsheet-id`,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${mark}/edit`,
+      grantedScope: 'https://www.googleapis.com/auth/drive.file',
+      refreshTokenCiphertext: Buffer.from(`${mark}-ciphertext`),
+      refreshTokenDekCiphertext: Buffer.from(`${mark}-wrapped-key`),
+      refreshTokenNonce: Buffer.alloc(12, 7),
+    },
+  });
   await prisma.macrocycleScheduledWorkout.create({ data: { ...workout, weekNum: 1, scheduledDate: DAY } });
   await prisma.customProgram.create({
     data: {
@@ -428,6 +443,14 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
         await prisma.liftRecord.count({ where: { userId: USER_OWNER, program: ACTIVE_PROGRAM, macrocycleNum: mine.macrocycleNum } }),
       );
     });
+  });
+
+  // ADR-047: the link's status, sheet URL, last mirror and creation time, never a token column.
+  it('exports the Google Sheet link without its ciphertext or spreadsheet ID', () => {
+    const [row, ...rest] = logbook.tables['googleSheetLinks'] as Record<string, unknown>[];
+    expect(rest).toEqual([]);
+    expect(Object.keys(row!).sort()).toEqual(['createdAt', 'lastMirroredAt', 'spreadsheetUrl', 'status']);
+    expect(files['logbook.json']).not.toMatch(/refreshToken|owner-marker-ciphertext|owner-marker-spreadsheet-id/);
   });
 
   it('leaves the user id out of logbook.json', () => {
