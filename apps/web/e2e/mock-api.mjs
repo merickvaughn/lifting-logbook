@@ -2137,8 +2137,12 @@ const server = createServer(async (req, res) => {
             ? {
                 columnMappings: [
                   { sourceHeader: 'Date', destinationField: 'dateUpdated', confidence: 0.65, required: true, transformationNote: null },
-                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: true, transformationNote: null },
+                  // `fuzzyColumnMapper` never marks an unmatched source column required: it
+                  // reports the field the file lacks as a row of its own, which is where the
+                  // wizard asks which column holds it (#1442).
+                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: false, transformationNote: 'No matching field found' },
                   { sourceHeader: 'Max Weight', destinationField: 'weight', confidence: 0.72, required: true, transformationNote: null },
+                  { sourceHeader: '', destinationField: 'lift', confidence: 0, required: true, transformationNote: 'Required field not found in CSV' },
                 ],
               }
             : {}),

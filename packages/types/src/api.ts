@@ -1005,6 +1005,13 @@ export interface ColumnMapping {
   required: boolean;
   /** Human-readable note about data transformations that will be applied (normalization, split, etc.). */
   transformationNote?: string;
+  /**
+   * The other destination fields that meet this requirement in place of `destinationField`
+   * — a one-of group, such as a program spec stating its per-set drop as either
+   * `WT Decrement %` or `Weight %`. Set only on a required field the file has no column
+   * for; the Map columns gate is met when a column is pointed at any one of them (#1442).
+   */
+  satisfiedBy?: string[];
   /** Up to 2 alternative field matches with lower confidence (omitted when no alternatives exist). */
   alternatives?: Array<{
     field: string;
