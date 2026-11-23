@@ -264,7 +264,7 @@ describe('Supplement sheet mirror (e2e, in-memory)', () => {
       google.tabs = tabs;
       const user = await linkedUser();
       const many: SupplementChange[] = Array.from({ length: 1200 }, (_, i) => ({ type: 'confirmed', itemId: 'x', seq: i + 1, date: TODAY }));
-      jest.spyOn(InMemorySupplementRepository.prototype, 'changes').mockResolvedValue(many);
+      jest.spyOn(InMemorySupplementRepository.prototype, 'allChanges').mockResolvedValue(many);
 
       expect((await run(user)).statusCode).toBe(204);
       expect(google.batches).toHaveLength(1);

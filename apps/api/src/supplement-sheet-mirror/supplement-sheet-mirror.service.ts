@@ -22,8 +22,11 @@ import { HISTORY_TAB, SUPPLEMENTS_TAB, historyRows, mirrorRequests, supplementsR
 
 /** The queue's `max-attempts` (decision 15): the attempt after this one is the last. */
 const MAX_ATTEMPTS = 8;
-/** Enough for any real log; the History tab holds one row per change (decision 20). */
-const ALL_CHANGES = 1_000_000;
+/**
+ * The transaction that reads the stack and the whole change log, which grows without bound (the
+ * History tab holds one row per change, decision 20), so it gets longer than the 5 s default.
+ */
+const SNAPSHOT_TX_TIMEOUT_MS = 20_000;
 
 type Outcome =
   | 'success'
@@ -69,8 +72,8 @@ export class SupplementSheetMirrorService {
     @Inject(SHEET_MIRROR_QUEUE) private readonly queue: ISheetMirrorQueue,
   ) {}
 
-  private db<T>(user: AuthUser, fn: (repos: RepositoryBundle) => Promise<T>): Promise<T> {
-    return this.rls.withUserContext(async () => fn(await this.factory.forUser(user)));
+  private db<T>(user: AuthUser, fn: (repos: RepositoryBundle) => Promise<T>, timeoutMs?: number): Promise<T> {
+    return this.rls.withUserContext(async () => fn(await this.factory.forUser(user)), timeoutMs);
   }
 
   /** Resolves for a 204, and throws the HttpException Cloud Tasks acts on otherwise (decision 21). */
@@ -126,10 +129,14 @@ export class SupplementSheetMirrorService {
     }
 
     try {
-      const snapshot = await this.db(user, async (r) => {
-        const state = await r.supplement.load();
-        return { state, changes: await r.supplement.changes({ limit: ALL_CHANGES }) };
-      });
+      const snapshot = await this.db(
+        user,
+        async (r) => {
+          const state = await r.supplement.load();
+          return { state, changes: await r.supplement.allChanges() };
+        },
+        SNAPSHOT_TX_TIMEOUT_MS,
+      );
       const seq = snapshot.state.nextSeq - 1;
       const supplements = supplementsRows(snapshot.state);
       const history = historyRows(snapshot.changes);

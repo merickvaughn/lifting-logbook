@@ -262,6 +262,9 @@ describeOrSkip('PrismaSupplementRepository (e2e, lifting_app role)', () => {
     expect(await asUser((repo) => repo.firstChangeDate())).toBe(TODAY);
     // The largest beforeSeq the API accepts is the largest the integer column holds.
     expect((await asUser((repo) => repo.changes({ beforeSeq: 2_147_483_647, limit: 10 }))).map((c) => c.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    // The sheet mirror's read: the whole log, oldest first, with no page size (#1443).
+    expect(await asUser((repo) => repo.allChanges())).toEqual(await asUser((repo) => repo.changes({ limit: 10 })));
+    expect((await asUser((repo) => repo.allChanges())).map((c) => c.seq)).toEqual([1, 2, 3, 4, 5, 6]);
 
     // A later restore undoes a removal, including that of a mix split since.
     const restore = async (id: string) => {

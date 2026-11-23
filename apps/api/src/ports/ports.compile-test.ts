@@ -343,6 +343,7 @@ const _repositoryBundle: RepositoryBundle = {
   supplement: {
     load: () => Promise.reject(new Error('not implemented')),
     changes: () => Promise.resolve([]),
+    allChanges: () => Promise.resolve([]),
     changesThrough: () => Promise.resolve([]),
     firstChangeDate: () => Promise.resolve(null),
     lastRemoved: () => Promise.resolve(undefined),
