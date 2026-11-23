@@ -1,6 +1,7 @@
 import { WeekType } from "@lifting-logbook/types";
 import { LIFTING_PROGRAM_SPEC_HEADER_MAP } from "@src/core/constants";
 import { LiftingProgramSpec, SpreadsheetCell } from "@src/core/models";
+import { unescapeCsvFormula } from "../export/serializeExportCsv";
 import { tableToObjects } from "./tableToObjects";
 
 /**
@@ -16,6 +17,9 @@ function decrementFromWeightPct(raw: unknown): number {
   const even = pcts.every((p, i) => Math.abs(pcts[0]! - i * step - p) < 1e-9);
   return even ? Math.round(step * 1e6) / 1e6 : NaN;
 }
+
+/** The text fields the export escapes (#1342). */
+const ESCAPED_FIELDS: ReadonlySet<string> = new Set(["lift", "warmUpPct", "activation", "weekType"]);
 
 /**
  * Converts a 2D array to an array of LiftingProgramSpec objects.
@@ -50,6 +54,7 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
         else if (value === "FALSE" || value === false) value = false;
         // else leave as string
       }
+      if (ESCAPED_FIELDS.has(key) && typeof value === "string") value = unescapeCsvFormula(value);
       result[key] = value;
     }
     if (useWeightPct) {

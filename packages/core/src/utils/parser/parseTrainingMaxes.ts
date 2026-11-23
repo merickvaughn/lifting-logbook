@@ -1,9 +1,13 @@
 import { TRAINING_MAX_HEADER_MAP } from "@src/core/constants";
 import { TrainingMax, SpreadsheetCell } from "@src/core/models";
 import { parseDateStringUTC, toUTCMidnight } from "../jsUtil";
+import { unescapeCsvFormula } from "../export/serializeExportCsv";
 import { tableToObjects } from "./tableToObjects";
 
 /**
+ * The `Lift` cell loses the apostrophe the export put in front of a formula character
+ * (`unescapeCsvFormula`, #1342). A cell with no such escape is unchanged.
+ *
  * Example: parseTrainingMaxes(sheet.getDataRange().getValues())
  * @param {SpreadsheetCell[][]} data
  * @returns {TrainingMax[]}
@@ -32,6 +36,7 @@ export function parseTrainingMaxes(data: SpreadsheetCell[][]): TrainingMax[] {
         // comparison silently disagrees with what the sheet says.
         value = toUTCMidnight(parseDateStringUTC(String(value ?? "")));
       }
+      if (key === "lift" && typeof value === "string") value = unescapeCsvFormula(value);
       result[key] = value;
     }
     // console.log(`Parsed training max object: ${JSON.stringify(result)}.`);
