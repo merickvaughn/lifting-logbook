@@ -64,7 +64,7 @@ describeOrSkip('Supplement sheet mirror trigger (e2e, real Postgres, lifting_app
   let owner: PrismaClient;
   const queue = new FakeQueue();
   /** Each link read: the user RLS saw it run as, and what it returned. */
-  let reads: { rlsUser: string | null; spreadsheetId: string | null }[];
+  let reads: { rlsUser: string | null | undefined; spreadsheetId: string | undefined }[];
 
   const addItem = (user: string, name: string) =>
     app
@@ -110,7 +110,7 @@ describeOrSkip('Supplement sheet mirror trigger (e2e, real Postgres, lifting_app
       // The same client the read used: the write's transaction, with the GUC RLS policies key on.
       const client = (this as unknown as { prisma: PrismaClient }).prisma;
       const [row] = await client.$queryRaw<Array<{ uid: string | null }>>`SELECT current_setting('app.current_user_id', true) AS uid`;
-      reads.push({ rlsUser: row?.uid ?? null, spreadsheetId: link?.spreadsheetId ?? null });
+      reads.push({ rlsUser: row?.uid, spreadsheetId: link?.spreadsheetId });
       return link;
     });
   });
@@ -136,7 +136,8 @@ describeOrSkip('Supplement sheet mirror trigger (e2e, real Postgres, lifting_app
     const res = await addItem(UNLINKED, 'Magnesium');
 
     expect(res.statusCode).toBe(201);
-    expect(reads).toEqual([{ rlsUser: UNLINKED, spreadsheetId: null }]);
+    // No row came back: the link read saw neither LINKED's nor OTHER's row.
+    expect(reads).toStrictEqual([{ rlsUser: UNLINKED, spreadsheetId: undefined }]);
     expect(queue.enqueued).toEqual([]);
   });
 
