@@ -210,6 +210,10 @@ runs:
           INGRESS_EXTRA_ENV=$(printf '%s\n%s\n' "$INGRESS_EXTRA_ENV" "$INGRESS_ENV_INPUT")
           echo "Ingress env (#1295): $(printf '%s\n' "$INGRESS_ENV_INPUT" | sed -n 's/=.*//p' | paste -sd, -)"
         fi
+        # The env var names only, as above (#1432).
+        if [ -n "$INGRESS_SECRET_ENV" ]; then
+          echo "Ingress secret env (#1432): $(printf '%s\n' "$INGRESS_SECRET_ENV" | sed -n 's/=.*//p' | paste -sd, -)"
+        fi
         INGRESS_CONTAINER_NAME="${{ inputs.ingress_container_name }}" \
         INGRESS_IMAGE="${{ inputs.image }}" \
         INGRESS_EXTRA_ENV="$INGRESS_EXTRA_ENV" \
