@@ -34,7 +34,7 @@ export class InMemoryGoogleSheetLinkRepository implements IGoogleSheetLinkReposi
       token: link.token,
       lastErrorCode: link.lastErrorCode,
       lastMirroredAt: sameSheet ? (this.link?.lastMirroredAt ?? null) : null,
-      lastMirroredSeq: sameSheet ? (this.link?.lastMirroredSeq ?? null) : null,
+      lastMirroredSeq: sameSheet && this.link ? this.link.lastMirroredSeq : null,
       createdAt: this.link?.createdAt ?? new Date(),
       ...(sameSheet && this.link?.leaseUntil && { leaseUntil: this.link.leaseUntil }),
     };
