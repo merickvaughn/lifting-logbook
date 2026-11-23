@@ -5,6 +5,9 @@ import {
 } from '../../ports/IGoogleSheetLinkRepository';
 import { PrismaExecutor } from './prisma-tx.util';
 
+/** ADR-047, decision 19: a run that dies without releasing its lease frees it after this. */
+const MIRROR_LEASE_MS = 2 * 60_000;
+
 export class PrismaGoogleSheetLinkRepository implements IGoogleSheetLinkRepository {
   constructor(
     private readonly prisma: PrismaExecutor,
@@ -55,6 +58,29 @@ export class PrismaGoogleSheetLinkRepository implements IGoogleSheetLinkReposito
 
   async deleteLink(): Promise<void> {
     await this.prisma.googleSheetLink.deleteMany({ where: { userId: this.userId } });
+  }
+
+  async takeMirrorLease(): Promise<boolean> {
+    const now = new Date();
+    const { count } = await this.prisma.googleSheetLink.updateMany({
+      where: { userId: this.userId, OR: [{ mirrorLeaseUntil: null }, { mirrorLeaseUntil: { lt: now } }] },
+      data: { mirrorLeaseUntil: new Date(now.getTime() + MIRROR_LEASE_MS) },
+    });
+    return count > 0;
+  }
+
+  async releaseMirrorLease(errorCode?: string): Promise<void> {
+    await this.prisma.googleSheetLink.updateMany({
+      where: { userId: this.userId },
+      data: { mirrorLeaseUntil: null, ...(errorCode !== undefined && { lastErrorCode: errorCode }) },
+    });
+  }
+
+  async recordMirrored(seq: number): Promise<void> {
+    await this.prisma.googleSheetLink.updateMany({
+      where: { userId: this.userId },
+      data: { lastMirroredSeq: seq, lastMirroredAt: new Date(), lastErrorCode: null, mirrorLeaseUntil: null },
+    });
   }
 
   async putOauthRequest(request: GoogleOauthRequestRecord): Promise<void> {

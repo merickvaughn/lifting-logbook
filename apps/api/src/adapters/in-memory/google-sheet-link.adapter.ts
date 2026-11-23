@@ -6,12 +6,12 @@ import {
 import { StoredRow } from '../../ports/IUserDataExportRepository';
 
 export class InMemoryGoogleSheetLinkRepository implements IGoogleSheetLinkRepository {
-  private link: (GoogleSheetLinkRecord & { createdAt: Date }) | null = null;
+  private link: (GoogleSheetLinkRecord & { createdAt: Date; leaseUntil?: Date; lastMirroredSeq?: number }) | null = null;
   private request: GoogleOauthRequestRecord | null = null;
 
   async getLink(): Promise<GoogleSheetLinkRecord | null> {
     if (!this.link) return null;
-    const { createdAt: _createdAt, ...link } = this.link;
+    const { createdAt: _createdAt, leaseUntil: _leaseUntil, lastMirroredSeq: _seq, ...link } = this.link;
     return link;
   }
 
@@ -30,11 +30,33 @@ export class InMemoryGoogleSheetLinkRepository implements IGoogleSheetLinkReposi
       lastErrorCode: link.lastErrorCode,
       lastMirroredAt: sameSheet ? (this.link?.lastMirroredAt ?? null) : null,
       createdAt: this.link?.createdAt ?? new Date(),
+      ...(sameSheet && this.link?.leaseUntil && { leaseUntil: this.link.leaseUntil }),
+      ...(sameSheet && this.link?.lastMirroredSeq !== undefined && { lastMirroredSeq: this.link.lastMirroredSeq }),
     };
   }
 
   async deleteLink(): Promise<void> {
     this.link = null;
+  }
+
+  async takeMirrorLease(): Promise<boolean> {
+    if (!this.link || (this.link.leaseUntil && this.link.leaseUntil.getTime() > Date.now())) return false;
+    this.link.leaseUntil = new Date(Date.now() + 2 * 60_000);
+    return true;
+  }
+
+  async releaseMirrorLease(errorCode?: string): Promise<void> {
+    if (!this.link) return;
+    delete this.link.leaseUntil;
+    if (errorCode !== undefined) this.link.lastErrorCode = errorCode;
+  }
+
+  async recordMirrored(seq: number): Promise<void> {
+    if (!this.link) return;
+    delete this.link.leaseUntil;
+    this.link.lastMirroredSeq = seq;
+    this.link.lastMirroredAt = new Date();
+    this.link.lastErrorCode = null;
   }
 
   async putOauthRequest(request: GoogleOauthRequestRecord): Promise<void> {

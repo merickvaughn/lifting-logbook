@@ -67,6 +67,8 @@ resource "google_project_service" "required_apis" {
     "run.googleapis.com",               # Cloud Run
     "sqladmin.googleapis.com",          # Cloud SQL
     "cloudkms.googleapis.com",          # Cloud KMS (ADR-014)
+    "cloudtasks.googleapis.com",        # Supplement sheet mirror queue (ADR-047)
+    "sheets.googleapis.com",            # Supplement sheet mirror (ADR-047)
     "artifactregistry.googleapis.com",  # Artifact Registry
     "compute.googleapis.com",           # VPC, Load Balancer
     "servicenetworking.googleapis.com", # Private service networking (Cloud SQL)

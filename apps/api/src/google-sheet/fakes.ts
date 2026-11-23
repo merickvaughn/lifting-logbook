@@ -5,6 +5,8 @@ import {
   DRIVE_FILE_SCOPE,
   IGoogleSheetClient,
   OAuthClientCredentials,
+  SheetsRequest,
+  SpreadsheetTab,
 } from './google-sheet.client';
 
 /** A KMS stand-in: wrapping XORs the key, so a wrapped key is never the key itself. */
@@ -40,6 +42,15 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
   private exchanges = 0;
   scope = DRIVE_FILE_SCOPE;
   openable = new Set<string>();
+  /** The tabs `listTabs` reports. */
+  tabs: SpreadsheetTab[] = [];
+  /** Every successful `batchUpdate`'s requests, in order. */
+  batches: SheetsRequest[][] = [];
+  /** Set to make the next `batchUpdate`, or `refreshAccessToken`, throw it once. */
+  failNextBatch?: unknown;
+  failNextRefresh?: unknown;
+  /** Runs just before a `batchUpdate` is applied, e.g. to change the stack while a run writes. */
+  beforeBatch?: () => Promise<void>;
 
   private record(method: keyof IGoogleSheetClient, args: unknown[]) {
     this.calls.push({ method, args });
@@ -58,6 +69,11 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
 
   async refreshAccessToken(c: OAuthClientCredentials, refreshToken: string): Promise<string> {
     this.record('refreshAccessToken', [c, refreshToken]);
+    if (this.failNextRefresh) {
+      const err = this.failNextRefresh;
+      this.failNextRefresh = undefined;
+      throw err;
+    }
     return FAKE_ACCESS_TOKEN;
   }
 
@@ -71,6 +87,22 @@ export class FakeGoogleSheetClient implements IGoogleSheetClient {
     const spreadsheetId = `sheet-${this.sheets}`;
     this.openable.add(spreadsheetId);
     return { spreadsheetId, spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` };
+  }
+
+  async listTabs(accessToken: string, spreadsheetId: string): Promise<SpreadsheetTab[]> {
+    this.record('listTabs', [accessToken, spreadsheetId]);
+    return this.tabs;
+  }
+
+  async batchUpdate(accessToken: string, spreadsheetId: string, requests: SheetsRequest[]): Promise<void> {
+    this.record('batchUpdate', [accessToken, spreadsheetId, requests]);
+    await this.beforeBatch?.();
+    if (this.failNextBatch) {
+      const err = this.failNextBatch;
+      this.failNextBatch = undefined;
+      throw err;
+    }
+    this.batches.push(requests);
   }
 
   async canOpenSpreadsheet(accessToken: string, spreadsheetId: string): Promise<boolean> {
@@ -90,5 +122,7 @@ export const failingGoogleClient = (): IGoogleSheetClient => {
     revoke: fail('revoke'),
     createSpreadsheet: fail('createSpreadsheet'),
     canOpenSpreadsheet: fail('canOpenSpreadsheet'),
+    listTabs: fail('listTabs'),
+    batchUpdate: fail('batchUpdate'),
   };
 };

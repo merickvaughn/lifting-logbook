@@ -118,6 +118,24 @@ resource "google_cloud_run_v2_service" "api" {
         value = google_kms_crypto_key.google_oauth_token.id
       }
 
+      # The supplement sheet mirror (#1443, ADR-047 decisions 15-18). The deploy pipeline also
+      # sets SHEET_MIRROR_API_URL, the API's own URL, which is the OIDC audience: set here it
+      # would be a cycle.
+      env {
+        name  = "SHEET_MIRROR_QUEUE"
+        value = google_cloud_tasks_queue.supplement_sheet_mirror.name
+      }
+
+      env {
+        name  = "SHEET_MIRROR_QUEUE_LOCATION"
+        value = google_cloud_tasks_queue.supplement_sheet_mirror.location
+      }
+
+      env {
+        name  = "SHEET_MIRROR_TASKS_SA_EMAIL"
+        value = google_service_account.sheet_mirror_tasks.email
+      }
+
       # Point the API's OTel SDK (apps/api/src/otel.ts) at the otel-collector
       # sidecar co-located in the same Cloud Run instance (#768). The sidecar is
       # injected at deploy time by scripts/inject-otel-sidecar.py (describe →

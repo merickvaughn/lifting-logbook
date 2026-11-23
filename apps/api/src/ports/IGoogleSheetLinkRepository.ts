@@ -37,6 +37,15 @@ export interface IGoogleSheetLinkRepository {
    */
   saveLink(link: Omit<GoogleSheetLinkRecord, 'lastMirroredAt'>): Promise<void>;
   deleteLink(): Promise<void>;
+  /**
+   * Takes the mirror lease for two minutes (ADR-047, decision 19). False when another run holds it
+   * or there is no link.
+   */
+  takeMirrorLease(): Promise<boolean>;
+  /** Releases the lease after a failed run, recording `errorCode` as the last error when given. */
+  releaseMirrorLease(errorCode?: string): Promise<void>;
+  /** Records a finished run: `lastMirroredSeq`, `lastMirroredAt`, no last error, and releases the lease. */
+  recordMirrored(seq: number): Promise<void>;
   /** Replaces any earlier attempt. */
   putOauthRequest(request: GoogleOauthRequestRecord): Promise<void>;
   /** Returns the user's attempt and deletes it, so a state is used at most once. */
