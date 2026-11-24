@@ -1,6 +1,6 @@
 # Proposal: Supplements — Track the Stack by Day Type, with Advisories, History and Suggestions
 
-**Status:** `accepted`
+**Status:** `shipped`
 **Date:** 2026-11-18
 **Issue:** [#1372](https://github.com/merickvaughn/lifting-logbook/issues/1372)
 
