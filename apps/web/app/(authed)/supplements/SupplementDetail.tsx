@@ -43,6 +43,10 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [confirmFailed, setConfirmFailed] = useState(false);
+  // Confirm went through: the button stays off until the refreshed, verified item replaces this one.
+  const [confirmed, setConfirmed] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -79,6 +83,10 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
     setConfirmFailed(false);
     try {
       await updateSupplementItem(item.id, { unverified: false }, localToday());
+      setConfirmed(true);
+      setAnnouncement('Confirmed. It now counts in your totals.');
+      // The section holding Confirm goes once the item is refreshed, so focus the panel's heading.
+      headingRef.current?.focus();
       router.refresh();
     } catch (err) {
       logClientError('supplements.confirmItem', err, { itemId: item.id });
@@ -98,7 +106,9 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
     >
       <header className={styles.dialogHeader}>
         <div>
-          <h2 id="supp-detail-title">{item.name}</h2>
+          <h2 id="supp-detail-title" ref={headingRef} tabIndex={-1}>
+            {item.name}
+          </h2>
           {(item.category || slots) && <p className={styles.muted}>{item.category || slots}</p>}
         </div>
         <div>
@@ -113,6 +123,9 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
           </button>
         </div>
       </header>
+      <p className={styles.srOnly} role="status">
+        {announcement}
+      </p>
 
       {item.unverified && (
         <section>
@@ -120,7 +133,7 @@ export default function SupplementDetail({ stack, item, dayTypeId, notes, onClos
             <span className={styles.aiTag}>AI · unverified</span> Not counted in your totals, protein or advisories until you confirm it
             against the product’s label.
           </p>
-          <button type="button" disabled={saving} onClick={() => void confirm()}>
+          <button type="button" disabled={saving || confirmed} onClick={() => void confirm()}>
             Confirm
           </button>
           {confirmFailed && <p role="alert">Couldn’t confirm the item. Try again.</p>}

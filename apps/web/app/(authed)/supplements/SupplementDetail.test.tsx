@@ -225,6 +225,26 @@ describe('an unverified item (#1381)', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it('after Confirm, says so, focuses the heading, and keeps Confirm off until the refreshed item arrives', async () => {
+    (updateSupplementItem as jest.Mock).mockResolvedValue({});
+    const stack = withItem(id, { unverified: true });
+    const props = { stack, dayTypeId: 'lift', notes: [], onClose: jest.fn(), onEdit: jest.fn(), onReplace: jest.fn() };
+    const item = stack.items.find((i) => i.id === id) as SupplementItem;
+    const { rerender } = render(<SupplementDetail {...props} item={item} />);
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(region).toHaveTextContent('Confirmed');
+    expect(screen.getByRole('heading', { level: 2, name: item.name })).toHaveFocus();
+    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeDisabled();
+    await userEvent.click(confirm);
+    expect(updateSupplementItem).toHaveBeenCalledTimes(1);
+    rerender(<SupplementDetail {...props} item={{ ...item, unverified: false }} />);
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
+    expect(screen.getByRole('status')).toBe(region);
+  });
+
   it('says so, and logs, when Confirm fails', async () => {
     (updateSupplementItem as jest.Mock).mockRejectedValue(new Error('boom'));
     open(id, withItem(id, { unverified: true }));
