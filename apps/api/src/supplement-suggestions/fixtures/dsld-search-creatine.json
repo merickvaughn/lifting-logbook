@@ -1,1 +1,13 @@
-{ "hits": [ { "_id": "900001", "_source": { "fullName": "Creatine Monohydrate Powder" } }, { "_id": "900002", "_source": { "fullName": "Creatine Caps" } } ] }
+{
+  "hits": [
+    {
+      "_id": "43261"
+    },
+    {
+      "_id": "25731"
+    },
+    {
+      "_id": "31127"
+    }
+  ]
+}

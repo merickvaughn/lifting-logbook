@@ -12,10 +12,15 @@ export const MAX_SOURCES = 3;
 /** The largest amount kept: a per-serving figure above this is a misread unit, not a dose. */
 const MAX_AMOUNT = 1_000_000;
 
-/** Text clipped to `max` characters, with control characters turned into spaces and runs of space folded. */
+/**
+ * Text clipped to `max` characters, with control characters turned into spaces and runs of space
+ * folded. Counted in code points, as the DTOs' `MaxLength` counts them, so a cut never splits a
+ * surrogate pair: a lone surrogate makes `encodeURIComponent` throw.
+ */
 export function clip(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
-  return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  const folded = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(folded).slice(0, max).join('');
 }
 
 /** `Vitamin B6 (as pyridoxine)` as `vitamin-b6-as-pyridoxine`: the form ingredient keys take. */
