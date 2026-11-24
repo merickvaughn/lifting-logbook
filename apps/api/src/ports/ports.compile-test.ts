@@ -80,6 +80,8 @@ const _liftRecordRepo: ILiftRecordRepository = {
     Promise.resolve([]),
   getLoggedLifts: (): Promise<string[]> =>
     Promise.resolve([]),
+  getAllLiftRecords: (): Promise<LiftRecord[]> =>
+    Promise.resolve([]),
   getProgramRecordsForLifts: (): Promise<LiftRecord[]> =>
     Promise.resolve([]),
   appendLiftRecords: (): Promise<number> =>

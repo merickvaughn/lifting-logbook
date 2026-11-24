@@ -90,6 +90,10 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
     );
   }
 
+  async getAllLiftRecords(program: string): Promise<LiftRecord[]> {
+    return [...(this.store.get(program) ?? [])];
+  }
+
   async getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>> {
     return new Set(
       (this.store.get(program) ?? [])

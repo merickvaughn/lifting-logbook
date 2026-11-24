@@ -58,6 +58,9 @@ export interface ILiftRecordRepository {
   /** The macrocycle's records, or only workout `workoutNum`'s when it's given. */
   getLiftRecords(program: string, macrocycleNum: number, workoutNum?: number): Promise<LiftRecord[]>;
 
+  /** Every record the program holds, in any macrocycle: what History's Lift History tab lists (#1453). */
+  getAllLiftRecords(program: string): Promise<LiftRecord[]>;
+
   /**
    * The distinct `workoutNum`s with at least one logged record in the macrocycle —
    * what the macrocycle dashboard's `completedWorkoutNums` is built from. A grouped

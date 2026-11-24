@@ -64,6 +64,7 @@ describe('LiftRecordsController', () => {
   beforeEach(async () => {
     liftRecordRepo = {
       getLiftRecords: jest.fn(),
+      getAllLiftRecords: jest.fn(),
       appendLiftRecords: jest.fn(),
       updateLiftRecord: jest.fn(),
       findStoredSets: jest.fn().mockResolvedValue([]),
@@ -99,22 +100,16 @@ describe('LiftRecordsController', () => {
   });
 
   describe('GET lift-records', () => {
-    it('fetches lift records scoped to current macrocycle', async () => {
-      dashboardRepo.getMacrocycleDashboard.mockResolvedValue(SEED_DASHBOARD);
-      liftRecordRepo.getLiftRecords.mockResolvedValue([SEED_RECORD]);
+    it('lists every macrocycle\'s lift records, not only the current one (#1453)', async () => {
+      liftRecordRepo.getAllLiftRecords.mockResolvedValue([SEED_RECORD, { ...SEED_RECORD, macrocycleNum: 1 }]);
 
       const result = await controller.getLiftRecords('5-3-1', MOCK_USER);
 
-      expect(liftRecordRepo.getLiftRecords).toHaveBeenCalledWith('5-3-1', 4);
-      expect(result).toHaveLength(1);
+      expect(liftRecordRepo.getAllLiftRecords).toHaveBeenCalledWith('5-3-1');
+      expect(liftRecordRepo.getLiftRecords).not.toHaveBeenCalled();
+      expect(result.map((r) => r.macrocycleNum)).toEqual([4, 1]);
       expect(result[0]?.lift).toBe('Bench Press');
       expect(result[0]?.date).toBe('2026-04-20');
-    });
-
-    it('returns no records, rather than a 404, for a program with no current macrocycle (#1300)', async () => {
-      // dashboardRepo rejects with ProgramNotFoundError by default.
-      await expect(controller.getLiftRecords('5-3-1', MOCK_USER)).resolves.toEqual([]);
-      expect(liftRecordRepo.getLiftRecords).not.toHaveBeenCalled();
     });
   });
 

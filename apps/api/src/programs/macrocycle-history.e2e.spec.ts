@@ -175,23 +175,35 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     });
 
     // #1300: History reads this for any program with imports, so a 404 left its load notice up.
-    it('answers GET lift-records with no sets, not a 404, when the program has only imported history', async () => {
+    // #1453: and it lists the imported sets, not only the current macrocycle's.
+    it('answers GET lift-records with the imported sets, not a 404, when the program has only imported history', async () => {
       const user = as('history-records-no-dashboard');
       await user.seedImported(1, '2025-01-06', '2025-02-17');
 
       const res = await user.inject('GET', `/programs/${PROGRAM}/lift-records`);
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual([]);
+      expect((res.json() as { macrocycleNum: number; weight: number }[]).map((r) => [r.macrocycleNum, r.weight])).toEqual([[1, 999]]);
     });
 
-    it('returns no imported rows for the current macrocycle, and the next number is unused', async () => {
+    it('returns the sets of every macrocycle, the current one included (#1453)', async () => {
+      const user = as('history-records-all');
+      await user.seedImported(1, '2025-01-06', '2025-02-17');
+      await user.seedImported(2, '2025-06-02', '2025-07-14');
+      expect((await user.initialize('2026-01-05')).macrocycleNum).toBe(3);
+
+      const records = (await user.inject('GET', `/programs/${PROGRAM}/lift-records`)).json() as { macrocycleNum: number }[];
+
+      expect(records.map((r) => r.macrocycleNum).sort()).toEqual([1, 2]);
+    });
+
+    it('lists the imported rows although the current macrocycle has none, and the next number is unused', async () => {
       const user = as('history-current');
       await user.seedImported(1, '2025-01-06', '2025-02-17');
 
       expect((await user.initialize('2026-01-05')).macrocycleNum).toBe(2);
       const records = (await user.inject('GET', `/programs/${PROGRAM}/lift-records`)).json() as { weight: number }[];
-      expect(records).toEqual([]);
+      expect(records.map((r) => r.weight)).toEqual([999]);
 
       // The current macrocycle has zero records, and the next still lands past every stored number.
       expect((await user.startNext()).macrocycleNum).toBe(3);
