@@ -212,7 +212,8 @@ test('import wizard MAP_COLUMNS: fuzzy-matched columns shown; override unmapped 
   await expect(page.getByRole('heading', { name: 'Map columns' })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Column mappings' })).toBeVisible();
 
-  // "Exercise" is unmapped (required, confidence 0) — alert visible, Next disabled.
+  // Nothing matched the required `lift`, and "Exercise" matched nothing — alert visible,
+  // Next disabled until a column is named for it.
   await expect(page.getByText('Some required fields are not yet mapped')).toBeVisible();
   const nextButton = page.getByRole('button', { name: 'Next', exact: true });
   await expect(nextButton).toBeDisabled();

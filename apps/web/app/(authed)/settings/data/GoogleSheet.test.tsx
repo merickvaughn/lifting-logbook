@@ -6,6 +6,7 @@ import {
   authorizeGoogleSheet,
   createGoogleSheetSpreadsheet,
   fetchGoogleSheetLink,
+  syncGoogleSheet,
   unlinkGoogleSheet,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -14,6 +15,7 @@ jest.mock('@/lib/client-api', () => ({
   fetchGoogleSheetLink: jest.fn(),
   authorizeGoogleSheet: jest.fn(),
   createGoogleSheetSpreadsheet: jest.fn(),
+  syncGoogleSheet: jest.fn(),
   unlinkGoogleSheet: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
@@ -22,12 +24,14 @@ const read = fetchGoogleSheetLink as jest.Mock;
 const authorize = authorizeGoogleSheet as jest.Mock;
 const create = createGoogleSheetSpreadsheet as jest.Mock;
 const unlink = unlinkGoogleSheet as jest.Mock;
+const sync = syncGoogleSheet as jest.Mock;
 
 const view = (over: Partial<GoogleSheetLinkView> = {}): GoogleSheetLinkView => ({
   configured: true,
   status: 'unlinked',
   spreadsheetUrl: null,
   lastMirroredAt: null,
+  syncFailed: false,
   ...over,
 });
 const MIRRORED_AT = '2026-11-22T12:00:00.000Z';
@@ -269,6 +273,127 @@ describe('Settings → Data → Google Sheet', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Unlink' }));
 
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No answer came back in time'));
+    });
+
+    it('syncs now, announces it, and moves focus to the heading', async () => {
+      read.mockResolvedValue(linked);
+      sync.mockResolvedValue({ queued: true });
+      render(<GoogleSheet />);
+
+      press(await screen.findByRole('button', { name: 'Sync now' }));
+
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Sync started.'));
+      expect(sync).toHaveBeenCalledTimes(1);
+      expect(heading()).toHaveFocus();
+      expect(screen.queryByText('Last sync failed.')).not.toBeInTheDocument();
+    });
+
+    it('offers Sync now only once the link has loaded, and not while unlinked', async () => {
+      const pending = deferred<GoogleSheetLinkView>();
+      read.mockReturnValue(pending.promise);
+      render(<GoogleSheet />);
+      expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+      await act(async () => pending.resolve(view()));
+      expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+    });
+
+    it('says the last sync failed, next to Sync now', async () => {
+      read.mockResolvedValue({ ...linked, syncFailed: true });
+      render(<GoogleSheet />);
+      expect(await screen.findByText('Last sync failed.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+    });
+
+    it('logs a failed Sync now, says so in fixed words, and keeps the section usable', async () => {
+      read.mockResolvedValue(linked);
+      const err = new Error('socket hang up at 10.0.0.1');
+      sync.mockRejectedValue(err);
+      render(<GoogleSheet />);
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t start a sync. Please try again.'));
+      expect(screen.getByRole('alert')).not.toHaveTextContent('socket hang up');
+      expect(logClientError).toHaveBeenCalledWith('syncGoogleSheet', err);
+      expect(screen.getByRole('button', { name: 'Sync now' })).not.toHaveAttribute('aria-disabled');
+      expect(screen.getByRole('button', { name: 'Unlink' })).toBeInTheDocument();
+    });
+
+    it('says “Starting sync…” while Sync now runs, and ignores Unlink meanwhile', async () => {
+      read.mockResolvedValue(linked);
+      const pending = deferred<{ queued: true }>();
+      sync.mockReturnValue(pending.promise);
+      render(<GoogleSheet />);
+
+      press(await screen.findByRole('button', { name: 'Sync now' }));
+      expect(screen.getByRole('button', { name: 'Starting sync…' })).toHaveAttribute('aria-disabled', 'true');
+      const other = screen.getByRole('button', { name: 'Unlink' });
+      expect(other).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(other);
+      expect(unlink).not.toHaveBeenCalled();
+
+      await act(async () => pending.resolve({ queued: true }));
+      expect(unlink).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Sync now' })).not.toHaveAttribute('aria-disabled');
+    });
+
+    it('ignores Sync now while Unlink runs', async () => {
+      read.mockResolvedValue(linked);
+      const pending = deferred<{ revoked: boolean }>();
+      unlink.mockReturnValue(pending.promise);
+      render(<GoogleSheet />);
+
+      press(await screen.findByRole('button', { name: 'Unlink' }));
+      expect(screen.getByRole('button', { name: 'Unlinking…' })).toBeInTheDocument();
+      const other = screen.getByRole('button', { name: 'Sync now' });
+      expect(other).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(other);
+      expect(sync).not.toHaveBeenCalled();
+
+      await act(async () => pending.resolve({ revoked: true }));
+      expect(sync).not.toHaveBeenCalled();
+    });
+
+    it('calls Sync now once for a double click in the same tick', async () => {
+      read.mockResolvedValue(linked);
+      const pending = deferred<{ queued: true }>();
+      sync.mockReturnValue(pending.promise);
+      render(<GoogleSheet />);
+
+      const button = await screen.findByRole('button', { name: 'Sync now' });
+      act(() => {
+        button.click();
+        button.click();
+      });
+      expect(sync).toHaveBeenCalledTimes(1);
+      await act(async () => pending.resolve({ queued: true }));
+    });
+
+    it.each([
+      ['google-sheet-not-linked', 'No sheet is linked.', () => linkButton()],
+      ['google-sheet-needs-relink', 'Google access was removed. Link again.', () => linkButton()],
+      ['google-sheet-missing', 'The sheet was deleted or can’t be found.', () => screen.queryByRole('button', { name: 'Create a new sheet' })],
+    ])('switches to that state’s view when Sync now answers 409 %s', async (name, copy, offered) => {
+      read.mockResolvedValue(linked);
+      sync.mockRejectedValue(apiError(409, name));
+      render(<GoogleSheet />);
+
+      press(await screen.findByRole('button', { name: 'Sync now' }));
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(copy));
+      expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Open your sheet' })).not.toBeInTheDocument();
+      expect(offered()).toBeInTheDocument();
+    });
+
+    it.each([
+      ['sheet_missing', missing],
+      ['needs_relink', view({ status: 'needs_relink' })],
+    ])('offers no Sync now while the link is %s', async (_status, link) => {
+      read.mockResolvedValue(link);
+      render(<GoogleSheet />);
+      expect(await screen.findByRole('button', { name: 'Unlink' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
     });
 
     it('describes the mirror only while a sheet is linked', async () => {

@@ -1005,6 +1005,13 @@ export interface ColumnMapping {
   required: boolean;
   /** Human-readable note about data transformations that will be applied (normalization, split, etc.). */
   transformationNote?: string;
+  /**
+   * The other destination fields that meet this requirement in place of `destinationField`
+   * — a one-of group, such as a program spec stating its per-set drop as either
+   * `WT Decrement %` or `Weight %`. Set only on a required field the file has no column
+   * for; the Map columns gate is met when a column is pointed at any one of them (#1442).
+   */
+  satisfiedBy?: string[];
   /** Up to 2 alternative field matches with lower confidence (omitted when no alternatives exist). */
   alternatives?: Array<{
     field: string;
@@ -1534,6 +1541,14 @@ export interface AssignContinueMax {
 export const IMPORT_SUGGESTION_MAX_SETS = 1500;
 /** Suggestion requests each user may make per hour (proposal decision 12). */
 export const IMPORT_SUGGESTION_HOURLY_LIMIT = 10;
+/** Supplement AI suggestions a lifter may request per hour (#1381). */
+export const SUPPLEMENT_SUGGESTION_HOURLY_LIMIT = 20;
+/**
+ * Supplement label lookups a lifter may request per hour, counted per API process (#1381). The form
+ * asks on each pause in typing, and an uncached lookup makes up to four requests to the NIH label
+ * database.
+ */
+export const SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT = 60;
 /** How long the model gets to answer a suggestion request, with no retries (proposal decision 12). */
 export const IMPORT_SUGGESTION_DEADLINE_MS = 60_000;
 

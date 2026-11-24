@@ -77,6 +77,24 @@ describe('AnthropicImportSuggestionsAdapter (#1174)', () => {
     expect(adapter.label).toBe('Anthropic (claude-test)');
   });
 
+  it('holds the answer to the schema the call names, so other features reuse the adapter (#1381)', async () => {
+    const create = jest.fn().mockResolvedValue(answer);
+    const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);
+    const schema = { type: 'object', properties: { suggestion: { type: 'string' } } };
+    await adapter.suggest({ ...call(false), schema }, new AbortController().signal);
+    expect((create.mock.calls[0]?.[0] as { tools: Array<{ input_schema: unknown }> }).tools[0]?.input_schema).toBe(schema);
+  });
+
+  it("keeps the import suggestions' tool description, and sends another only when the call names one (#1381)", async () => {
+    const create = jest.fn().mockResolvedValue(answer);
+    const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);
+    const descriptionOf = (i: number) => (create.mock.calls[i]?.[0] as { tools: Array<{ description: string }> }).tools[0]?.description;
+    await adapter.suggest(call(false), new AbortController().signal);
+    expect(descriptionOf(0)).toBe('Return the suggestions for the lifter to review.');
+    await adapter.suggest({ ...call(false), toolDescription: 'Return the supplement.' }, new AbortController().signal);
+    expect(descriptionOf(1)).toBe('Return the supplement.');
+  });
+
   it('reports an answer that stopped at the token limit as truncated', async () => {
     const create = jest.fn().mockResolvedValue({ ...answer, stop_reason: 'max_tokens' });
     const adapter = new AnthropicImportSuggestionsAdapter('m', 'k', { messages: { create } } as unknown as Pick<Anthropic, 'messages'>);

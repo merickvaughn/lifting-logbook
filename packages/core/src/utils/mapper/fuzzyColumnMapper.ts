@@ -22,6 +22,13 @@ export interface ColumnMapping {
   required: boolean;
   /** Transformation description (e.g., "Split 'Weight x Reps' into fields"). */
   transformationNote?: string;
+  /**
+   * The other destination fields that satisfy this requirement in place of
+   * `destinationField` — its one-of group (`EITHER_FIELDS`) less itself. Set only on a
+   * required field the file has no column for, so the Map columns gate accepts a column
+   * pointed at any one of them (#1442).
+   */
+  satisfiedBy?: string[];
   /** Up to 2 alternative field matches with lower confidence. */
   alternatives?: Array<{
     field: string;
@@ -108,6 +115,17 @@ function calculateSimilarity(sourceHeader: string, canonicalField: string): numb
 const EITHER_FIELDS: Partial<Record<ImportKind, readonly (readonly string[])[]>> = {
   'program-spec': [['wtDecrementPct', 'weightPct']],
 };
+
+/**
+ * The members of `fieldKey`'s one-of group other than itself: the fields a column may feed
+ * instead to meet the same requirement. `undefined` when the field is in no group.
+ */
+function satisfiedByFor(kind: ImportKind, fieldKey: string): string[] | undefined {
+  const siblings = (EITHER_FIELDS[kind] ?? [])
+    .filter((group) => group.includes(fieldKey))
+    .flatMap((group) => group.filter((member) => member !== fieldKey));
+  return siblings.length > 0 ? siblings : undefined;
+}
 
 /**
  * Get the list of required fields for a given import kind. With `assign`, the Assign step
@@ -254,11 +272,13 @@ export function fuzzyColumnMapper(
 
   requiredFields.forEach((fieldKey) => {
     if (!mappedDestinationFields.has(fieldKey) && !coveredByGroup(fieldKey)) {
+      const satisfiedBy = satisfiedByFor(kind, fieldKey);
       mappings.push({
         sourceHeader: '',
         destinationField: fieldKey,
         confidence: 0,
         required: true,
+        ...(satisfiedBy ? { satisfiedBy } : {}),
         transformationNote: `Required field not found in CSV`,
       });
     }

@@ -3,7 +3,29 @@ import {
   buildResourceAttributesEnv,
   resolveDeploymentEnvironment,
   buildLogRecordProcessors,
+  UNDICI_INSTRUMENTATION_CONFIG,
 } from './otel';
+
+// The outbound-HTTP spans startOtel() creates must not carry user data in their URL: a Sheets
+// spreadsheet ID (#1432) or a typed supplement name sent to the NIH label database (#1381).
+describe('UNDICI_INSTRUMENTATION_CONFIG.startSpanHook', () => {
+  const hook = (origin: string, path: string) => UNDICI_INSTRUMENTATION_CONFIG.startSpanHook({ origin, path });
+
+  it('redacts the typed name from a label search URL', () => {
+    const attrs = hook('https://api.ods.od.nih.gov', '/dsld/v9/search-filter?q=Zorblax&size=3');
+    expect(attrs['url.full']).toBe('https://api.ods.od.nih.gov/dsld/v9/search-filter?q=:value&size=:value');
+    expect(attrs['url.query']).toBe('?q=:value&size=:value');
+    expect(JSON.stringify(attrs)).not.toContain('Zorblax');
+  });
+
+  it('still redacts a Sheets spreadsheet ID', () => {
+    expect(JSON.stringify(hook('https://sheets.googleapis.com', '/v4/spreadsheets/1AbcSecretId?fields=x'))).not.toContain('1AbcSecretId');
+  });
+
+  it('adds nothing for other calls', () => {
+    expect(hook('https://example.com', '/path?q=x')).toEqual({});
+  });
+});
 
 // Regression coverage for #487: the API must tag telemetry with a deployment
 // environment so the production alert rules (infra/observability/alerts/api.yaml)

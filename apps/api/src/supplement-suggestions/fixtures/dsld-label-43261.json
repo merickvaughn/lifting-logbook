@@ -1,0 +1,30 @@
+{
+  "id": 43261,
+  "fullName": "Creatine Alkaline",
+  "servingSizes": [
+    {
+      "order": 1,
+      "minQuantity": 2,
+      "maxQuantity": 2,
+      "unit": "Capsule(s)"
+    }
+  ],
+  "productType": {
+    "langualCode": "A1309",
+    "langualCodeDescription": "Non-Nutrient/Non-Botanical"
+  },
+  "ingredientRows": [
+    {
+      "order": 1,
+      "name": "Creatine",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 1.5,
+          "unit": "Gram(s)"
+        }
+      ]
+    }
+  ]
+}

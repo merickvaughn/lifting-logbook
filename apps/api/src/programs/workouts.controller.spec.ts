@@ -75,6 +75,7 @@ describe('WorkoutsController', () => {
     };
     skipOverrideRepo = {
       getSkipsForMacrocycle: jest.fn().mockResolvedValue(new Set<number>()),
+      getSkipReasonsForMacrocycle: jest.fn().mockResolvedValue(new Map<number, string | null>()),
       skipWorkout: jest.fn().mockResolvedValue(undefined),
       unskipWorkout: jest.fn().mockResolvedValue(undefined),
     };

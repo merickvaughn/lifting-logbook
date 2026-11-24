@@ -10,18 +10,42 @@ export const ENQUEUE_TIMEOUT_MS = 2_000;
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 
+/** `change` runs at the end of the window; `sync` is Sync now's own task, scheduled at once (decision 16). */
+export type MirrorTaskKind = 'change' | 'sync';
+
+/**
+ * A Cloud Tasks call that failed: the HTTP status and Google's `error.status` reason (a fixed enum
+ * such as `PERMISSION_DENIED`), never the body's message, which could echo the request.
+ */
+export class CloudTasksError extends Error {
+  constructor(
+    readonly status: number,
+    readonly reason?: string,
+  ) {
+    super(`Cloud Tasks create: ${status}`);
+    this.name = 'CloudTasksError';
+  }
+}
+
+/** Google's `error.status` from an error body, only when it has the enum's shape. */
+export function cloudTasksReason(body: unknown): string | undefined {
+  const status = (body as { error?: { status?: unknown } } | null | undefined)?.error?.status;
+  return typeof status === 'string' && /^[A-Z][A-Z_]{0,63}$/.test(status) ? status : undefined;
+}
+
 export interface ISheetMirrorQueue {
   /**
-   * Enqueues one run for the user, scheduled at the end of the 30-second window `now` falls in.
-   * Every call in a window names the same task, so Cloud Tasks keeps one; `ALREADY_EXISTS` counts
-   * as success (decisions 16-17). Throws on any other failure.
+   * Enqueues one run for the user. A `change` task is scheduled at the end of the 30-second window
+   * `now` falls in; a `sync` task runs at once. Every call of one kind in a window names the same
+   * task, so Cloud Tasks keeps one; `ALREADY_EXISTS` counts as success (decisions 16-17). Throws on
+   * any other failure.
    */
-  enqueue(userId: string, now?: Date): Promise<void>;
+  enqueue(userId: string, now?: Date, kind?: MirrorTaskKind): Promise<void>;
 }
 
 /** The task name for a user and window (decision 16). The hash keeps the user ID out of the name. */
-export const taskName = (userId: string, window: number) =>
-  `${createHash('sha256').update(userId, 'utf8').digest('hex').slice(0, 32)}-${window}`;
+export const taskName = (userId: string, window: number, kind: MirrorTaskKind = 'change') =>
+  `${createHash('sha256').update(userId, 'utf8').digest('hex').slice(0, 32)}-${kind === 'sync' ? 'sync-' : ''}${window}`;
 
 /**
  * Cloud Tasks over REST, authenticated as the service's own account through the metadata server,
@@ -61,7 +85,7 @@ export class CloudTasksSheetMirrorQueue implements ISheetMirrorQueue {
     return this.token.value;
   }
 
-  async enqueue(userId: string, now: Date = new Date()): Promise<void> {
+  async enqueue(userId: string, now: Date = new Date(), kind: MirrorTaskKind = 'change'): Promise<void> {
     const queue = process.env.SHEET_MIRROR_QUEUE;
     const location = process.env.SHEET_MIRROR_QUEUE_LOCATION;
     const serviceAccountEmail = process.env.SHEET_MIRROR_TASKS_SA_EMAIL;
@@ -78,8 +102,8 @@ export class CloudTasksSheetMirrorQueue implements ISheetMirrorQueue {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         task: {
-          name: `${parent}/tasks/${taskName(userId, window)}`,
-          scheduleTime: new Date((window + 1) * WINDOW_MS).toISOString(),
+          name: `${parent}/tasks/${taskName(userId, window, kind)}`,
+          scheduleTime: new Date(kind === 'sync' ? now.getTime() : (window + 1) * WINDOW_MS).toISOString(),
           httpRequest: {
             httpMethod: 'POST',
             url: `${apiUrl}${MIRROR_PATH}`,
@@ -93,7 +117,9 @@ export class CloudTasksSheetMirrorQueue implements ISheetMirrorQueue {
     });
     // 409 is ALREADY_EXISTS: another change in this window already enqueued the run.
     if (res.ok || res.status === 409) return;
-    // The status only: the body could echo the request.
-    throw new Error(`Cloud Tasks create: ${res.status}`);
+    // A body that isn't JSON carries no reason; the status alone is still thrown.
+    // fallback-covered-by: apps/api/src/supplement-sheet-mirror/sheet-mirror-queue.spec.ts
+    const body: unknown = await res.json().catch(() => undefined);
+    throw new CloudTasksError(res.status, cloudTasksReason(body));
   }
 }

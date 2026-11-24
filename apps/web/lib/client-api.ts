@@ -111,6 +111,7 @@ export const {
   authorizeGoogleSheet,
   createGoogleSheetSpreadsheet,
   unlinkGoogleSheet,
+  syncGoogleSheet,
   downloadSnapshotLiftRecords,
   createCustomLift,
   // Keep on the Supplements detail panel saves a suggested store search as the item's link (#1376).
@@ -119,6 +120,9 @@ export const {
   createSupplementItem,
   removeSupplementItem,
   fetchSupplementCatalog,
+  // Tiers 2 and 3 of the form's suggestions (#1381).
+  fetchSupplementLabelLookup,
+  fetchSupplementAiSuggestion,
   // Edit stack mode's bulk bar and Start (#1410).
   moveSupplementDoses,
   setSupplementStatus,
