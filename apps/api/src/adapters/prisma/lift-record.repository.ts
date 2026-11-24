@@ -32,7 +32,11 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   }
 
   async getAllLiftRecords(program: string): Promise<LiftRecord[]> {
-    const rows = await this.prisma.liftRecord.findMany({ where: { userId: this.userId, program } });
+    // Ordered, so same-day sets keep their order between loads: History sorts only by date.
+    const rows = await this.prisma.liftRecord.findMany({
+      where: { userId: this.userId, program },
+      orderBy: [{ macrocycleNum: 'asc' }, { workoutNum: 'asc' }, { occurrence: 'asc' }, { setNum: 'asc' }],
+    });
     return rows.map(rowToLiftRecord);
   }
 

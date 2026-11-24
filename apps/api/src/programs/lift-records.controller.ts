@@ -78,7 +78,7 @@ export class LiftRecordsController {
     const repos = await this.factory.forUser(user);
     // Every macrocycle's sets, imported history included, so a program with no current macrocycle
     // still lists its history rather than 404ing (#1300, #1453). Unpaginated: a 993-row import
-    // is under a tenth of MAX_IMPORT_ROWS and History already sorts and filters them all.
+    // is about a fifth of MAX_IMPORT_ROWS, and History already sorts and filters them all.
     const records = await repos.liftRecord.getAllLiftRecords(program);
     const names = await modificationNamesFor(repos, records);
     return records.map((r) => toLiftRecordResponse(r, names));

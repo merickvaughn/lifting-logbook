@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
-import { LiftRecord, Weekday } from '@lifting-logbook/core';
+import { LiftRecord } from '@lifting-logbook/core';
 import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
@@ -31,15 +31,6 @@ const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' 
 
 const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow =>
   macrocycleRowFixture(macrocycleNum, { origin, status: origin === 'live' ? 'in-progress' : 'completed' });
-
-const SEED_DASHBOARD = {
-  program: '5-3-1',
-  macrocycleUnit: 'week' as const,
-  macrocycleNum: 4,
-  macrocycleDate: new Date('2026-04-20T00:00:00.000Z'),
-  sheetName: '',
-  macrocycleStartWeekday: Weekday.Monday,
-};
 
 const SEED_RECORD = {
   program: '5-3-1',
