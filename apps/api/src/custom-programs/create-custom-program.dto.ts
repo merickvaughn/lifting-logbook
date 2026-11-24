@@ -17,10 +17,8 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import type { LiftProgressionType, WeekType } from '@lifting-logbook/types';
+import { LiftProgressionType, WEEK_TYPES, WeekType } from '@lifting-logbook/types';
 import { IsLiftProgression, IsProgressionReps } from '../lifts/progression.validation';
-
-const WEEK_TYPES: readonly WeekType[] = ['training', 'test', 'deload'];
 
 // Cross-field guard: the work percentage for set i is (1 - i * wtDecrementPct), so the
 // final set is (1 - (sets-1) * wtDecrementPct). When that goes below 0 the prescribed
