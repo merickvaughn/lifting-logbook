@@ -155,15 +155,15 @@ export class ImportSupplementsDto {
   @Optional() @IsInt() @Min(0) @Max(500) skipped?: number;
 }
 
-/**
- * The label lookup request (#1381): the typed name, in the body so it stays out of the request log
- * line and the inbound span's URL.
- */
 /** The catalog lookup request (#1458): the typed name, empty matching nothing. */
 export class SupplementCatalogLookupDto {
   @IsString() @MaxLength(NAME) name!: string;
 }
 
+/**
+ * The label lookup request (#1381): the typed name, in the body so it stays out of the request log
+ * line and the inbound span's URL.
+ */
 export class SupplementLabelLookupDto {
   @IsString() @MinLength(1) @MaxLength(NAME) name!: string;
 }
