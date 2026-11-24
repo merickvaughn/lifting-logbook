@@ -1,10 +1,14 @@
 import { Logger } from '@nestjs/common';
 import type { SupplementSuggestion } from '@lifting-logbook/types';
-import { SUPPLEMENT_SUGGESTION_HOURLY_LIMIT } from '@lifting-logbook/types';
+import {
+  IMPORT_SUGGESTION_DEADLINE_MS,
+  SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT,
+  SUPPLEMENT_SUGGESTION_HOURLY_LIMIT,
+} from '@lifting-logbook/types';
 import { InMemoryImportSuggestionUsage } from '../import-suggestions/import-suggestion-usage';
 import type { IImportSuggestionProvider } from '../ports';
 import { SUPPLEMENT_SYSTEM_PROMPT } from './supplement-suggestion-prompt';
-import { SupplementSuggestionsService } from './supplement-suggestions.service';
+import { SUPPLEMENT_TOOL_DESCRIPTION, SupplementSuggestionsService } from './supplement-suggestions.service';
 
 const TYPED = 'Zorblax Ultra Secret Blend';
 const REPLY = 'Zorblax reply-marker';
@@ -43,21 +47,40 @@ describe('SupplementSuggestionsService (#1381)', () => {
   afterEach(() => jest.restoreAllMocks());
 
   describe('tier 2, label lookup', () => {
+    const lookup = (service: SupplementSuggestionsService, name = TYPED, userId = 'u1', now?: Date) =>
+      service.labelLookup({ userId, name, ...(now ? { now } : {}) });
+
     it('returns the labels found', async () => {
-      expect(await build().service.labelLookup(TYPED)).toEqual({ status: 'ready', suggestions: [suggestion] });
+      expect(await lookup(build().service)).toEqual({ status: 'ready', suggestions: [suggestion] });
     });
 
     it('answers none for no labels and for a blank name, without calling the database', async () => {
       const labels = jest.fn().mockResolvedValue([]);
       const { service } = build({ labels });
-      expect(await service.labelLookup(TYPED)).toEqual({ status: 'none' });
-      expect(await service.labelLookup('  ')).toEqual({ status: 'none' });
+      expect(await lookup(service)).toEqual({ status: 'none' });
+      expect(await lookup(service, '  ')).toEqual({ status: 'none' });
       expect(labels).toHaveBeenCalledTimes(1);
+    });
+
+    it('limits a lifter to the hourly lookups, apart from other lifters, without calling the database', async () => {
+      const labels = jest.fn().mockResolvedValue([suggestion]);
+      const { service } = build({ labels });
+      const now = new Date('2026-11-23T10:00:00Z');
+      for (let i = 0; i < SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT; i++) {
+        expect((await lookup(service, TYPED, 'u1', new Date(now.getTime() + i * 1_000))).status).toBe('ready');
+      }
+      expect(await lookup(service, TYPED, 'u1', new Date(now.getTime() + 15 * 60_000))).toEqual({ status: 'limited', retryAfterMinutes: 45 });
+      expect(labels).toHaveBeenCalledTimes(SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT);
+      expect((await lookup(service, TYPED, 'u2', now)).status).toBe('ready');
+      // A blank name answers none without counting.
+      expect(await lookup(service, ' ', 'u1', now)).toEqual({ status: 'none' });
+      expect((await lookup(service, TYPED, 'u1', new Date(now.getTime() + 60 * 60_000))).status).toBe('ready');
+      expect(JSON.stringify(logs)).not.toContain('Zorblax');
     });
 
     it('answers unavailable on an outage and logs it, without the name', async () => {
       const { service } = build({ labels: async () => Promise.reject(new TypeError(`fetch failed for ${TYPED}`)) });
-      expect(await service.labelLookup(TYPED)).toEqual({ status: 'unavailable' });
+      expect(await lookup(service)).toEqual({ status: 'unavailable' });
       const warned = logs.find((l) => typeof l[1] === 'string' && l[1].includes('lookup failed'));
       expect(warned?.[0]).toMatchObject({ tier: 'label', outcome: 'unavailable', error: 'TypeError' });
       expect(JSON.stringify(logs)).not.toContain('Zorblax');
@@ -68,8 +91,9 @@ describe('SupplementSuggestionsService (#1381)', () => {
     it('sends the system prompt and only the allow-listed payload, and returns the validated suggestion', async () => {
       const { service, suggest } = build();
       const out = await service.aiSuggest({ userId: 'u1', name: TYPED });
-      const [call] = suggest?.mock.calls[0] as [{ system: string; payload: unknown; schema: unknown }];
+      const [call] = suggest?.mock.calls[0] as [{ system: string; payload: unknown; schema: unknown; toolDescription: string }];
       expect(call.system).toBe(SUPPLEMENT_SYSTEM_PROMPT);
+      expect(call.toolDescription).toBe(SUPPLEMENT_TOOL_DESCRIPTION);
       expect(call.payload).toEqual({ untrustedName: TYPED });
       expect(call.schema).toBeDefined();
       expect(out).toMatchObject({ status: 'ready', provider: 'Anthropic (test)', suggestion: { name: REPLY, sources: [{ url: 'https://example.org/a' }] } });
@@ -103,6 +127,40 @@ describe('SupplementSuggestionsService (#1381)', () => {
       expect(await service.aiSuggest({ userId: 'u1', name: TYPED })).toEqual({ status: 'unavailable', reason: 'error' });
       expect(JSON.stringify(logs)).not.toContain('Zorblax');
       expect(logs.some((l) => (l[0] as { error?: string })?.error === 'RateLimitError')).toBe(true);
+    });
+
+    describe('the deadline', () => {
+      beforeEach(() => jest.useFakeTimers());
+      afterEach(() => jest.useRealTimers());
+
+      /** A provider that answers only by rejecting once its signal aborts. */
+      const hanging = () =>
+        jest.fn(
+          (_call: unknown, signal: AbortSignal) =>
+            new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'APIUserAbortError' })))),
+        );
+
+      it(`answers unavailable with reason timeout when the provider is still going at ${IMPORT_SUGGESTION_DEADLINE_MS} ms`, async () => {
+        const suggest = hanging();
+        const { service } = build({ provider: { suggest } });
+        let settled = false;
+        const pending = service.aiSuggest({ userId: 'u1', name: TYPED }).finally(() => (settled = true));
+        await jest.advanceTimersByTimeAsync(IMPORT_SUGGESTION_DEADLINE_MS - 1);
+        expect(settled).toBe(false);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(await pending).toEqual({ status: 'unavailable', reason: 'timeout' });
+        expect((suggest.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
+        expect(logs.some((l) => (l[0] as { outcome?: string })?.outcome === 'timeout')).toBe(true);
+      });
+
+      it('answers reason error, not timeout, when the client leaves first', async () => {
+        const left = new AbortController();
+        const { service } = build({ provider: { suggest: hanging() } });
+        const pending = service.aiSuggest({ userId: 'u1', name: TYPED, signal: left.signal });
+        await jest.advanceTimersByTimeAsync(10);
+        left.abort();
+        expect(await pending).toEqual({ status: 'unavailable', reason: 'error' });
+      });
     });
 
     it('logs counts and outcomes only: never the typed name, the payload or the reply', async () => {

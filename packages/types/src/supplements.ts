@@ -217,10 +217,15 @@ export interface SupplementSuggestion {
   sources: SupplementSuggestionSource[];
 }
 
-/** `GET /supplements/label-lookup`: tier 2. `unavailable` means the label database didn't answer. */
+/**
+ * `POST /supplements/label-lookup`: tier 2.
+ * - `unavailable`: the label database didn't answer.
+ * - `limited`: the lifter used this hour's lookups.
+ */
 export type SupplementLabelLookupResponse =
   | { status: 'ready'; suggestions: SupplementSuggestion[] }
   | { status: 'none' }
+  | { status: 'limited'; retryAfterMinutes: number }
   | { status: 'unavailable' };
 
 /**

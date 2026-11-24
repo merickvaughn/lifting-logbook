@@ -15,6 +15,8 @@ export interface ImportSuggestionCall {
   maxOutputTokens: number;
   /** The reply's JSON Schema, for a provider that can be held to one. Defaults to the import suggestions' (#1381 reuses this port). */
   schema?: object;
+  /** What the forced tool returns, for a provider that names one. Defaults to the import suggestions' (#1381). */
+  toolDescription?: string;
 }
 
 export interface ImportSuggestionCallResult {

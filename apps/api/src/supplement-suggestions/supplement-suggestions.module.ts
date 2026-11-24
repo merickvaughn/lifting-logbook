@@ -1,5 +1,5 @@
 import { Module, Provider } from '@nestjs/common';
-import { importSuggestionProvider } from '../adapters/llm/import-suggestions-provider.factory';
+import { ImportSuggestionProviderModule } from '../adapters/llm/import-suggestion-provider.module';
 import { supplementSuggestionUsageProvider } from '../import-suggestions/import-suggestion-usage';
 import { SUPPLEMENT_LABEL_LOOKUP } from '../ports/tokens';
 import { DsldLabelLookup } from './dsld-label-lookup';
@@ -9,7 +9,8 @@ const labelLookupProvider: Provider = { provide: SUPPLEMENT_LABEL_LOOKUP, useFac
 
 /** Tiers 2 and 3 of the supplement suggestions (#1381). The AI provider is the import suggestions' own. */
 @Module({
-  providers: [importSuggestionProvider, supplementSuggestionUsageProvider, labelLookupProvider, SupplementSuggestionsService],
+  imports: [ImportSuggestionProviderModule],
+  providers: [supplementSuggestionUsageProvider, labelLookupProvider, SupplementSuggestionsService],
   exports: [SupplementSuggestionsService],
 })
 export class SupplementSuggestionsModule {}

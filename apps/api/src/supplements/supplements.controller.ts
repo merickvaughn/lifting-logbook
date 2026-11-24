@@ -16,9 +16,11 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UnprocessableEntityException,
   BadGatewayException,
 } from '@nestjs/common';
+import { FastifyRequest } from 'fastify';
 import {
   DEFAULT_CAFFEINE_CUTOFF,
   SupplementChangeBody,
@@ -69,6 +71,7 @@ import {
   SetStatusDto,
   SupplementSettingsDto,
   SupplementAiSuggestionDto,
+  SupplementLabelLookupDto,
   SupplementSheetDto,
   UpdateSupplementItemDto,
 } from './supplements.dto';
@@ -207,18 +210,42 @@ export class SupplementsController {
     return searchSupplements(q ?? '').map(toCatalogEntry);
   }
 
-  /** Tier 2 (#1381): product labels from the NIH label database, for a name the catalog doesn't have. */
-  @Get('label-lookup')
-  labelLookup(@Query('q') q: string | string[] | undefined): Promise<SupplementLabelLookupResponse> {
-    if (Array.isArray(q)) throw new BadRequestException('q must be given once');
-    return this.suggestions.labelLookup(q ?? '');
+  /**
+   * Tier 2 (#1381): product labels from the NIH label database, for a name the catalog doesn't
+   * have. A POST with the name in the body, so the name stays out of the request log and the
+   * inbound span's URL.
+   *
+   * `@SkipRlsTransaction()` here and on `aiSuggestion`: neither reads the stack, and the outgoing
+   * call (up to about 8 s here, 60 s for the AI) would otherwise hold the request's RLS transaction
+   * and its connection, and outlast its 15-second timeout. The AI count runs in its own short
+   * transaction as the user, as the import suggestions' does.
+   */
+  @Post('label-lookup')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  labelLookup(@CurrentUser() user: AuthUser, @Body() body: SupplementLabelLookupDto): Promise<SupplementLabelLookupResponse> {
+    return this.suggestions.labelLookup({ userId: user.id, name: body.name });
   }
 
   /** Tier 3 (#1381): an AI suggestion from the typed name alone. The client saves it unverified. */
   @Post('ai-suggestion')
   @HttpCode(HttpStatus.OK)
-  aiSuggestion(@CurrentUser() user: AuthUser, @Body() body: SupplementAiSuggestionDto): Promise<SupplementAiSuggestionResponse> {
-    return this.suggestions.aiSuggest({ userId: user.id, name: body.name });
+  @SkipRlsTransaction()
+  async aiSuggestion(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SupplementAiSuggestionDto,
+    @Req() req: FastifyRequest,
+  ): Promise<SupplementAiSuggestionResponse> {
+    // The lifter left the form, so the client dropped the request: stop the model too.
+    const left = new AbortController();
+    const socket = req.raw.socket as NodeJS.EventEmitter | undefined;
+    const onClose = () => left.abort();
+    socket?.once?.('close', onClose);
+    try {
+      return await this.suggestions.aiSuggest({ userId: user.id, name: body.name, signal: left.signal });
+    } finally {
+      socket?.removeListener?.('close', onClose);
+    }
   }
 
   /**

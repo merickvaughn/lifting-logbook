@@ -916,9 +916,17 @@ export function createApiClient(config: ApiClientConfig) {
     fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {
       return request(`/supplements/catalog?q=${enc(q)}`, { cache: 'no-store' });
     },
-    /** Tier 2 (#1381): product labels for a name the catalog doesn't have. Never rejects for a label-database outage; that is `unavailable`. */
+    /**
+     * Tier 2 (#1381): product labels for a name the catalog doesn't have. Never rejects for a
+     * label-database outage; that is `unavailable`. A POST, so the name stays out of URLs and logs.
+     */
     fetchSupplementLabelLookup(q: string): Promise<SupplementLabelLookupResponse> {
-      return request(`/supplements/label-lookup?q=${enc(q)}`, { cache: 'no-store' });
+      return request(`/supplements/label-lookup`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name: q }),
+        cache: 'no-store',
+      });
     },
     /** Tier 3 (#1381): an AI suggestion from the typed name alone. Counts against the lifter's hourly allowance. */
     fetchSupplementAiSuggestion(name: string): Promise<SupplementAiSuggestionResponse> {

@@ -36,7 +36,7 @@ export class AnthropicImportSuggestionsAdapter implements IImportSuggestionProvi
         tools: [
           {
             name: TOOL_NAME,
-            description: 'Return the answer for the lifter to review.',
+            description: call.toolDescription ?? 'Return the suggestions for the lifter to review.',
             input_schema: (call.schema ?? SUGGESTION_RESPONSE_SCHEMA) as unknown as Anthropic.Messages.Tool.InputSchema,
           },
         ],

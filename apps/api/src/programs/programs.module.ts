@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { macrocyclePlanningAgentProvider } from '../adapters/llm/macrocycle-planning-provider.factory';
-import { importSuggestionProvider } from '../adapters/llm/import-suggestions-provider.factory';
+import { ImportSuggestionProviderModule } from '../adapters/llm/import-suggestion-provider.module';
 import { importSuggestionUsageProvider } from '../import-suggestions/import-suggestion-usage';
 import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
 import { BodyWeightController } from './body-weight.controller';
@@ -24,6 +24,7 @@ import { WorkoutSkipController } from './workout-skip.controller';
 import { WorkoutsController } from './workouts.controller';
 
 @Module({
+  imports: [ImportSuggestionProviderModule],
   controllers: [
     BodyWeightController,
     MacrocycleDashboardController,
@@ -45,7 +46,6 @@ import { WorkoutsController } from './workouts.controller';
   ],
   providers: [
     macrocyclePlanningAgentProvider,
-    importSuggestionProvider,
     importSuggestionUsageProvider,
     ImportSuggestionsService,
     MacrocycleGenerationService,
