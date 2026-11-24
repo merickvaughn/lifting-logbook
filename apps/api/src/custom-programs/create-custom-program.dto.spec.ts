@@ -124,4 +124,17 @@ describe('CreateCustomProgramDto validation', () => {
   it('rejects a repsLow above the row reps', async () => {
     expect(await flattenConstraintKeys(dtoWith({ reps: 8, repsLow: 9 }))).toContain('isAtMostSibling');
   });
+
+  // #1187: weekType is the closed WeekType set; an omitted one is fine.
+  it.each(['training', 'test', 'deload'])('accepts the weekType %s', async (weekType) => {
+    expect(await validate(dtoWith({ weekType }), { whitelist: true })).toHaveLength(0);
+  });
+
+  it('accepts an omitted weekType', async () => {
+    expect(await validate(dtoWith({}), { whitelist: true })).toHaveLength(0);
+  });
+
+  it.each(['=HYPERLINK("x")', 'Training', ''])('rejects the weekType %j', async (weekType) => {
+    expect(await flattenConstraintKeys(dtoWith({ weekType }))).toContain('isIn');
+  });
 });
