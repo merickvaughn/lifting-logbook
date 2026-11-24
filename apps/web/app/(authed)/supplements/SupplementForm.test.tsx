@@ -732,7 +732,8 @@ describe('tiers 2 and 3: product label and AI suggestion (#1381)', () => {
   it.each([
     ['no label matches', { status: 'none' }, 'No matching product label either.'],
     ['the label database is down', { status: 'unavailable' }, 'The product label database didn’t answer.'],
-    ['the lifter has used this hour’s label lookups', { status: 'limited', retryAfterMinutes: 5 }, 'You’ve used this hour’s product label lookups.'],
+    ['the lifter has used this hour’s label lookups', { status: 'limited', retryAfterMinutes: 5 }, 'Product label lookups are paused for 5 minutes.'],
+    ['the label lookups resume in a minute', { status: 'limited', retryAfterMinutes: 1 }, 'Product label lookups are paused for 1 minute.'],
   ])('offers Suggest with AI only once the catalog and %s', async (_label, answer, message) => {
     (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue(answer);
     add('daily');
@@ -847,6 +848,17 @@ describe('tiers 2 and 3: product label and AI suggestion (#1381)', () => {
     await userEvent.type(field('Name'), '{Backspace}');
     await screen.findByRole('button', { name: 'Suggest with AI' });
     expect((fetchSupplementLabelLookup as jest.Mock).mock.calls.filter(([q]) => q === 'zorblax')).toHaveLength(1);
+  });
+
+  it('asks again about a name whose label lookup was paused, rather than keeping the pause', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'limited', retryAfterMinutes: 5 });
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByRole('button', { name: 'Suggest with AI' });
+    await userEvent.type(field('Name'), 'x');
+    await waitFor(() => expect(fetchSupplementLabelLookup).toHaveBeenCalledWith('zorblaxx'));
+    await userEvent.type(field('Name'), '{Backspace}');
+    await waitFor(() => expect((fetchSupplementLabelLookup as jest.Mock).mock.calls.filter(([q]) => q === 'zorblax')).toHaveLength(2));
   });
 
   it('says it is asking while the AI answers, takes no second press, then focuses the banner in the same live region', async () => {

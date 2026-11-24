@@ -72,6 +72,8 @@ interface Lookup {
    * has used this hour's lookups. Tier 3 is offered once it's set.
    */
   label?: 'none' | 'unavailable' | 'limited';
+  /** With `limited`: how long until the lifter can look labels up again. */
+  retryAfterMinutes?: number;
 }
 
 /**
@@ -217,7 +219,8 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
       if (!current) return;
       const first = found.status === 'ready' ? found.suggestions[0] : undefined;
       if (first) fill(suggestionEntry(first), { suggested: { tier: 'label', suggestion: first } });
-      else setLookup({ name, filled: 0, catalogFailed, label: found.status === 'none' || found.status === 'limited' ? found.status : 'unavailable' });
+      else if (found.status === 'limited') setLookup({ name, filled: 0, catalogFailed, label: 'limited', retryAfterMinutes: found.retryAfterMinutes });
+      else setLookup({ name, filled: 0, catalogFailed, label: found.status === 'none' ? 'none' : 'unavailable' });
     };
     const answered = (entries: SupplementCatalogEntry[]) => {
       if (!current) return;
@@ -529,7 +532,7 @@ export default function SupplementForm({ stack, mode, dayTypeId, onCancel, onDis
                   {looked.label === 'none'
                     ? `No matching product label${looked.catalogFailed ? '' : ' either'}.`
                     : looked.label === 'limited'
-                      ? 'You’ve used this hour’s product label lookups.'
+                      ? `Product label lookups are paused for ${looked.retryAfterMinutes ?? 60} minute${looked.retryAfterMinutes === 1 ? '' : 's'}.`
                       : 'The product label database didn’t answer.'}
                 </p>
               )}
