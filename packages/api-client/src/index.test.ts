@@ -90,6 +90,14 @@ describe('createApiClient', () => {
       expect((init as { cache?: string }).cache).toBe('no-store');
     });
 
+    it('lists the programs holding the user\'s sets (#1454)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(['531', 'rpt']), { status: 200 }));
+      await expect(makeClient().fetchRecordedPrograms()).resolves.toEqual(['531', 'rpt']);
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/users/me/recorded-programs');
+      expect((init as { cache?: string }).cache).toBe('no-store');
+    });
+
     it('forwards the Next.js revalidate directive for cacheable reads', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
       const client = makeClient();

@@ -62,6 +62,12 @@ export interface ILiftRecordRepository {
   getAllLiftRecords(program: string): Promise<LiftRecord[]>;
 
   /**
+   * The programs the user holds at least one record in, the non-cycle one included: what the
+   * web's program pickers add to the custom programs and active template (#1454). A grouped query.
+   */
+  getRecordedPrograms(): Promise<string[]>;
+
+  /**
    * The distinct `workoutNum`s with at least one logged record in the macrocycle —
    * what the macrocycle dashboard's `completedWorkoutNums` is built from. A grouped
    * query rather than `getLiftRecords` + a reduce, which fetched every column

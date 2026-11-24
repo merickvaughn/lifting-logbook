@@ -275,6 +275,18 @@ describe('PrismaLiftRecordRepository', () => {
     });
   });
 
+  describe('getRecordedPrograms (#1454)', () => {
+    it("groups the user's sets by program and returns each program once", async () => {
+      const groupBy = jest.fn().mockResolvedValue([{ program: '531' }, { program: 'rpt' }]);
+      const prisma = makePrisma();
+      (prisma.liftRecord as unknown as { groupBy: jest.Mock }).groupBy = groupBy;
+      const repo = new PrismaLiftRecordRepository(prisma, 'user-1');
+
+      await expect(repo.getRecordedPrograms()).resolves.toEqual(['531', 'rpt']);
+      expect(groupBy).toHaveBeenCalledWith({ by: ['program'], where: { userId: 'user-1' } });
+    });
+  });
+
   describe('getLastSessions (#1252)', () => {
     const before = { workoutNum: 3, through: new Date('2026-04-08T00:00:00.000Z') };
     const scope = {
