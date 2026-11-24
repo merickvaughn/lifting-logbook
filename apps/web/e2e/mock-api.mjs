@@ -1332,13 +1332,36 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Tiers 2 and 3 (#1381): no label matches and the AI is off, so a name the catalog lacks offers Suggest with AI.
-  if (method === 'GET' && url.pathname === '/supplements/label-lookup') {
-    json(res, { status: 'none' });
+  // Tiers 2 and 3 (#1381). A name with "beetroot" in it matches a product label; any other name the
+  // catalog lacks matches none, so the form offers Suggest with AI. The AI answers a name with
+  // "tart cherry" in it and is off for every other name.
+  if (method === 'POST' && url.pathname === '/supplements/label-lookup') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const name = String(body.name ?? '').toLowerCase();
+    json(res, name.includes('beetroot') ? {
+      status: 'ready',
+      suggestions: [{
+        name: 'Beetroot Powder', keyCompound: 'Beetroot', suggestedDose: '1 scoop (10 g)', timing: '', suggestedSlot: 'pre',
+        typicalRange: '', ingredients: [{ key: 'beetroot', amount: 10, unit: 'g' }], productType: 'Botanical',
+        sources: [{ label: 'NIH Dietary Supplement Label Database', url: 'https://dsld.od.nih.gov/label/1' }],
+      }],
+    } : { status: 'none' });
     return;
   }
   if (method === 'POST' && url.pathname === '/supplements/ai-suggestion') {
-    json(res, { status: 'off' });
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const name = String(body.name ?? '').toLowerCase();
+    json(res, name.includes('tart cherry') ? {
+      status: 'ready',
+      provider: 'Mock AI',
+      suggestion: {
+        name: 'Tart cherry extract', keyCompound: 'Anthocyanins', suggestedDose: '480 mg', timing: 'Evening',
+        suggestedSlot: 'pm', typicalRange: '480-1000 mg', ingredients: [{ key: 'tart-cherry', amount: 480, unit: 'mg' }],
+        productType: '', sources: [],
+      },
+    } : { status: 'off' });
     return;
   }
 
