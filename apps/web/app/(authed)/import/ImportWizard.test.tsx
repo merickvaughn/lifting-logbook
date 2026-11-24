@@ -45,6 +45,7 @@ import {
 } from '@/lib/client-api';
 import { MAX_RENDERED_IMPORT_ERRORS, MAX_RENDERED_IMPORT_SKIPS } from '@/lib/import-constants';
 import { localToday } from '@/lib/calendarDay';
+import { PROGRAMS as CATALOG } from '@/lib/programs';
 
 // File.text() is not implemented in jsdom; use FileReader instead.
 function readFileText(file: File): Promise<string> {
@@ -4418,6 +4419,44 @@ describe('ImportWizard Assign step (#1256)', () => {
 });
 
 // ── Assign step: progressions of lifts outside a stretch's program (#1212) ───────
+
+// #1454: an import into a template the lifter can't pick would otherwise go unmentioned.
+describe('ImportWizard Assign: a program the lifter can’t pick (#1454)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPreview.mockResolvedValue(ASSIGN_PREVIEW);
+    mockDryRun.mockResolvedValue(DRY_RUN_OK);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('names a destination whose catalog entry isn’t available, once', async () => {
+    expect(CATALOG.find((p) => p.id === '531')?.available).toBe(false);
+    mockAssign.mockResolvedValue(
+      assignRes({ stretches: [stretch(['2026-01-01'], { program: '531' }), stretch(['2026-02-01'], { program: '531' })] }),
+    );
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    const notes = screen.getAllByTestId('assign-unpickable');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toHaveTextContent(
+      '5/3/1 isn’t offered on the Programs page, so it can’t become your active program. Its macrocycles are still listed under it in History, where this import can be undone.',
+    );
+  });
+
+  it('says nothing for a destination the lifter can pick', async () => {
+    mockAssign.mockResolvedValue(assignRes());
+    const user = userEvent.setup();
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await toAssign(user);
+
+    expect(screen.queryByTestId('assign-unpickable')).not.toBeInTheDocument();
+  });
+});
 
 describe('ImportWizard Assign lift progressions (#1212)', () => {
   // The second stretch has Face Pull, which RPT doesn't plan; its stored row is spelled `face-pull`.

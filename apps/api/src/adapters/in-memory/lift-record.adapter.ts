@@ -137,6 +137,10 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
       );
   }
 
+  async getRecordedPrograms(): Promise<string[]> {
+    return [...this.store].filter(([, rows]) => rows.length > 0).map(([program]) => program);
+  }
+
   async getLoggedLifts(program: string): Promise<string[]> {
     return [...new Set((this.store.get(program) ?? []).map((r) => r.lift))];
   }

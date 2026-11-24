@@ -110,6 +110,7 @@ export const {
   updateUserSettings,
   switchProgram,
   fetchCustomPrograms,
+  fetchRecordedPrograms,
   fetchCustomProgram,
   createCustomProgram,
   updateCustomProgram,

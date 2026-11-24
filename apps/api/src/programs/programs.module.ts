@@ -10,7 +10,7 @@ import { MacrocycleGenerationController } from './macrocycle-generation.controll
 import { MacrocycleGenerationService } from './macrocycle-generation.service';
 import { MacrocyclePlanController } from './macrocycle-plan.controller';
 import { ImportController } from './import.controller';
-import { LiftRecordsController } from './lift-records.controller';
+import { LiftRecordsController, RecordedProgramsController } from './lift-records.controller';
 import { ManageLiftsController } from './manage-lifts.controller';
 import { NonCycleReferenceController, NonCycleWorkoutsController } from './non-cycle-workouts.controller';
 import { ProgramSpecController } from './program-spec.controller';
@@ -38,6 +38,7 @@ import { WorkoutsController } from './workouts.controller';
     TrainingMaxesController,
     TrainingMaxHistoryController,
     LiftRecordsController,
+    RecordedProgramsController,
     ManageLiftsController,
     NonCycleWorkoutsController,
     NonCycleReferenceController,

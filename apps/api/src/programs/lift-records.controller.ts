@@ -58,6 +58,21 @@ import { writeFileNumberRows } from './import-handlers';
 import { RlsTxTimeout } from '../adapters/prisma/rls-context';
 import { IMPORT_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 
+/**
+ * The programs holding the user's sets, non-cycle workouts aside (#1454). A built-in template the
+ * lifter isn't on and can't pick still holds an import's history, so the web lists it from here.
+ */
+@Controller('users/me/recorded-programs')
+export class RecordedProgramsController {
+  constructor(@Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory) {}
+
+  @Get()
+  async list(@CurrentUser() user: AuthUser): Promise<string[]> {
+    const { liftRecord } = await this.factory.forUser(user);
+    return (await liftRecord.getRecordedPrograms()).filter((p) => p !== NON_CYCLE_PROGRAM).sort();
+  }
+}
+
 /** Whether two sets carry the same modifications, in any order. */
 function sameModifications(a: LiftRecord, b: LiftRecord): boolean {
   const ids = (r: LiftRecord) => [...(r.modifications ?? [])].sort().join();

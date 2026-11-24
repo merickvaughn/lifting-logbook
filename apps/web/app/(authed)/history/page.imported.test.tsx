@@ -9,6 +9,7 @@ jest.mock('@/lib/api', () => ({
   fetchNonCycleRecords: jest.fn().mockResolvedValue([]),
   fetchImportBatches: jest.fn().mockResolvedValue([]),
   fetchCustomPrograms: jest.fn().mockResolvedValue([]),
+  fetchRecordedPrograms: jest.fn().mockResolvedValue([]),
   fetchUserSettings: jest.fn().mockResolvedValue({ activeProgram: '5-3-1' }),
 }));
 jest.mock('@/lib/preferences', () => ({ getPreferredUnit: jest.fn().mockResolvedValue('lbs') }));

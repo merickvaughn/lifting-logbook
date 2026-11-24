@@ -514,6 +514,10 @@ export default function AssignStep({
   const left = openDecisions(draft, res);
   const lone = pending.filter((p) => !p.unnumbered && draft.filed[p.session.date] === undefined);
   const programIds = [...new Set([...res.programs.map((p) => p.id), ...stretches.map((s) => s.program)])];
+  // Templates the Programs page doesn't offer, so the lifter can't make them active (#1454).
+  const unpickable = [...new Set(stretches.map((s) => s.program))].filter(
+    (id) => PROGRAMS.find((p) => p.id === id)?.available === false,
+  );
   const toggle = (id: string, on: boolean) => setOpen((prev) => withMember(prev, id, on));
   // A stretch the lifter is editing stays open, so settling it doesn't collapse it under their focus.
   const editStretch = (id: string, next: AssignDraft) => {
@@ -562,6 +566,12 @@ export default function AssignStep({
           and will be stored outside any macrocycle.
         </p>
       )}
+      {unpickable.map((id) => (
+        <p key={id} className={styles.panel} data-testid="assign-unpickable">
+          {name(id)} isn’t offered on the Programs page, so it can’t become your active program. Its macrocycles
+          are still listed under it in History, where this import can be undone.
+        </p>
+      ))}
       {res.split && (
         <p className={styles.panel} data-testid="assign-split">
           {res.split.changes} one-rep-max row{res.split.changes === 1 ? '' : 's'} would change a training max.
