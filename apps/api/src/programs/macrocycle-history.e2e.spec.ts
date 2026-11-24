@@ -68,6 +68,7 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
       /** The id header of a page open on the current macrocycle. */
       currentPage: async () => ({ [MACROCYCLE_ID_HEADER]: await currentMacrocycleId(app, PROGRAM, `Bearer ${user}`) }),
       set,
+      repos,
       /** An `imported` macrocycle with one set, as piece 2's Assign step will store it. */
       seedImported: async (macrocycleNum: number, start: string, end: string) => {
         const bundle = await repos();
@@ -175,23 +176,47 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
     });
 
     // #1300: History reads this for any program with imports, so a 404 left its load notice up.
-    it('answers GET lift-records with no sets, not a 404, when the program has only imported history', async () => {
+    it('answers GET lift-records 200, not a 404, when the program has only imported history', async () => {
       const user = as('history-records-no-dashboard');
       await user.seedImported(1, '2025-01-06', '2025-02-17');
 
       const res = await user.inject('GET', `/programs/${PROGRAM}/lift-records`);
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual([]);
+      expect((res.json() as { weight: number }[]).map((r) => r.weight)).toEqual([999]);
     });
 
-    it('returns no imported rows for the current macrocycle, and the next number is unused', async () => {
+    // #1453: the current macrocycle is empty after a program switch; the sets are in earlier ones.
+    it('answers GET lift-records with the sets of every macrocycle, not only the current one', async () => {
+      const user = as('history-records-all');
+      await user.seedImported(1, '2025-01-06', '2025-02-17');
+      expect((await user.initialize('2026-01-05')).macrocycleNum).toBe(2);
+      await (await user.repos()).liftRecord.appendLiftRecords(PROGRAM, [
+        user.set(1, '2025-01-13', { weight: 301 }),
+        user.set(2, '2026-01-05', { weight: 302 }),
+      ]);
+
+      const records = (await user.inject('GET', `/programs/${PROGRAM}/lift-records`)).json() as {
+        macrocycleNum: number;
+        weight: number;
+      }[];
+
+      expect(records.map((r) => [r.macrocycleNum, r.weight]).sort()).toEqual([
+        [1, 301],
+        [1, 999],
+        [2, 302],
+      ]);
+    });
+
+    it('keeps imported rows out of the current macrocycle, and the next number is unused', async () => {
       const user = as('history-current');
       await user.seedImported(1, '2025-01-06', '2025-02-17');
 
       expect((await user.initialize('2026-01-05')).macrocycleNum).toBe(2);
-      const records = (await user.inject('GET', `/programs/${PROGRAM}/lift-records`)).json() as { weight: number }[];
-      expect(records).toEqual([]);
+      const records = (await user.inject('GET', `/programs/${PROGRAM}/lift-records`)).json() as {
+        macrocycleNum: number;
+      }[];
+      expect(records.filter((r) => r.macrocycleNum === 2)).toEqual([]);
 
       // The current macrocycle has zero records, and the next still lands past every stored number.
       expect((await user.startNext()).macrocycleNum).toBe(3);

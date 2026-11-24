@@ -51,7 +51,6 @@ import { toLiftRecordResponse } from './mappers';
 import {
   assertMacrocycleWritable,
   checkMacrocycleId,
-  dashboardOrNull,
   lockForImport,
 } from './macrocycle-history.util';
 import { liftNamesFor, effectiveSlotMapFor } from './effective-slot-map.util';
@@ -77,11 +76,10 @@ export class LiftRecordsController {
     @CurrentUser() user: AuthUser,
   ): Promise<LiftRecordResponse[]> {
     const repos = await this.factory.forUser(user);
-    // The current macrocycle's sets. A program with only imported history has no current
-    // macrocycle, so none, rather than a 404 that History reads as a failed load (#1300).
-    const dashboard = await dashboardOrNull(repos, program);
-    if (!dashboard) return [];
-    const records = await repos.liftRecord.getLiftRecords(program, dashboard.macrocycleNum);
+    // Every macrocycle's sets, so imported history shows too (#1453). Unbounded: the largest
+    // known import is 993 rows, and History filters and searches the whole list client-side.
+    // A program with no sets returns [], not a 404 that History reads as a failed load (#1300).
+    const records = await repos.liftRecord.getAllLiftRecords(program);
     const names = await modificationNamesFor(repos, records);
     return records.map((r) => toLiftRecordResponse(r, names));
   }

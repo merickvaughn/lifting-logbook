@@ -323,3 +323,25 @@ describe('HistoryPage program', () => {
     expect(html).toContain('role="status"');
   });
 });
+
+// #1453: the program's sets arrive from every macrocycle, though the current one holds none.
+describe('HistoryPage with only earlier macrocycles holding sets', () => {
+  it('passes the earlier macrocycles’ records to the Lift History tab', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([]);
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([
+      { ...record('old-1', 'Squat', '2021-03-01', 300), macrocycleNum: 1 },
+      { ...record('old-2', 'Deadlift', '2022-03-01', 400), macrocycleNum: 2 },
+    ]);
+    (fetchMacrocycles as jest.Mock).mockResolvedValue([
+      { id: 'm35', macrocycleNum: 35, status: 'in-progress', origin: 'program' },
+    ]);
+
+    const records = await renderRecords();
+
+    expect(records.map((r) => [r.macrocycleNum, r.lift])).toEqual([
+      [2, 'Deadlift'],
+      [1, 'Squat'],
+    ]);
+  });
+});

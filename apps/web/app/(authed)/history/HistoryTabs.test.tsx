@@ -302,3 +302,17 @@ describe('HistoryTabs — Macrocycles', () => {
     });
   });
 });
+
+describe('HistoryTabs — imported history in earlier macrocycles (#1453)', () => {
+  it('lists every lift in the records as a filter option, and the rows, not the empty message', () => {
+    const records = [
+      { ...RECORD, id: 'a', macrocycleNum: 1, lift: 'Squat' },
+      { ...RECORD, id: 'b', macrocycleNum: 2, lift: 'Deadlift', date: '2022-03-01' },
+    ];
+    render(<HistoryTabs records={records} tmEntries={[]} macrocycles={[]} unit="lbs" />);
+
+    const options = within(screen.getAllByLabelText('Filter by lift')[0]).getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(expect.arrayContaining(['Squat', 'Deadlift']));
+    expect(screen.queryByText('No records match the current filters.')).not.toBeInTheDocument();
+  });
+});
