@@ -77,6 +77,7 @@ const KEPT = [
   'CustomProgram',
   'CustomProgramSpec',
   'ImportSuggestionUsage',
+  'SupplementSuggestionUsage',
   'GoogleSheetLink',
   'GoogleOauthRequest',
 ];
@@ -342,6 +343,7 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
     });
   }
   await prisma.importSuggestionUsage.create({ data: { userId } });
+  await prisma.supplementSuggestionUsage.create({ data: { userId } });
   await prisma.googleSheetLink.create({
     data: {
       userId,

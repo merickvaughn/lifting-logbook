@@ -80,6 +80,56 @@ test('a name that is not in the shared catalog says so, and fills nothing', asyn
   await expect(dialog.getByLabel(/^Key compound/)).toHaveValue('');
 });
 
+test('a name the shared catalog lacks fills from a product label, and the form says so', async ({ page }) => {
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: '+ Add daily item' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add supplement' });
+  await dialog.getByLabel('Name').fill('Beetroot powder');
+  const status = dialog.getByRole('status');
+  await expect(status).toContainText(/Filled \d+ fields? from a product label/);
+  await expect(dialog.getByLabel(/^Key compound/)).toHaveValue('Beetroot');
+  await expect(dialog.getByLabel(/^Amount/)).toHaveValue('1 scoop (10 g)');
+  await expect(status.getByRole('link', { name: 'NIH Dietary Supplement Label Database' })).toBeVisible();
+  await expect(dialog.getByText('AI · unverified')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Suggest with AI' })).toHaveCount(0);
+});
+
+test('Suggest with AI fills an unverified item, which counts once confirmed in its detail panel', async ({ page }) => {
+  await page.goto('/supplements');
+  await page.getByRole('button', { name: '+ Add daily item' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add supplement' });
+  await dialog.getByLabel('Name').fill('Tart cherry');
+  const status = dialog.getByRole('status');
+  await expect(status).toContainText('Not in the shared catalog.');
+  await expect(status).toContainText('No matching product label either.');
+
+  await dialog.getByRole('button', { name: 'Suggest with AI' }).click();
+  const banner = status.getByText(/from an AI suggestion/);
+  await expect(banner).toBeVisible();
+  await expect(banner).toBeFocused();
+  await expect(dialog.getByLabel(/^Key compound/)).toHaveValue('Anthocyanins');
+  await expect(dialog.getByLabel(/^Key compound/).locator('xpath=ancestor::label')).toContainText('AI · unverified');
+  await expect(dialog.getByLabel(/^Slot/)).toHaveValue('pm');
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(dialog).toBeHidden();
+
+  const row = page.getByRole('button', { name: /Tart cherry/ });
+  await expect(row).toContainText('unverified, not counted');
+  await row.click();
+  const detail = page.getByRole('dialog', { name: 'Tart cherry' });
+  await expect(detail.getByText('AI · unverified')).toBeVisible();
+  await detail.getByRole('button', { name: 'Confirm' }).click();
+  await expect(detail.getByRole('status')).toHaveText('Confirmed. It now counts in your totals.');
+  await expect(detail.getByRole('heading', { name: 'Tart cherry' })).toBeFocused();
+  await expect(detail.getByRole('button', { name: 'Confirm' })).toHaveCount(0);
+  await expect(detail.getByText('AI · unverified')).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText('unverified, not counted');
+});
+
 test('Edit stack: ticking a row and moving it with the bulk bar puts it in the new slot', async ({ page }) => {
   await page.goto('/supplements');
   const daily = page.getByRole('region', { name: 'Every day' });

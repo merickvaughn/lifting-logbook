@@ -54,6 +54,8 @@ a {
    =========================================================================== */
 
 :root {
+  /* AI-suggested, unverified supplement fields (#1381); the same in every theme. */
+  --color-ai: #7c3aed;
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
