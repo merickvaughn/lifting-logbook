@@ -472,6 +472,7 @@ export default function AssignStep({
   focusHeading = false,
   suggestions,
   overwriteCounts,
+  targets = [],
 }: {
   res: ImportAssignResponse;
   draft: AssignDraft;
@@ -496,6 +497,8 @@ export default function AssignStep({
   suggestions?: Omit<ComponentProps<typeof AssignSuggestions>, 'res' | 'draft' | 'onChange' | 'programName'>;
   /** Reads what replacing would remove (#1182). The wizard owns the requests. */
   overwriteCounts: OverwriteCountsLoader;
+  /** The programs the lifter can import to. A template among them is the one they're on, so it isn't warned about. */
+  targets?: readonly string[];
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   // An edit that withdraws the continue offer drops the lifter's choices for it (#1180).
@@ -514,9 +517,10 @@ export default function AssignStep({
   const left = openDecisions(draft, res);
   const lone = pending.filter((p) => !p.unnumbered && draft.filed[p.session.date] === undefined);
   const programIds = [...new Set([...res.programs.map((p) => p.id), ...stretches.map((s) => s.program)])];
-  // Templates the Programs page doesn't offer, so the lifter can't make them active (#1454).
+  // Templates the Programs page doesn't offer, so the lifter can't make them active (#1454),
+  // unless they're on it already.
   const unpickable = [...new Set(stretches.map((s) => s.program))].filter(
-    (id) => PROGRAMS.find((p) => p.id === id)?.available === false,
+    (id) => PROGRAMS.find((p) => p.id === id)?.available === false && !targets.includes(id),
   );
   const toggle = (id: string, on: boolean) => setOpen((prev) => withMember(prev, id, on));
   // A stretch the lifter is editing stays open, so settling it doesn't collapse it under their focus.

@@ -4448,6 +4448,15 @@ describe('ImportWizard Assign: a program the lifter can’t pick (#1454)', () =>
     );
   });
 
+  it('says nothing about an unavailable template the lifter is already on', async () => {
+    mockAssign.mockResolvedValue(assignRes({ stretches: [stretch(['2026-01-01'], { program: '531' })] }));
+    const user = userEvent.setup();
+    render(<ImportWizard programs={[...PROGRAMS, { id: '531', name: '5/3/1', isTemplate: true }]} customLifts={[]} />);
+    await toAssign(user);
+
+    expect(screen.queryByTestId('assign-unpickable')).not.toBeInTheDocument();
+  });
+
   it('says nothing for a destination the lifter can pick', async () => {
     mockAssign.mockResolvedValue(assignRes());
     const user = userEvent.setup();

@@ -102,7 +102,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
   }
 
   async getRecordedPrograms(): Promise<string[]> {
-    // Grouped in SQL over the unique index's `(userId, program)` prefix, so it returns no sets.
+    // Grouped in SQL over the unique index's `(userId, program)` prefix: it returns no sets, but
+    // scans one index entry per stored set the user holds, in every program.
     const rows = await this.prisma.liftRecord.groupBy({ by: ['program'], where: { userId: this.userId } });
     return rows.map((r) => r.program);
   }
