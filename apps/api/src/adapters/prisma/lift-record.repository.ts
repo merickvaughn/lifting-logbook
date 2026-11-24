@@ -31,6 +31,15 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
     return rows.map(rowToLiftRecord);
   }
 
+  async getAllLiftRecords(program: string): Promise<LiftRecord[]> {
+    // Ordered, so same-day sets keep their order between loads: History sorts only by date.
+    const rows = await this.prisma.liftRecord.findMany({
+      where: { userId: this.userId, program },
+      orderBy: [{ macrocycleNum: 'asc' }, { workoutNum: 'asc' }, { occurrence: 'asc' }, { setNum: 'asc' }],
+    });
+    return rows.map(rowToLiftRecord);
+  }
+
   async getLoggedWorkoutNums(program: string, macrocycleNum: number): Promise<Set<number>> {
     // `groupBy`, not `findMany({ distinct })`: without the `nativeDistinct`
     // preview feature Prisma implements `distinct` in the query engine (fetch

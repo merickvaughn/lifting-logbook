@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { FastifyRequest } from 'fastify';
-import { LiftRecord, Weekday } from '@lifting-logbook/core';
+import { LiftRecord } from '@lifting-logbook/core';
 import { CustomLift, LiftModification, LiftModificationMaxMode, MacrocycleOrigin } from '@lifting-logbook/types';
 import { InMemoryImportBatchRepository } from '../adapters/in-memory/import-batch.adapter';
 import { InMemoryMacrocycleRepository, macrocycleRowFixture } from '../adapters/in-memory/macrocycle.adapter';
@@ -32,15 +32,6 @@ const MOCK_USER = { id: 'test-user', email: 'test@example.com', provider: 'dev' 
 const macrocycleRow = (macrocycleNum: number, origin: MacrocycleOrigin): MacrocycleRow =>
   macrocycleRowFixture(macrocycleNum, { origin, status: origin === 'live' ? 'in-progress' : 'completed' });
 
-const SEED_DASHBOARD = {
-  program: '5-3-1',
-  macrocycleUnit: 'week' as const,
-  macrocycleNum: 4,
-  macrocycleDate: new Date('2026-04-20T00:00:00.000Z'),
-  sheetName: '',
-  macrocycleStartWeekday: Weekday.Monday,
-};
-
 const SEED_RECORD = {
   program: '5-3-1',
   macrocycleNum: 4,
@@ -64,6 +55,7 @@ describe('LiftRecordsController', () => {
   beforeEach(async () => {
     liftRecordRepo = {
       getLiftRecords: jest.fn(),
+      getAllLiftRecords: jest.fn(),
       appendLiftRecords: jest.fn(),
       updateLiftRecord: jest.fn(),
       findStoredSets: jest.fn().mockResolvedValue([]),
@@ -99,22 +91,16 @@ describe('LiftRecordsController', () => {
   });
 
   describe('GET lift-records', () => {
-    it('fetches lift records scoped to current macrocycle', async () => {
-      dashboardRepo.getMacrocycleDashboard.mockResolvedValue(SEED_DASHBOARD);
-      liftRecordRepo.getLiftRecords.mockResolvedValue([SEED_RECORD]);
+    it('lists every macrocycle\'s lift records, not only the current one (#1453)', async () => {
+      liftRecordRepo.getAllLiftRecords.mockResolvedValue([SEED_RECORD, { ...SEED_RECORD, macrocycleNum: 1 }]);
 
       const result = await controller.getLiftRecords('5-3-1', MOCK_USER);
 
-      expect(liftRecordRepo.getLiftRecords).toHaveBeenCalledWith('5-3-1', 4);
-      expect(result).toHaveLength(1);
+      expect(liftRecordRepo.getAllLiftRecords).toHaveBeenCalledWith('5-3-1');
+      expect(liftRecordRepo.getLiftRecords).not.toHaveBeenCalled();
+      expect(result.map((r) => r.macrocycleNum)).toEqual([4, 1]);
       expect(result[0]?.lift).toBe('Bench Press');
       expect(result[0]?.date).toBe('2026-04-20');
-    });
-
-    it('returns no records, rather than a 404, for a program with no current macrocycle (#1300)', async () => {
-      // dashboardRepo rejects with ProgramNotFoundError by default.
-      await expect(controller.getLiftRecords('5-3-1', MOCK_USER)).resolves.toEqual([]);
-      expect(liftRecordRepo.getLiftRecords).not.toHaveBeenCalled();
     });
   });
 
