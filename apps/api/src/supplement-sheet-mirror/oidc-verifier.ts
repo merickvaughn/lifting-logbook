@@ -117,7 +117,7 @@ export class GoogleOidcVerifier implements IOidcVerifier {
     );
     if (!signed) return false;
 
-    const now = Date.now() / 1000;
+    const now = this.clock() / 1000;
     return (
       typeof claims.iss === 'string' &&
       ISSUERS.has(claims.iss) &&
