@@ -83,6 +83,16 @@ describe('GoogleOidcVerifier key cache', () => {
     expect(fetchKeys).toHaveBeenCalledTimes(1);
   });
 
+  it('checks expiry against the injected clock, not the real time (#1456)', async () => {
+    const verifier = new GoogleOidcVerifier(async () => [jwk(k1.publicKey, 'k1')], clock);
+    const exp = T0 + 10 * HOUR;
+    // Allowed until 60 s of clock skew past exp, whatever the real date is.
+    now = exp + 59_000;
+    expect(await verifier.verify(token('k1', k1.privateKey), EXPECTED)).toBe(true);
+    now = exp + 60_000;
+    expect(await verifier.verify(token('k1', k1.privateKey), EXPECTED)).toBe(false);
+  });
+
   it('rejects a token whose kid names a key that is not RSA, without throwing', async () => {
     const verifier = new GoogleOidcVerifier(async () => [{ kty: 'oct', kid: 'k1', k: 'c2VjcmV0LWtleS1ieXRlcw' }], clock);
     expect(await verifier.verify(token('k1', k1.privateKey), EXPECTED)).toBe(false);
