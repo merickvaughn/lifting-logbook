@@ -3,7 +3,8 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CustomLiftNotFoundError } from '../../ports/errors';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
 
-const known = (code: string) => new PrismaClientKnownRequestError(code, { code, clientVersion: 'test' });
+const known = (code: string) =>
+  new PrismaClientKnownRequestError(`mocked ${code}`, { code, clientVersion: 'test' });
 
 const ROW = {
   id: 'c1',
@@ -20,16 +21,17 @@ const ROW = {
 function setup() {
   const customLift = {
     findFirst: jest.fn().mockResolvedValue(ROW),
-    update: jest.fn(),
+    update: jest.fn().mockResolvedValue(ROW),
     deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
   };
   const prisma = { customLift } as unknown as PrismaClient;
   return { repo: new PrismaCustomLiftRepository(prisma, 'u'), customLift };
 }
 
-// A row can go between the ownership read and the write when two requests race, such as a
-// double-tapped delete. That must read as the documented 404, not an unhandled 500.
-describe('PrismaCustomLiftRepository, when a row goes between the read and the write', () => {
+// A row can go before the write lands when two requests race, such as a double-tapped delete:
+// after update()'s ownership read, or after delete()'s request began. Either must read as the
+// documented 404, not an unhandled 500.
+describe('PrismaCustomLiftRepository, when a row goes before the write lands', () => {
   it('update answers not found on P2025', async () => {
     const { repo, customLift } = setup();
     customLift.update.mockRejectedValueOnce(known('P2025'));
