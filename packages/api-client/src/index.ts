@@ -912,9 +912,17 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
     },
-    /** Catalog entries whose name or alias contains `q`, for autofill (#1409). */
+    /**
+     * Catalog entries whose name or alias contains `q`, for autofill (#1409). A POST, so the typed
+     * name stays out of URLs and logs (#1458).
+     */
     fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {
-      return request(`/supplements/catalog?q=${enc(q)}`, { cache: 'no-store' });
+      return request(`/supplements/catalog`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name: q }),
+        cache: 'no-store',
+      });
     },
     /**
      * Tier 2 (#1381): product labels for a name the catalog doesn't have. Never rejects for a

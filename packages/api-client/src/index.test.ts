@@ -1138,11 +1138,13 @@ describe('supplements', () => {
     expect(JSON.parse(String(init.body))).toEqual({ itemIds: ['a', 'b'] });
   });
 
-  it('fetchSupplementCatalog reads GET /supplements/catalog with the escaped query, uncached', async () => {
+  it('fetchSupplementCatalog POSTs the name in the body, not the URL, uncached (#1458)', async () => {
     mockFetch.mockResolvedValue(new Response('[]', { status: 200 }));
     await makeClient().fetchSupplementCatalog('vitamin d&k');
     const [url, init] = lastCall();
-    expect(url).toBe('http://api.test/supplements/catalog?q=vitamin%20d%26k');
+    expect(url).toBe('http://api.test/supplements/catalog');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'vitamin d&k' });
     expect(init.cache).toBe('no-store');
   });
 
