@@ -84,17 +84,23 @@ export class PrismaCustomLiftRepository implements ICustomLiftRepository {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new CustomLiftConflictError(patch.name ?? owned.name);
       }
+      // The row can go between the ownership read and the write, such as on a double-tapped delete.
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new CustomLiftNotFoundError(id);
+      }
       throw e;
     }
   }
 
   async delete(id: string): Promise<void> {
-    // Guard on userId for the same isolation reason as update().
-    const owned = await this.prisma.customLift.findFirst({ where: { id, userId: this.userId } });
-    if (!owned) {
+    // The write is scoped to userId, so it needs no prior ownership read: an absent row and
+    // another user's row both come back as count 0, which is the isolation update() gets from
+    // its findFirst. deleteMany reports a row gone since the request began as count 0 rather
+    // than raising P2025, so a lost race is the documented 404 and not an unhandled 500.
+    const { count } = await this.prisma.customLift.deleteMany({ where: { id, userId: this.userId } });
+    if (count === 0) {
       throw new CustomLiftNotFoundError(id);
     }
-    await this.prisma.customLift.delete({ where: { id } });
   }
 
   private toCustomLift(row: CustomLiftRow): CustomLift {
