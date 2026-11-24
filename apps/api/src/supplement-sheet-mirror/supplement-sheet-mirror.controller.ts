@@ -67,7 +67,7 @@ export class SheetMirrorCallerGuard implements CanActivate {
   }
 }
 
-/** The internal endpoint Cloud Tasks calls (#1443). Nothing enqueues a task yet (#1444). */
+/** The internal endpoint Cloud Tasks calls (#1443). Supplement writes and Sync now enqueue it (#1444). */
 @Controller(MIRROR_PATH.slice(1))
 export class SupplementSheetMirrorController {
   constructor(private readonly service: SupplementSheetMirrorService) {}

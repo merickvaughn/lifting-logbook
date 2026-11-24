@@ -416,20 +416,28 @@ export interface RemovedLive {
 /**
  * Removes the live macrocycle a continue ends when it holds no sets (#1354, decision 2), before the
  * breakdown is written, so the run is numbered by date as though it had never been started. Its
- * number goes from every table, as a delete does: its row, schedule and the dashboard pointing at
- * it. Returns its row and schedule, and that dashboard, for undo to recreate, or null when the plan
- * ends no live macrocycle or one with sets, which {@link applyContinue} closes instead.
+ * number goes from every table, as a delete does: its row, schedule, workout overrides and focus
+ * day states, and the dashboard pointing at it. Returns all of them for undo to recreate (#1359),
+ * or null when the plan ends no live macrocycle or one with sets, which {@link applyContinue}
+ * closes instead.
  */
 export async function removeLive(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | 'macrocycleScheduledWorkout'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleDashboard' | RemovedRowsRepos>,
   plan: ContinuePlan,
 ): Promise<RemovedLive | null> {
   if (!plan.live || plan.live.sets > 0) return null;
   const row = await repos.macrocycle.findById(plan.live.id);
   if (!row) throw new Error(`The live macrocycle ${plan.live.id} is gone`);
-  const dashboard = await dashboardOrNull(repos, row.program);
-  const schedule = await repos.macrocycleScheduledWorkout.getScheduledWorkouts(row.program, row.macrocycleNum);
-  await repos.macrocycle.delete(row.program, [row.macrocycleNum]);
+  const { program, macrocycleNum } = row;
+  const dashboard = await dashboardOrNull(repos, program);
+  const [schedule, dates, skips, lifts, focus] = await Promise.all([
+    repos.macrocycleScheduledWorkout.getScheduledWorkouts(program, macrocycleNum),
+    repos.workoutDateOverride.getOverridesForMacrocycle(program, macrocycleNum),
+    repos.workoutSkipOverride.getSkipReasonsForMacrocycle(program, macrocycleNum),
+    repos.workoutLiftOverride.getOverridesForMacrocycle(program, macrocycleNum),
+    repos.focus.getDayStatesForMacrocycle(program, macrocycleNum),
+  ]);
+  await repos.macrocycle.delete(program, [macrocycleNum]);
   return {
     dashboard,
     removed: {
@@ -446,9 +454,21 @@ export async function removeLive(
         weekNum: s.weekNum,
         scheduledDate: new Date(s.scheduledDate).toISOString(),
       })),
+      dateOverrides: [...dates].map(([workoutNum, newDate]) => ({ workoutNum, newDate: newDate.toISOString() })),
+      skips: [...skips].map(([workoutNum, reason]) => ({ workoutNum, reason })),
+      liftOverrides: [...lifts].map(([workoutNum, overrides]) => ({ workoutNum, overrides })),
+      focus: [...focus].map(([workoutNum, state]) => ({ workoutNum, state })),
     },
   };
 }
+
+/** The tables besides the macrocycle row that hold what {@link removeLive} records. */
+type RemovedRowsRepos =
+  | 'macrocycleScheduledWorkout'
+  | 'workoutDateOverride'
+  | 'workoutSkipOverride'
+  | 'workoutLiftOverride'
+  | 'focus';
 
 function refusalMessage(reason: ContinueRefusal): string {
   switch (reason) {
@@ -676,12 +696,13 @@ export async function releaseContinuedRun(
 
 /**
  * Recreates the empty live macrocycle a continue removed (#1354), under its id, with its schedule,
- * once the run is gone and before the program is renumbered, so the renumbering puts it in its
- * place by date. It takes the number after the highest macrocycle, and rows there with no
- * macrocycle row, such as a focus state saved before initializing, move past it first.
+ * workout overrides and focus day states (#1359), once the run is gone and before the program is
+ * renumbered, so the renumbering puts it in its place by date. It takes the number after the
+ * highest macrocycle, and rows there with no macrocycle row, such as a focus state saved before
+ * initializing, move past it first.
  */
 export async function recreateRemovedLive(
-  repos: Pick<RepositoryBundle, 'macrocycle' | 'macrocycleScheduledWorkout'>,
+  repos: Pick<RepositoryBundle, 'macrocycle' | RemovedRowsRepos>,
   program: string,
   removed: RemovedMacrocycle,
 ): Promise<void> {
@@ -707,6 +728,19 @@ export async function recreateRemovedLive(
     num,
     removed.schedule.map((s) => ({ workoutNum: s.workoutNum, weekNum: s.weekNum, scheduledDate: new Date(s.scheduledDate) })),
   );
+  for (const { workoutNum, newDate } of removed.dateOverrides) {
+    await repos.workoutDateOverride.upsertOverride(program, num, workoutNum, new Date(newDate));
+  }
+  for (const { workoutNum, reason } of removed.skips) {
+    await repos.workoutSkipOverride.skipWorkout(program, num, workoutNum, reason ?? undefined);
+  }
+  // One at a time, in the order recorded, since a workout's lift overrides apply in the order saved.
+  for (const { workoutNum, overrides } of removed.liftOverrides) {
+    for (const override of overrides) await repos.workoutLiftOverride.upsertOverride(program, num, workoutNum, override);
+  }
+  for (const { workoutNum, state } of removed.focus) {
+    await repos.focus.saveDayState(program, num, workoutNum, state);
+  }
 }
 
 /**

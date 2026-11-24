@@ -39,6 +39,7 @@ describe('WorkoutSkipController', () => {
   beforeEach(async () => {
     skipRepo = {
       getSkipsForMacrocycle: jest.fn(),
+      getSkipReasonsForMacrocycle: jest.fn(),
       skipWorkout: jest.fn().mockResolvedValue(undefined),
       unskipWorkout: jest.fn().mockResolvedValue(undefined),
     };

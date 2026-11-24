@@ -232,6 +232,7 @@ const GOOGLE_SHEET_LINKED = {
   status: 'linked',
   spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/mock-sheet/edit',
   lastMirroredAt: '2026-11-22T15:30:00.000Z',
+  syncFailed: false,
 };
 
 function createInitialState() {
@@ -242,9 +243,9 @@ function createInitialState() {
     snapshots: [],
     // /__reset?withClearError=true makes the clear fail with a 500.
     clearError: false,
-    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|unconfigured starts it linked,
-    // or as an API with no Google client.
-    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null },
+    // The linked Google Sheet (#1433; not `googleSheet`, the #1111 import flag below). /__reset?googleSheet=linked|failed|unconfigured
+    // starts it linked, linked with a failed last sync (#1444), or as an API with no Google client.
+    sheetLink: { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false },
     trainingMaxes: structuredClone(INITIAL_TRAINING_MAXES),
     // Lifts with logged sets and no training max (#1246); /__reset?withMissingMax=true seeds one.
     missingMaxes: [],
@@ -815,6 +816,7 @@ const server = createServer(async (req, res) => {
     }
     const googleSheet = url.searchParams.get('googleSheet');
     if (googleSheet === 'linked') state.sheetLink = { ...GOOGLE_SHEET_LINKED };
+    if (googleSheet === 'failed') state.sheetLink = { ...GOOGLE_SHEET_LINKED, syncFailed: true };
     if (googleSheet === 'unconfigured') state.sheetLink.configured = false;
     if (url.searchParams.get('withTrainingMaxImport') === 'true') {
       state.trainingMaxImport = {
@@ -1173,8 +1175,27 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (method === 'DELETE' && sheet === '') {
-      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null };
+      state.sheetLink = { configured: true, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null, syncFailed: false };
       json(res, { revoked: true });
+      return;
+    }
+    if (method === 'POST' && sheet === '/sync') {
+      // The API's 409s name the link's state (#1444).
+      if (state.sheetLink.status === 'needs_relink') {
+        json(res, { statusCode: 409, error: 'google-sheet-needs-relink', message: 'Google access was removed. Link again.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status === 'sheet_missing') {
+        json(res, { statusCode: 409, error: 'google-sheet-missing', message: 'The sheet was deleted or can’t be found.' }, 409);
+        return;
+      }
+      if (state.sheetLink.status !== 'linked') {
+        json(res, { statusCode: 409, error: 'google-sheet-not-linked', message: 'No Google Sheet is linked.' }, 409);
+        return;
+      }
+      // The run finishes at once here: the mirror time moves and a failure clears.
+      state.sheetLink = { ...state.sheetLink, lastMirroredAt: '2026-11-23T09:00:00.000Z', syncFailed: false };
+      json(res, { queued: true }, 202);
       return;
     }
   }
@@ -1308,6 +1329,39 @@ const server = createServer(async (req, res) => {
     stack.items.push(structuredClone(removed.item));
     supplementLog('restored', { itemId: id }, url.searchParams.get('today'));
     json(res, stack);
+    return;
+  }
+
+  // Tiers 2 and 3 (#1381). A name with "beetroot" in it matches a product label; any other name the
+  // catalog lacks matches none, so the form offers Suggest with AI. The AI answers a name with
+  // "tart cherry" in it and is off for every other name.
+  if (method === 'POST' && url.pathname === '/supplements/label-lookup') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const name = String(body.name ?? '').toLowerCase();
+    json(res, name.includes('beetroot') ? {
+      status: 'ready',
+      suggestions: [{
+        name: 'Beetroot Powder', keyCompound: 'Beetroot', suggestedDose: '1 scoop (10 g)', timing: '', suggestedSlot: 'pre',
+        typicalRange: '', ingredients: [{ key: 'beetroot', amount: 10, unit: 'g' }], productType: 'Botanical',
+        sources: [{ label: 'NIH Dietary Supplement Label Database', url: 'https://dsld.od.nih.gov/label/1' }],
+      }],
+    } : { status: 'none' });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/supplements/ai-suggestion') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    const name = String(body.name ?? '').toLowerCase();
+    json(res, name.includes('tart cherry') ? {
+      status: 'ready',
+      provider: 'Mock AI',
+      suggestion: {
+        name: 'Tart cherry extract', keyCompound: 'Anthocyanins', suggestedDose: '480 mg', timing: 'Evening',
+        suggestedSlot: 'pm', typicalRange: '480-1000 mg', ingredients: [{ key: 'tart-cherry', amount: 480, unit: 'mg' }],
+        productType: '', sources: [],
+      },
+    } : { status: 'off' });
     return;
   }
 
@@ -2137,8 +2191,12 @@ const server = createServer(async (req, res) => {
             ? {
                 columnMappings: [
                   { sourceHeader: 'Date', destinationField: 'dateUpdated', confidence: 0.65, required: true, transformationNote: null },
-                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: true, transformationNote: null },
+                  // `fuzzyColumnMapper` never marks an unmatched source column required: it
+                  // reports the field the file lacks as a row of its own, which is where the
+                  // wizard asks which column holds it (#1442).
+                  { sourceHeader: 'Exercise', destinationField: '', confidence: 0.0, required: false, transformationNote: 'No matching field found' },
                   { sourceHeader: 'Max Weight', destinationField: 'weight', confidence: 0.72, required: true, transformationNote: null },
+                  { sourceHeader: '', destinationField: 'lift', confidence: 0, required: true, transformationNote: 'Required field not found in CSV' },
                 ],
               }
             : {}),

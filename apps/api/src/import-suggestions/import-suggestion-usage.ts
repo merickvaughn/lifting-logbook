@@ -4,49 +4,85 @@ import { trace } from '@opentelemetry/api';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { setRlsUserContext } from '../adapters/prisma/rls-context';
 import type { IImportSuggestionUsage } from '../ports/IImportSuggestionProvider';
-import { IMPORT_SUGGESTION_USAGE } from '../ports/tokens';
+import { IMPORT_SUGGESTION_USAGE, SUPPLEMENT_SUGGESTION_USAGE } from '../ports/tokens';
 
 const HOUR_MS = 3_600_000;
 /** Advisory lock class for the per-user count, apart from the macrocycle lock's (decision 13). */
 const USAGE_LOCK_CLASS = 1174;
+/** The supplement AI suggestions' count (#1381), apart from the import count's lock. */
+const SUPPLEMENT_USAGE_LOCK_CLASS = 1381;
 
 /** The minimal client this needs, so a test can run two against one database as two instances. */
 type TransactionalClient = {
   $transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>, options?: { timeout?: number }): Promise<T>;
 };
 
+/** The three calls the count makes on its table; both usage tables have this shape. */
+interface UsageTable {
+  deleteMany(args: { where: { userId: string; usedAt: { lte: Date } } }): Promise<unknown>;
+  findMany(args: {
+    where: { userId: string; usedAt: { gt: Date } };
+    orderBy: { usedAt: 'asc' };
+    select: { usedAt: true };
+  }): Promise<Array<{ usedAt: Date }>>;
+  create(args: { data: { userId: string; usedAt: Date } }): Promise<unknown>;
+}
+
+/** Which table and advisory lock a count uses. */
+export interface UsageCountConfig {
+  lockClass: number;
+  spanPrefix: string;
+  table: (tx: Prisma.TransactionClient) => UsageTable;
+}
+
+const IMPORT_COUNT: UsageCountConfig = {
+  lockClass: USAGE_LOCK_CLASS,
+  spanPrefix: 'import_suggestion_usage',
+  table: (tx) => tx.importSuggestionUsage,
+};
+
+export const SUPPLEMENT_COUNT: UsageCountConfig = {
+  lockClass: SUPPLEMENT_USAGE_LOCK_CLASS,
+  spanPrefix: 'supplement_suggestion_usage',
+  table: (tx) => tx.supplementSuggestionUsage,
+};
+
 /**
- * The hourly count in `import_suggestion_usage` (#1174, decision 12). Each call runs its own short
+ * The hourly count in `import_suggestion_usage` (#1174, decision 12), or with `SUPPLEMENT_COUNT` the one in `supplement_suggestion_usage` (#1381). Each call runs its own short
  * transaction as the user, outside any request transaction, and takes a per-user advisory lock so
  * two instances counting at once can't both take the tenth request.
  */
 export class PrismaImportSuggestionUsage implements IImportSuggestionUsage {
   private readonly tracer = trace.getTracer('import-suggestion-usage');
 
-  constructor(private readonly prisma: TransactionalClient) {}
+  constructor(
+    private readonly prisma: TransactionalClient,
+    private readonly config: UsageCountConfig = IMPORT_COUNT,
+  ) {}
 
   tryConsume(userId: string, now: Date, limit: number): Promise<{ allowed: true } | { allowed: false; retryAt: Date }> {
     return this.prisma.$transaction(
       async (tx) => {
         await setRlsUserContext(this.tracer, tx, userId);
         // Raw SQL isn't auto-traced (ADR-024).
-        await this.tracer.startActiveSpan('import_suggestion_usage.lock', async (span) => {
+        await this.tracer.startActiveSpan(`${this.config.spanPrefix}.lock`, async (span) => {
           try {
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${USAGE_LOCK_CLASS}::int, hashtext(${userId}))`;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${this.config.lockClass}::int, hashtext(${userId}))`;
           } finally {
             span.end();
           }
         });
         const since = new Date(now.getTime() - HOUR_MS);
-        await tx.importSuggestionUsage.deleteMany({ where: { userId, usedAt: { lte: since } } });
-        const recent = await tx.importSuggestionUsage.findMany({
+        const table = this.config.table(tx);
+        await table.deleteMany({ where: { userId, usedAt: { lte: since } } });
+        const recent = await table.findMany({
           where: { userId, usedAt: { gt: since } },
           orderBy: { usedAt: 'asc' },
           select: { usedAt: true },
         });
         const blocking = recent[recent.length - limit];
         if (blocking) return { allowed: false as const, retryAt: new Date(blocking.usedAt.getTime() + HOUR_MS) };
-        await tx.importSuggestionUsage.create({ data: { userId, usedAt: now } });
+        await table.create({ data: { userId, usedAt: now } });
         return { allowed: true as const };
       },
       { timeout: 5_000 },
@@ -75,5 +111,12 @@ export const importSuggestionUsageProvider: Provider = {
   provide: IMPORT_SUGGESTION_USAGE,
   useFactory: (prisma: PrismaService | null) =>
     prisma ? new PrismaImportSuggestionUsage(prisma) : new InMemoryImportSuggestionUsage(),
+  inject: [{ token: PrismaService, optional: true }],
+};
+
+export const supplementSuggestionUsageProvider: Provider = {
+  provide: SUPPLEMENT_SUGGESTION_USAGE,
+  useFactory: (prisma: PrismaService | null) =>
+    prisma ? new PrismaImportSuggestionUsage(prisma, SUPPLEMENT_COUNT) : new InMemoryImportSuggestionUsage(),
   inject: [{ token: PrismaService, optional: true }],
 };

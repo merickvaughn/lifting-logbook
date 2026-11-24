@@ -161,6 +161,26 @@ describe('fuzzyColumnMapper', () => {
         expect(unmappedRequired(result)).toEqual(['wtDecrementPct']);
       });
 
+      // The Map columns gate can't tell a one-of group from a hard requirement unless the
+      // missing row says which field stands in for it: a lifter mapping the drop column to
+      // Weight % would otherwise stay blocked on the wtDecrementPct row (#1442).
+      it('names the sibling that stands in for the missing drop column', () => {
+        const noDrop = ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
+          'AMRAP?', 'Warm-Up %', 'Activation'];
+
+        const result = fuzzyColumnMapper(noDrop, 'program-spec');
+
+        expect(result.find((m) => !m.sourceHeader)).toMatchObject({
+          destinationField: 'wtDecrementPct',
+          satisfiedBy: ['weightPct'],
+        });
+        // A missing field nothing else can meet says so by carrying no sibling at all.
+        const missingLift = fuzzyColumnMapper(['Date', 'Weight'], 'training-maxes')
+          .find((m) => !m.sourceHeader);
+        expect(missingLift?.destinationField).toBe('lift');
+        expect(missingLift?.satisfiedBy).toBeUndefined();
+      });
+
       it('keeps the built-in rpt_program_spec header row mapped', () => {
         const headers = ['Week', 'Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps',
           'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation'];

@@ -87,8 +87,39 @@ describe('parseBatchMacrocycles (#1255)', () => {
         unmatched: false,
         importedThrough: null,
         schedule: [{ workoutNum: 1, weekNum: 1, scheduledDate: '2026-03-02T00:00:00.000Z' }],
+        dateOverrides: [],
+        skips: [],
+        liftOverrides: [],
+        focus: [],
       };
       const withRemoved = { ...continued, ended: null, removed };
+      // Its workouts' overrides and focus day state (#1359).
+      const focusState = {
+        modes: { b1: 'pick' as const },
+        picks: { b1: ['Hammer Curl'] },
+        trims: { b2: ['Seated Calf Raise'] },
+        placement: 'interleave' as const,
+        order: ['Squat', 'Hammer Curl'],
+        dismissed: true,
+      };
+      const withRows = {
+        ...removed,
+        dateOverrides: [{ workoutNum: 1, newDate: '2026-03-04T00:00:00.000Z' }],
+        skips: [
+          { workoutNum: 2, reason: 'travelling' },
+          { workoutNum: 4, reason: null },
+        ],
+        liftOverrides: [
+          {
+            workoutNum: 3,
+            overrides: [
+              { lift: 'Deadlift', action: 'replace' as const, replacedBy: 'Trap Bar Deadlift' },
+              { lift: 'Face Pull', action: 'add' as const },
+            ],
+          },
+        ],
+        focus: [{ workoutNum: 3, state: focusState }],
+      };
 
       it('reads back as save writes it', () => {
         const macrocycles: BatchMacrocycles = { created: ['m-5'], extended: [], chosen: [], continued: withRemoved };
@@ -98,6 +129,18 @@ describe('parseBatchMacrocycles (#1255)', () => {
         expect(roundTrip(other)).toEqual(other);
       });
 
+      it('reads back its overrides and focus day state as save writes them (#1359)', () => {
+        const macrocycles: BatchMacrocycles = { created: ['m-5'], extended: [], chosen: [], continued: { ...withRemoved, removed: withRows } };
+        expect(roundTrip(macrocycles)).toEqual(macrocycles);
+      });
+
+      it('reads one from before #1359 as having no overrides or focus day state', () => {
+        const { dateOverrides: _d, skips: _s, liftOverrides: _l, focus: _f, ...old } = removed;
+        expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: { ...withRemoved, removed: old } })?.continued).toEqual(
+          withRemoved,
+        );
+      });
+
       it('reads an unreadable one as a run with no id, so undo refuses', () => {
         for (const bad of [
           { ...withRemoved, removed: 'm-4' },
@@ -105,6 +148,21 @@ describe('parseBatchMacrocycles (#1255)', () => {
           { ...withRemoved, removed: { ...removed, startDate: null } },
           { ...withRemoved, removed: { ...removed, schedule: [{ workoutNum: 1.5, weekNum: 1, scheduledDate: '2026-03-02' }] } },
           { ...withRemoved, removed: { ...removed, schedule: null } },
+          // An unreadable override or focus day state (#1359).
+          { ...withRemoved, removed: { ...withRows, dateOverrides: null } },
+          { ...withRemoved, removed: { ...withRows, dateOverrides: [{ workoutNum: 1, newDate: 4 }] } },
+          { ...withRemoved, removed: { ...withRows, skips: [{ workoutNum: '2', reason: null }] } },
+          { ...withRemoved, removed: { ...withRows, skips: [{ workoutNum: 2 }] } },
+          { ...withRemoved, removed: { ...withRows, liftOverrides: [{ workoutNum: 3, overrides: [{ lift: 'Deadlift', action: 'swap' }] }] } },
+          { ...withRemoved, removed: { ...withRows, liftOverrides: [{ workoutNum: 3, overrides: [{ lift: 'Deadlift', action: 'replace', replacedBy: 7 }] }] } },
+          { ...withRemoved, removed: { ...withRows, liftOverrides: [{ workoutNum: 3 }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3 }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, placement: 'sideways' } }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, modes: { b1: 'sometimes' } } }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, picks: { b1: [1] } } }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, trims: ['x'] } }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, order: 'Squat' } }] } },
+          { ...withRemoved, removed: { ...withRows, focus: [{ workoutNum: 3, state: { ...focusState, dismissed: 'yes' } }] } },
         ]) {
           expect(parseBatchMacrocycles({ created: [], extended: [], chosen: [], continued: bad })?.continued?.id).toBe('');
         }

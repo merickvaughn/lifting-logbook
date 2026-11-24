@@ -94,6 +94,7 @@ describe('MacrocycleDashboardController', () => {
     };
     skipRepo = {
       getSkipsForMacrocycle: jest.fn().mockResolvedValue(new Set<number>()),
+      getSkipReasonsForMacrocycle: jest.fn().mockResolvedValue(new Map<number, string | null>()),
       skipWorkout: jest.fn(),
       unskipWorkout: jest.fn(),
     };

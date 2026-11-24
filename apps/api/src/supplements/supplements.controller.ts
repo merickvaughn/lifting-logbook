@@ -16,9 +16,11 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UnprocessableEntityException,
   BadGatewayException,
 } from '@nestjs/common';
+import { FastifyRequest } from 'fastify';
 import {
   DEFAULT_CAFFEINE_CUTOFF,
   SupplementChangeBody,
@@ -36,7 +38,9 @@ import {
 import {
   SUPPLEMENT_TEXT_MAX,
   SupplementAsOfResponse,
+  SupplementAiSuggestionResponse,
   SupplementCatalogEntry,
+  SupplementLabelLookupResponse,
   SupplementChange,
   SupplementCreatedResponse,
   SupplementDose,
@@ -53,8 +57,10 @@ import { IRepositoryFactory } from '../ports/factory';
 import { ISupplementRepository, SupplementState } from '../ports/ISupplementRepository';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { SkipRlsTransaction } from '../adapters/prisma/rls-context';
+import { SupplementSheetMirrorTrigger } from '../supplement-sheet-mirror/supplement-sheet-mirror.trigger';
 import { GoogleSheetFetchError, downloadGoogleSheetXlsx } from '../adapters/google-sheets/google-sheet-export.client';
 import { MAX_TABLE_COLUMNS, WorkbookTable, XlsxReadError, xlsxToTables } from '../adapters/google-sheets/xlsx-to-tables';
+import { SupplementSuggestionsService } from '../supplement-suggestions/supplement-suggestions.service';
 import { parseIsoDateParam, parseWriteToday } from '../iso-date-param';
 import {
   CreateMixDto,
@@ -64,6 +70,8 @@ import {
   RemoveItemsDto,
   SetStatusDto,
   SupplementSettingsDto,
+  SupplementAiSuggestionDto,
+  SupplementLabelLookupDto,
   SupplementSheetDto,
   UpdateSupplementItemDto,
 } from './supplements.dto';
@@ -147,7 +155,11 @@ function intParam(name: string, value: string | undefined, min: number, max: num
 export class SupplementsController {
   private readonly logger = new Logger(SupplementsController.name);
 
-  constructor(@Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory) {}
+  constructor(
+    @Inject(REPOSITORY_FACTORY) private readonly factory: IRepositoryFactory,
+    private readonly mirror: SupplementSheetMirrorTrigger,
+    private readonly suggestions: SupplementSuggestionsService,
+  ) {}
 
   /** The stack and its day types. */
   @Get()
@@ -196,6 +208,44 @@ export class SupplementsController {
   catalog(@Query('q') q: string | string[] | undefined): SupplementCatalogEntry[] {
     if (Array.isArray(q)) throw new BadRequestException('q must be given once');
     return searchSupplements(q ?? '').map(toCatalogEntry);
+  }
+
+  /**
+   * Tier 2 (#1381): product labels from the NIH label database, for a name the catalog doesn't
+   * have. A POST with the name in the body, so the name stays out of the request log and the
+   * inbound span's URL.
+   *
+   * `@SkipRlsTransaction()` here and on `aiSuggestion`: neither reads the stack, and the outgoing
+   * call (up to about 8 s here, 60 s for the AI) would otherwise hold the request's RLS transaction
+   * and its connection, and outlast its 15-second timeout. The AI count runs in its own short
+   * transaction as the user, as the import suggestions' does.
+   */
+  @Post('label-lookup')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  labelLookup(@CurrentUser() user: AuthUser, @Body() body: SupplementLabelLookupDto): Promise<SupplementLabelLookupResponse> {
+    return this.suggestions.labelLookup({ userId: user.id, name: body.name });
+  }
+
+  /** Tier 3 (#1381): an AI suggestion from the typed name alone. The client saves it unverified. */
+  @Post('ai-suggestion')
+  @HttpCode(HttpStatus.OK)
+  @SkipRlsTransaction()
+  async aiSuggestion(
+    @CurrentUser() user: AuthUser,
+    @Body() body: SupplementAiSuggestionDto,
+    @Req() req: FastifyRequest,
+  ): Promise<SupplementAiSuggestionResponse> {
+    // The lifter left the form, so the client dropped the request: stop the model too.
+    const left = new AbortController();
+    const socket = req.raw.socket as NodeJS.EventEmitter | undefined;
+    const onClose = () => left.abort();
+    socket?.once?.('close', onClose);
+    try {
+      return await this.suggestions.aiSuggest({ userId: user.id, name: body.name, signal: left.signal });
+    } finally {
+      socket?.removeListener?.('close', onClose);
+    }
   }
 
   /**
@@ -592,8 +642,10 @@ export class SupplementsController {
   private async write<B>(user: AuthUser, todayParam: string | undefined, dto: B, plan: Plan<B>): Promise<SupplementState> {
     const today = parseWriteToday(todayParam);
     const body = structuredClone(dto);
-    const repo = await this.repo(user);
-    return repo.write(async (state) => {
+    const repos = await this.factory.forUser(user);
+    const repo = repos.supplement;
+    let logged = false;
+    const saved = await repo.write(async (state) => {
       if (state.lastChangeDate !== null && today < state.lastChangeDate) {
         throw new BadRequestException(
           `today (${today}) is before the stack's last change (${state.lastChangeDate}); changes can't be dated earlier`,
@@ -609,7 +661,12 @@ export class SupplementsController {
       }
       const errors = validateStack([...state.items, ...liveParts(state)], state.dayTypes);
       if (errors.length > 0) throw new BadRequestException(errors);
+      logged = changes.length > 0;
       return changes.map((change) => ({ ...change, date: today }));
     });
+    // Reads the sheet link in this write's transaction; a linked sheet's mirror is enqueued once it
+    // commits (ADR-047, decision 16).
+    if (logged) await this.mirror.afterWrite(user, repos.googleSheetLink);
+    return saved;
   }
 }

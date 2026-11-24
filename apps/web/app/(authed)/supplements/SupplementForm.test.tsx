@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SupplementCatalogEntry, SupplementItem } from '@lifting-logbook/types';
 import { STACK } from '@/lib/__tests__/supplementsTestStack';
@@ -13,13 +13,17 @@ jest.mock('@/lib/client-api', () => ({
   removeSupplementItems: jest.fn(),
   setSupplementStatus: jest.fn(),
   fetchSupplementCatalog: jest.fn(),
+  fetchSupplementLabelLookup: jest.fn(),
+  fetchSupplementAiSuggestion: jest.fn(),
 }));
 jest.mock('@/lib/log-client-error', () => ({ logClientError: jest.fn() }));
 jest.mock('@/lib/calendarDay', () => ({ localToday: () => '2026-11-21' }));
 
 import {
   createSupplementItem,
+  fetchSupplementAiSuggestion,
   fetchSupplementCatalog,
+  fetchSupplementLabelLookup,
   removeSupplementItem,
   removeSupplementItems,
   setSupplementStatus,
@@ -49,10 +53,14 @@ const setup = (mode: FormMode) => {
 const add = (preset: 'workout' | 'daily' | 'pending') => setup({ kind: 'add', preset });
 const editItem = (id: string) => setup({ kind: 'edit', item: STACK.items.find((i) => i.id === id) as SupplementItem });
 const field = (name: RegExp | string) => screen.getByLabelText(name);
+// The form's one live region for lookup messages: always there, empty until it has something to say.
+const status = () => screen.getByRole('status');
+const filled = () => screen.findByText(/^Filled/);
 
 beforeEach(() => {
   jest.clearAllMocks();
   (fetchSupplementCatalog as jest.Mock).mockResolvedValue([]);
+  (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'none' });
 });
 
 describe('presets by entry point', () => {
@@ -112,8 +120,10 @@ describe('catalog autofill', () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
     const { dialog } = add('workout');
     await userEvent.type(field('Name'), 'creatine');
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Filled 6 fields from the shared catalog; label facts, uses and sources will be attached. Blue fields are suggestions; change anything.',
+    await waitFor(() =>
+      expect(status()).toHaveTextContent(
+        'Filled 6 fields from the shared catalog; label facts, uses and sources will be attached. Blue fields are suggestions; change anything.',
+      ),
     );
     expect(field('Name')).toHaveValue('creatine');
     expect(field(/^Key compound/)).toHaveValue('Creatine monohydrate');
@@ -133,7 +143,7 @@ describe('catalog autofill', () => {
     await userEvent.selectOptions(field(/^Slot/), 'post');
     await userEvent.type(field(/^Timing/), 'with food');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     expect(field(/^Amount/)).toHaveValue('2 scoops');
     expect(field(/^Slot/)).toHaveValue('post');
     expect(field(/^Timing/)).toHaveValue('with food');
@@ -145,7 +155,7 @@ describe('catalog autofill', () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
     add('daily');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.type(field('Name'), ' hcl');
     expect(screen.getByLabelText('Link 1 URL')).toHaveValue('https://www.amazon.com/s?k=creatine%20hcl');
     await userEvent.type(screen.getByLabelText('Link 1 label'), '!');
@@ -167,7 +177,7 @@ describe('catalog autofill', () => {
     // Glycine already has a key compound, timing and slot; its dose has no amount.
     await userEvent.clear(field('Name'));
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     expect(field(/^Amount/)).toHaveValue('5 g');
     expect(field(/^Slot/)).toHaveValue('am');
     expect(field(/^Key compound/)).toHaveValue('Glycine');
@@ -180,7 +190,7 @@ describe('catalog autofill', () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
     const { dialog } = add('workout');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.type(field(/^Timing/), '!');
     expect(within(dialog).getAllByText('SUGGESTED')).toHaveLength(5);
     expect(field(/^Timing/).closest('label')).not.toHaveTextContent('SUGGESTED');
@@ -190,7 +200,7 @@ describe('catalog autofill', () => {
     (fetchSupplementCatalog as jest.Mock).mockResolvedValue([{ ...CREATINE, suggestedSlot: 'post' }]);
     add('daily');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     expect(field(/^Slot/)).toHaveValue('post');
     expect(screen.getByRole('checkbox', { name: 'Lift day' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Rest day' })).not.toBeChecked();
@@ -209,14 +219,14 @@ describe('catalog autofill', () => {
     expect((fetchSupplementCatalog as jest.Mock).mock.calls.filter(([q]) => q === 'creatine')).toHaveLength(1);
   });
 
-  it('reports a failed lookup once, shows no suggestion, and still saves', async () => {
+  it('reports a failed lookup once, says so, shows no suggestion, and still saves', async () => {
     (fetchSupplementCatalog as jest.Mock).mockRejectedValue(new Error('API 503'));
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     add('daily');
     await userEvent.type(field('Name'), 'creatine');
     await waitFor(() => expect(logClientError).toHaveBeenCalledWith('supplements.catalogLookup', expect.any(Error)));
     expect(logClientError).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('status')).toBeNull();
+    await waitFor(() => expect(status()).toHaveTextContent('Couldn’t reach the shared catalog.'));
     expect(screen.queryByText('SUGGESTED')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
@@ -231,7 +241,7 @@ describe('saving', () => {
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     const { onDismiss } = add('daily');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalled());
     expect(createSupplementItem).toHaveBeenCalledWith(
@@ -267,7 +277,7 @@ describe('saving', () => {
     const { onDismiss } = editItem('glycine');
     await userEvent.clear(field('Name'));
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onDismiss).toHaveBeenCalled());
     expect((updateSupplementItem as jest.Mock).mock.calls[0][1]).toMatchObject({ name: 'creatine' });
@@ -280,9 +290,9 @@ describe('saving', () => {
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     add('daily');
     await userEvent.type(field('Name'), 'creatine');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.type(field('Name'), ' blend');
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(status()).toBeEmptyDOMElement();
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
     expect((createSupplementItem as jest.Mock).mock.calls[0][0]).toMatchObject({ name: 'creatine blend' });
@@ -302,7 +312,7 @@ describe('saving', () => {
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     add('daily');
     await userEvent.type(field('Name'), 'whey');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(createSupplementItem).toHaveBeenCalledTimes(1));
     expect((createSupplementItem as jest.Mock).mock.calls[0][0]).not.toHaveProperty('ingredients');
@@ -314,7 +324,7 @@ describe('saving', () => {
     (createSupplementItem as jest.Mock).mockResolvedValue({});
     add('daily');
     await userEvent.type(field('Name'), 'whey');
-    await screen.findByRole('status');
+    await filled();
     await userEvent.type(field(/^Protein/), '0');
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(createSupplementItem).toHaveBeenCalled());
@@ -666,5 +676,324 @@ describe('what closing the form announces', () => {
     const { onDismiss } = editItem('glycine');
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onDismiss).toHaveBeenCalledWith();
+  });
+});
+
+describe('tiers 2 and 3: product label and AI suggestion (#1381)', () => {
+  const LABEL = {
+    name: 'Zorblax Powder',
+    keyCompound: 'Zorblaxine',
+    suggestedDose: '1 scoop',
+    timing: '',
+    suggestedSlot: 'all',
+    typicalRange: '',
+    ingredients: [{ key: 'zorblaxine', amount: 5, unit: 'g' }],
+    productType: 'Botanical',
+    sources: [{ label: 'NIH Dietary Supplement Label Database', url: 'https://dsld.od.nih.gov/label/1' }],
+  };
+  const AI = { ...LABEL, keyCompound: 'AI compound', sources: [{ label: 'Example', url: 'https://example.org/z' }] };
+  const aiButton = () => screen.queryByRole('button', { name: 'Suggest with AI' });
+
+  it('says the shared catalog filled the form, and offers no AI button, when the catalog matches', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockResolvedValue([CREATINE]);
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await waitFor(() => expect(status()).toHaveTextContent('from the shared catalog'));
+    expect(fetchSupplementLabelLookup).not.toHaveBeenCalled();
+    expect(aiButton()).toBeNull();
+  });
+
+  it('after a catalog miss, fills from a product label, says so, links the label, and offers no AI button', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'ready', suggestions: [LABEL] });
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    expect(await screen.findByText(/from a product label/)).toBeInTheDocument();
+    expect(field(/^Key compound/)).toHaveValue('Zorblaxine');
+    expect(field(/^Amount/)).toHaveValue('1 scoop');
+    expect(screen.getByRole('link', { name: 'NIH Dietary Supplement Label Database' })).toHaveAttribute('href', 'https://dsld.od.nih.gov/label/1');
+    expect(screen.queryByText('AI · unverified')).toBeNull();
+    expect(aiButton()).toBeNull();
+  });
+
+  it('saves a label suggestion with its ingredients, verified and with no catalog key', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'ready', suggestions: [LABEL] });
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByText(/from a product label/);
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    const body = (createSupplementItem as jest.Mock).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body.ingredients).toEqual([{ key: 'zorblaxine', amount: 5, unit: 'g' }]);
+    expect(body).not.toHaveProperty('catalogKey');
+    expect(body).not.toHaveProperty('unverified');
+  });
+
+  it.each([
+    ['no label matches', { status: 'none' }, 'No matching product label either.'],
+    ['the label database is down', { status: 'unavailable' }, 'The product label database didn’t answer.'],
+    ['the lifter has used this hour’s label lookups', { status: 'limited', retryAfterMinutes: 5 }, 'Product label lookups are paused for 5 minutes.'],
+    ['the label lookups resume in a minute', { status: 'limited', retryAfterMinutes: 1 }, 'Product label lookups are paused for 1 minute.'],
+  ])('offers Suggest with AI only once the catalog and %s', async (_label, answer, message) => {
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue(answer);
+    add('daily');
+    expect(aiButton()).toBeNull();
+    await userEvent.type(field('Name'), 'zorblax');
+    expect(await screen.findByRole('button', { name: 'Suggest with AI' })).toBeEnabled();
+    expect(status()).toHaveTextContent(message);
+    expect(fetchSupplementAiSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('offers Suggest with AI when the label lookup request itself fails, and logs it', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockRejectedValue(new Error('network'));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    expect(await screen.findByRole('button', { name: 'Suggest with AI' })).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledWith('supplements.labelLookup', expect.any(Error));
+  });
+
+  it('never offers it on an edit', async () => {
+    editItem(STACK.items[0]?.id ?? '');
+    await userEvent.type(field('Name'), ' x');
+    await screen.findByText('Not in the shared catalog.');
+    expect(aiButton()).toBeNull();
+    expect(fetchSupplementLabelLookup).not.toHaveBeenCalled();
+  });
+
+  it('fills from the AI with the "AI · unverified" tag and purple banner, and saves the item unverified', async () => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue({ status: 'ready', provider: 'Anthropic (test)', suggestion: AI });
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { dialog, onDismiss } = add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    expect(await screen.findByText(/from an AI suggestion/)).toHaveTextContent('isn’t counted in totals until you press Confirm');
+    expect(fetchSupplementAiSuggestion).toHaveBeenCalledWith('zorblax');
+    expect(field(/^Key compound/)).toHaveValue('AI compound');
+    expect(within(dialog).getAllByText('AI · unverified').length).toBeGreaterThan(0);
+    // Only the store-search link keeps the blue tag: it's the app's own suggestion, not the AI's.
+    expect(within(dialog).getAllByText('SUGGESTED')).toHaveLength(1);
+    expect(aiButton()).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    expect(createSupplementItem).toHaveBeenCalledWith(
+      expect.objectContaining({ unverified: true, ingredients: [{ key: 'zorblaxine', amount: 5, unit: 'g' }] }),
+      '2026-11-21',
+    );
+  });
+
+  it.each([
+    [{ status: 'off' }, 'AI suggestions aren’t turned on.'],
+    [{ status: 'none' }, 'The AI had no suggestion for this name.'],
+    [{ status: 'limited', retryAfterMinutes: 12 }, 'You’ve used this hour’s AI suggestions; try again in 12 minutes.'],
+    [{ status: 'unavailable', reason: 'timeout' }, 'AI suggestions aren’t available right now.'],
+  ])('says what happened when the AI answers %j, and fills nothing', async (answer, message) => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(answer);
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(field(/^Key compound/)).toHaveValue('');
+  });
+
+  it('reports a failed AI request through logClientError', async () => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockRejectedValue(new Error('boom'));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    expect(await screen.findByText('AI suggestions aren’t available right now.')).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledWith('supplements.aiSuggestion', expect.any(Error));
+  });
+
+  const aiReady = (suggestion = AI) => ({ status: 'ready', provider: 'Anthropic (test)', suggestion });
+  const askAi = async (name = 'zorblax') => {
+    await userEvent.type(field('Name'), name);
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    await screen.findByText(/from an AI suggestion/);
+  };
+  const sent = () => (createSupplementItem as jest.Mock).mock.calls[0]?.[0] as Record<string, unknown>;
+  const tag = (label: RegExp) => field(label).closest('label');
+
+  it('doesn’t offer Suggest with AI while the product label lookup is still out', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockReturnValue(new Promise(() => {}));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByText('Not in the shared catalog.');
+    await waitFor(() => expect(fetchSupplementLabelLookup).toHaveBeenCalledWith('zorblax'));
+    expect(aiButton()).toBeNull();
+  });
+
+  it('goes on to the product label when the catalog lookup fails', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockRejectedValue(new Error('API 503'));
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'ready', suggestions: [LABEL] });
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    expect(await screen.findByText(/from a product label/)).toBeInTheDocument();
+    expect(field(/^Key compound/)).toHaveValue('Zorblaxine');
+  });
+
+  it('offers Suggest with AI after a failed catalog lookup and no label', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockRejectedValue(new Error('API 503'));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    expect(await screen.findByRole('button', { name: 'Suggest with AI' })).toBeInTheDocument();
+    expect(status()).toHaveTextContent('Couldn’t reach the shared catalog.No matching product label.');
+  });
+
+  it('asks the label database about a name once, however often the lifter comes back to it', async () => {
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByRole('button', { name: 'Suggest with AI' });
+    await userEvent.type(field('Name'), 'x');
+    await waitFor(() => expect(fetchSupplementLabelLookup).toHaveBeenCalledWith('zorblaxx'));
+    await userEvent.type(field('Name'), '{Backspace}');
+    await screen.findByRole('button', { name: 'Suggest with AI' });
+    expect((fetchSupplementLabelLookup as jest.Mock).mock.calls.filter(([q]) => q === 'zorblax')).toHaveLength(1);
+  });
+
+  it('asks again about a name whose label lookup was paused, rather than keeping the pause', async () => {
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValue({ status: 'limited', retryAfterMinutes: 5 });
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByRole('button', { name: 'Suggest with AI' });
+    await userEvent.type(field('Name'), 'x');
+    await waitFor(() => expect(fetchSupplementLabelLookup).toHaveBeenCalledWith('zorblaxx'));
+    await userEvent.type(field('Name'), '{Backspace}');
+    await waitFor(() => expect((fetchSupplementLabelLookup as jest.Mock).mock.calls.filter(([q]) => q === 'zorblax')).toHaveLength(2));
+  });
+
+  it('says it is asking while the AI answers, takes no second press, then focuses the banner in the same live region', async () => {
+    let answer: (v: unknown) => void = () => {};
+    (fetchSupplementAiSuggestion as jest.Mock).mockReturnValue(new Promise((r) => (answer = r)));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    const button = await screen.findByRole('button', { name: 'Suggest with AI' });
+    const region = status();
+    await userEvent.click(button);
+    expect(region).toHaveTextContent('Asking the AI…');
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(fetchSupplementAiSuggestion).toHaveBeenCalledTimes(1);
+    await act(async () => answer(aiReady()));
+    expect(status()).toBe(region);
+    expect(region).not.toHaveTextContent('Asking the AI');
+    expect(within(region).getByText(/from an AI suggestion/)).toHaveFocus();
+  });
+
+  it('leaves focus where the lifter moved it while the AI answered', async () => {
+    let answer: (v: unknown) => void = () => {};
+    (fetchSupplementAiSuggestion as jest.Mock).mockReturnValue(new Promise((r) => (answer = r)));
+    add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    await userEvent.click(field(/^Short note/));
+    await act(async () => answer(aiReady()));
+    await screen.findByText(/from an AI suggestion/);
+    expect(field(/^Short note/)).toHaveFocus();
+  });
+
+  it('drops an AI answer that arrives after the name changed: the new name’s catalog fill stays and nothing AI is saved', async () => {
+    let answer: (v: unknown) => void = () => {};
+    (fetchSupplementAiSuggestion as jest.Mock).mockReturnValue(new Promise((r) => (answer = r)));
+    (fetchSupplementCatalog as jest.Mock).mockImplementation(async (q: string) => (q === 'creatine' ? [CREATINE] : []));
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { dialog, onDismiss } = add('daily');
+    await userEvent.type(field('Name'), 'zorblax');
+    await userEvent.click(await screen.findByRole('button', { name: 'Suggest with AI' }));
+    await userEvent.clear(field('Name'));
+    await userEvent.type(field('Name'), 'creatine');
+    await filled();
+    await act(async () => answer(aiReady()));
+    expect(field(/^Key compound/)).toHaveValue('Creatine monohydrate');
+    expect(within(dialog).queryByText('AI · unverified')).toBeNull();
+    expect(status()).not.toHaveTextContent('an AI suggestion');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    expect(sent()).toMatchObject({ name: 'creatine', catalogKey: 'creatine-monohydrate', keyCompound: 'Creatine monohydrate' });
+    expect(sent()).not.toHaveProperty('unverified');
+  });
+
+  it('takes back what the AI filled when the name changes, so no AI value is saved as verified', async () => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(aiReady());
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { dialog, onDismiss } = add('daily');
+    const amountBefore = (field(/^Amount/) as HTMLInputElement).value;
+    await askAi();
+    expect(field(/^Key compound/)).toHaveValue('AI compound');
+    expect(field(/^Slot/)).toHaveValue('all');
+    await userEvent.type(field('Name'), 'z');
+    expect(field(/^Key compound/)).toHaveValue('');
+    expect(field(/^Amount/)).toHaveValue(amountBefore);
+    expect(field(/^Slot/)).toHaveValue('am');
+    expect(within(dialog).queryByText('AI · unverified')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    expect(sent()).toMatchObject({ name: 'zorblaxz', keyCompound: '', doses: [{ slot: 'am', amount: amountBefore, servings: 1, dayTypes: [] }] });
+    expect(sent()).not.toHaveProperty('unverified');
+    expect(sent()).not.toHaveProperty('ingredients');
+  });
+
+  it('tags only the fields the AI filled, not one left over from an earlier catalog fill', async () => {
+    (fetchSupplementCatalog as jest.Mock).mockImplementation(async (q: string) => (q === 'creatine' ? [CREATINE] : []));
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(aiReady());
+    add('daily');
+    await userEvent.type(field('Name'), 'creatine');
+    await filled();
+    await askAi(' zorb');
+    // The AI suggested no timing, so the catalog's stays, still blue.
+    expect(field(/^Timing/)).toHaveValue('Anytime or pre-workout');
+    expect(tag(/^Timing/)).toHaveTextContent('SUGGESTED');
+    expect(tag(/^Timing/)).not.toHaveTextContent('AI · unverified');
+    expect(tag(/^Key compound/)).toHaveTextContent('AI · unverified');
+    expect(tag(/^Key compound/)).not.toHaveTextContent('SUGGESTED');
+  });
+
+  it('a field the lifter changes after an AI fill is theirs, and the item still saves unverified', async () => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(aiReady());
+    (createSupplementItem as jest.Mock).mockResolvedValue({});
+    const { onDismiss } = add('daily');
+    await askAi();
+    await userEvent.type(field(/^Key compound/), '!');
+    expect(tag(/^Key compound/)).not.toHaveTextContent('AI · unverified');
+    expect(tag(/^Amount/)).toHaveTextContent('AI · unverified');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    // The AI's ingredients and amount are still in it, so it isn't counted until confirmed.
+    expect(sent()).toMatchObject({ keyCompound: 'AI compound!', unverified: true, ingredients: [{ key: 'zorblaxine', amount: 5, unit: 'g' }] });
+  });
+
+  it('a changed name keeps what the lifter changed after an AI fill and takes back the rest', async () => {
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(aiReady());
+    add('daily');
+    await askAi();
+    await userEvent.type(field(/^Key compound/), '!');
+    await userEvent.type(field('Name'), 'z');
+    expect(field(/^Key compound/)).toHaveValue('AI compound!');
+    expect(field(/^Amount/)).toHaveValue('');
+  });
+
+  it('never ticks a same-slot item to replace for an AI suggestion, as it would for a product label', async () => {
+    const caffeine = { ...AI, suggestedSlot: 'pre', ingredients: [{ key: 'caffeine', amount: 400, unit: 'mg' }] };
+    const preX = () => within(screen.getByRole('group', { name: 'Replace what you already take?' })).getByRole('checkbox', { name: /^Nutricost Pre-X/ });
+    (fetchSupplementLabelLookup as jest.Mock).mockResolvedValueOnce({ status: 'ready', suggestions: [caffeine] });
+    add('workout');
+    await userEvent.type(field('Name'), 'zorblax');
+    await screen.findByText(/from a product label/);
+    expect(preX()).toBeChecked();
+    cleanup();
+
+    (fetchSupplementAiSuggestion as jest.Mock).mockResolvedValue(aiReady(caffeine));
+    add('workout');
+    await askAi();
+    expect(preX()).not.toBeChecked();
+  });
+
+  it('the Edit form of an unverified item says it isn’t counted until confirmed; a verified one says nothing', () => {
+    const note = 'AI suggestion, not counted until you confirm it in the details.';
+    const glycine = STACK.items.find((i) => i.id === 'glycine') as SupplementItem;
+    setup({ kind: 'edit', item: { ...glycine, unverified: true } });
+    expect(screen.getByText(note)).toBeInTheDocument();
+    cleanup();
+    editItem('glycine');
+    expect(screen.queryByText(note)).toBeNull();
   });
 });

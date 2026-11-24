@@ -154,3 +154,53 @@ had none. The log line for the request shows `outcome: "ready"`.
 
 If suggestions are wrong often enough to mislead lifters, turn them off and open an issue with the
 log lines' counts. Never paste a prompt or a response from a lifter's file into an issue.
+
+## Supplement suggestions (#1381)
+
+The Supplements form fills itself in three tiers, stopping at the first that matches: the shared
+catalog (tier 1), a product label from the NIH Dietary Supplement Label Database (tier 2), and an
+AI suggestion (tier 3). The API calls the label database's v9 API at
+`https://api.ods.od.nih.gov/dsld/v9`; [https://dsldapi.od.nih.gov/](https://dsldapi.od.nih.gov/) is
+that API's documentation site, not a host the app calls. Tier 3 is a button, **Suggest with AI**, shown only after tiers 1 and 2 miss, so nothing
+goes to the AI unless the lifter presses it. An AI-suggested item is saved **unverified**: it is
+listed but left out of totals, protein and advisories until the lifter presses **Confirm** on its
+detail panel.
+
+**What leaves the app.** Only the typed name, cut to 80 characters with control characters
+removed: to the label database as the search query, and to the AI as one field,
+`untrustedName`, which the prompt says is data and not instructions. No stack, notes, user ID or
+email. `supplement-suggestion-payload.spec.ts` fails if the payload has any other field.
+
+**Configuration.** Tier 3 uses the import suggestions' provider (`IMPORT_SUGGESTIONS_PROVIDER` and
+the settings above), so it is off wherever import suggestions are. Tier 2 needs no configuration.
+
+**Limits.** 20 AI requests per lifter per hour, counted in `supplement_suggestion_usage` with its
+own advisory lock (class 1381). 60 label lookups per lifter per hour
+(`SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT`), counted in memory in each API process, so the real limit
+is 60 times the number of instances; over it, the lookup answers `limited` with the minutes to
+wait, and the line is logged as `tier: "label"`, `outcome: "limited"`. A lookup is a search followed
+by up to three label fetches in parallel, each request with its own 4-second timeout, so one
+lookup takes about 8 seconds at worst. Answers are cached in process (200 names, 6 hours), and
+identical lookups in flight share one request. An outage is logged as `tier: "label"`,
+`outcome: "unavailable"` and the form falls through to tier 3; for 30 seconds after a failed lookup,
+every lookup answers `unavailable` without calling the label database. One label that fails is left
+out; the lookup is unavailable only when the search fails or every label does.
+
+**Traces.** The outgoing search's span has its query values replaced (`q=:value`) before it starts,
+the way a Google Sheets call's spreadsheet ID is
+(`apps/api/src/supplement-suggestions/span-redaction.ts`, wired in `apps/api/src/otel.ts`). Both
+routes are POSTs with the name in the body, so it isn't in the request log line or the inbound
+span's URL.
+
+**Logs.** `apps/api/src/supplement-suggestions/supplement-suggestions.service.ts` logs one line per
+request with counts only: `tier` (`label` or `ai`), `outcome` (`ready`, `none`, `off`, `limited`,
+`unavailable`, `timeout`, `error`), `provider`, `suggestions`, `ingredients`, `sources`, token
+counts and durations. Never the name, the prompt or the reply.
+
+**The reply is checked, not trusted.** The schema is sent to the provider, but the reply is read
+leniently rather than rejected for not matching it: it needs only a `suggestion` object with a
+non-empty `name`, and every other field is optional and filled with a default when missing or of
+the wrong type (an unknown slot becomes `all`). Text is clipped, ingredients with a unit other than
+mg, g and mcg or an amount that isn't a sensible number are dropped, and only https sources with a
+host are kept. A reply that isn't JSON, has no name or stopped at the token limit is answered
+`none`.

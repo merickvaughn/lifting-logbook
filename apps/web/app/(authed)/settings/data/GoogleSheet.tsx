@@ -6,6 +6,7 @@ import {
   authorizeGoogleSheet,
   createGoogleSheetSpreadsheet,
   fetchGoogleSheetLink,
+  syncGoogleSheet,
   unlinkGoogleSheet,
 } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
@@ -15,6 +16,16 @@ import { GOOGLE_SHEET_NOTICES, GOOGLE_SHEET_NOTICE_PARAM, googleSheetErrorName, 
 const PERMISSIONS_URL = 'https://myaccount.google.com/permissions';
 
 const TIMED_OUT = 'No answer came back in time. Check the link below, then try again.';
+
+/**
+ * API errors that say what state the link is really in (Sync now's 409s, #1444): the section
+ * switches to that state's view and says so in fixed words.
+ */
+const LINK_STATE_ERRORS: Record<string, { status: GoogleSheetLinkView['status']; copy: string }> = {
+  'google-sheet-not-linked': { status: 'unlinked', copy: 'No sheet is linked.' },
+  'google-sheet-needs-relink': { status: 'needs_relink', copy: 'Google access was removed. Link again.' },
+  'google-sheet-missing': { status: 'sheet_missing', copy: 'The sheet was deleted or can’t be found.' },
+};
 
 /** Sends the browser to Google; a seam so tests can watch it, since jsdom can't navigate. */
 export const navigation = { go: (url: string) => window.location.assign(url) };
@@ -107,15 +118,18 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
         leaving = (await fn()) === true;
       } catch (err) {
         logClientError(action, err);
-        const needsRelink = googleSheetErrorName(err) === 'google-sheet-needs-relink';
-        setError(
-          needsRelink
-            ? 'Google access was removed. Link again.'
-            : err instanceof Error && err.name === 'TimeoutError'
-              ? TIMED_OUT
-              : fallback,
-        );
-        if (needsRelink) setLink((l) => (l ? { ...l, status: 'needs_relink' } : l));
+        const name = googleSheetErrorName(err);
+        const state = name !== undefined && Object.hasOwn(LINK_STATE_ERRORS, name) ? LINK_STATE_ERRORS[name] : undefined;
+        setError(state ? state.copy : err instanceof Error && err.name === 'TimeoutError' ? TIMED_OUT : fallback);
+        if (state) {
+          setLink((l) =>
+            l
+              ? state.status === 'unlinked'
+                ? { ...l, status: 'unlinked', spreadsheetUrl: null, lastMirroredAt: null }
+                : { ...l, status: state.status }
+              : l,
+          );
+        }
       } finally {
         if (!leaving) {
           running.current = false;
@@ -148,6 +162,17 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
       'Couldn’t create a new sheet. Please try again.',
     );
 
+  const syncNow = () =>
+    run(
+      'syncGoogleSheet',
+      async () => {
+        await syncGoogleSheet();
+        setMessage('Sync started. Your sheet updates in a minute or so.');
+        settleFocus();
+      },
+      'Couldn’t start a sync. Please try again.',
+    );
+
   const unlink = () =>
     run(
       'unlinkGoogleSheet',
@@ -170,6 +195,11 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
   const linkButton = (
     <BusyButton onClick={startLink} busy={anyBusy}>
       {busy === 'authorizeGoogleSheet' ? 'Opening Google…' : 'Link a Google Sheet'}
+    </BusyButton>
+  );
+  const syncButton = (
+    <BusyButton onClick={syncNow} busy={anyBusy}>
+      {busy === 'syncGoogleSheet' ? 'Starting sync…' : 'Sync now'}
     </BusyButton>
   );
   const unlinkButton = (
@@ -198,7 +228,8 @@ export default function GoogleSheet({ notice }: { notice?: GoogleSheetNoticeCode
                 </a>
               </p>
               <p>{link.lastMirroredAt ? `Last synced ${formatLastSynced(link.lastMirroredAt)}.` : 'Not synced yet.'}</p>
-              {unlinkButton}
+              {link.syncFailed && <p>Last sync failed.</p>}
+              {syncButton} {unlinkButton}
             </>
           )}
           {status === 'sheet_missing' && (

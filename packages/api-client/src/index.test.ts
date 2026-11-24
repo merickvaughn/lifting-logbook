@@ -1138,6 +1138,16 @@ describe('supplements', () => {
     expect(init.cache).toBe('no-store');
   });
 
+  it('fetchSupplementLabelLookup POSTs the name in the body, not the URL, uncached (#1381)', async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: 'none' }), { status: 200 }));
+    await expect(makeClient().fetchSupplementLabelLookup('Zorblax d&k')).resolves.toEqual({ status: 'none' });
+    const [url, init] = lastCall();
+    expect(url).toBe('http://api.test/supplements/label-lookup');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Zorblax d&k' });
+    expect(init.cache).toBe('no-store');
+  });
+
   it('moveSupplementDoses, setSupplementStatus and createSupplementMix POST their bodies with the lifter\'s date', async () => {
     mockFetch.mockImplementation(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
     const client = makeClient();

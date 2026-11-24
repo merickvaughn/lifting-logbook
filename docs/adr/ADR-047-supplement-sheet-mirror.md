@@ -169,18 +169,23 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     at three writes per run. The backoff follows Google's advice for 429s: truncated exponential
     backoff, with the maximum raised from their typical 32 or 64 s to 10 minutes because nobody is waiting on a
     mirror.
-16. **Enqueued after commit, debounced by task name, never on the write's critical path.** After a
-    supplement write's transaction commits, and only if the user has a `linked` row, the service
-    creates a task named `<userId-hash>-<window>`, where `window` is the current 30-second window,
+16. **Enqueued after commit, debounced by task name, and never able to fail the write.** After a
+    supplement write's transaction commits, and only if the user has a `linked` row (read in the
+    write's own transaction), the service creates a task named `<userId-hash>-<window>`, where `window` is the current 30-second window,
     with `scheduleTime` at the end of that window. Cloud Tasks deduplicates named tasks, so every
     change in the window enqueues one run. Cloud Tasks answers `ALREADY_EXISTS` for every change
     after the first in a window, and the service counts that as success, not a failure. A name
     stays reserved for up to a day after its task finishes, which is why each name carries its
     window. **Sync now** names its task `<userId-hash>-sync-<window>` and schedules it at once, so
     repeated presses in one window enqueue one run; the follow-up run in decision 19 uses the
-    normal name for the window it falls in. The request doesn't await the enqueue: it's
-    fire-and-forget, with a 2 s timeout. A failure is logged and traced and the write still returns
-    its normal response. The next committed change enqueues again, and Settings shows the last
+    normal name for the window it falls in. The response doesn't depend on the enqueue's outcome,
+    and it waits at most 2 s for it: with request-based billing, Cloud Run gives an instance CPU
+    only while it processes a request, so an enqueue left running after the response could stall
+    or never run ([CPU allocation](https://docs.cloud.google.com/run/docs/configuring/cpu-allocation)).
+    The write registers the enqueue as after-commit work, and `RlsInterceptor`
+    runs it once the transaction has committed and before the response is sent; a rollback or an
+    error runs none. A failure or a timeout is logged and traced and the write still returns its
+    normal response. The next committed change enqueues again, and Settings shows the last
     mirror time with a **Sync now** button that enqueues a run. A write that changes nothing, which
     logs no change (ADR-046), enqueues nothing.
 17. **The task carries only the user ID.** Its body is `{ "userId": "<id>" }`. The run reads the
@@ -219,8 +224,14 @@ mirror runs without blocking a write, what is sent to Google and when, and what 
     are rewritten whole on every run. Neither carries the app's user ID or internal IDs.
 21. **Outcomes Cloud Tasks acts on:** 2xx for success and for the terminal states in decisions 10
     to 12; 409 for a held lease; 5xx for a Google 429 or 5xx, a KMS or database failure, or a
-    timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Once retries run
-    out, the last error code stays on the row and Settings shows "Last sync failed" with Sync now.
+    timeout. Cloud Tasks retries those, and Google's calls get a 20 s timeout each. Retries run out
+    at the eighth attempt (`X-CloudTasks-TaskRetryCount` 7): the run ends the task itself there,
+    since Cloud Tasks keeps retrying until both `max-attempts` and `max-retry-duration` are reached,
+    which would mean retries, each logged at `error`, for up to a day. On that attempt a failure
+    that would be retried instead stores its error code, releases the lease, logs once at `error`
+    and answers 204, and Settings shows "Last sync failed" with Sync now. If the code can't be
+    stored (the database fails), the run answers 5xx as before, so the failure isn't silently
+    dropped and Cloud Tasks retries until `max-retry-duration`.
     Any other Google 4xx but a 408 (a 400, say) is terminal too, since a retry would send the same
     request: the run stores `google_<status>` as the last error, releases the lease, logs at `error`
     and answers 204. A 409 is expected contention, logged at `info` and never as a failure.
@@ -473,3 +484,4 @@ again, and the tokens left at Google would expire after six months unused.
 22. OWASP, [Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) — centralized secret storage (§2.2), least privilege (§2.3), envelope encryption (§4.2), and that secrets are never logged.
 23. Clerk, [How Clerk works](https://clerk.com/docs/guides/how-clerk-works/overview) — the `__session` cookie is set on the app's own domain and not shared with subdomains (decision 5, #1436).
 24. Next.js, [`redirects`](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects) — `has` host matching and `permanent: true` returning 308 (decision 5, #1436).
+25. Google Cloud, [Configure CPU allocation](https://docs.cloud.google.com/run/docs/configuring/cpu-allocation) — with request-based billing an instance gets CPU only while it processes a request, so a write waits for its enqueue rather than leaving it to run after the response (decision 16, #1444).

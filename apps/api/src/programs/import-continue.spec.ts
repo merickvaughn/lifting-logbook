@@ -192,6 +192,10 @@ describe('recreateRemovedLive (#1354)', () => {
       unmatched: false,
       importedThrough: null,
       schedule: [{ workoutNum: 1, weekNum: 1, scheduledDate: '2025-05-05T00:00:00.000Z' }],
+      dateOverrides: [],
+      skips: [],
+      liftOverrides: [],
+      focus: [],
     });
 
     expect(await repos.macrocycle.findById('removed-live')).toMatchObject({ macrocycleNum: 3, startDate: day('2025-05-05') });

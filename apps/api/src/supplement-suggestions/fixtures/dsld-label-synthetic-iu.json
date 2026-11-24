@@ -1,0 +1,11 @@
+{
+  "_note": "Synthetic, hand-written: none of the recorded creatine labels lists an IU row. Same trimmed shape as the recorded labels.",
+  "id": 900001,
+  "fullName": "Synthetic Vitamin D Blend",
+  "servingSizes": [{ "order": 1, "minQuantity": 1, "maxQuantity": 1, "unit": "Softgel(s)" }],
+  "productType": { "langualCode": "A1302", "langualCodeDescription": "Vitamin" },
+  "ingredientRows": [
+    { "order": 1, "name": "Vitamin D3", "quantity": [{ "servingSizeOrder": 1, "operator": "=", "quantity": 1000, "unit": "IU" }] },
+    { "order": 2, "name": "Vitamin K2", "quantity": [{ "servingSizeOrder": 1, "operator": "=", "quantity": 90, "unit": "mcg" }] }
+  ]
+}
