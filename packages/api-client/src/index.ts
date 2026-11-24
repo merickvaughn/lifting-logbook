@@ -73,7 +73,9 @@ import type {
   UserSettingsResponse,
   WorkoutResponse,
   SupplementAsOfResponse,
+  SupplementAiSuggestionResponse,
   SupplementCatalogEntry,
+  SupplementLabelLookupResponse,
   SupplementChange,
   SupplementCreatedResponse,
   SupplementDayType,
@@ -126,6 +128,8 @@ export type SupplementItemBody = Partial<SupplementItemDetails> & {
   doses?: SupplementDose[];
   /** Create only: the catalog entry to copy blanks and reference content from. */
   catalogKey?: string;
+  /** Create only: save the item unverified, as an AI-suggested one is (#1381). Confirm it with `false`. */
+  unverified?: boolean;
 };
 
 export interface ApiClientConfig {
@@ -911,6 +915,27 @@ export function createApiClient(config: ApiClientConfig) {
     /** Catalog entries whose name or alias contains `q`, for autofill (#1409). */
     fetchSupplementCatalog(q: string): Promise<SupplementCatalogEntry[]> {
       return request(`/supplements/catalog?q=${enc(q)}`, { cache: 'no-store' });
+    },
+    /**
+     * Tier 2 (#1381): product labels for a name the catalog doesn't have. Never rejects for a
+     * label-database outage; that is `unavailable`. A POST, so the name stays out of URLs and logs.
+     */
+    fetchSupplementLabelLookup(q: string): Promise<SupplementLabelLookupResponse> {
+      return request(`/supplements/label-lookup`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name: q }),
+        cache: 'no-store',
+      });
+    },
+    /** Tier 3 (#1381): an AI suggestion from the typed name alone. Counts against the lifter's hourly allowance. */
+    fetchSupplementAiSuggestion(name: string): Promise<SupplementAiSuggestionResponse> {
+      return request(`/supplements/ai-suggestion`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ name }),
+        cache: 'no-store',
+      });
     },
     /** Adds an item. With `catalogKey`, the API fills blanks from that entry and attaches its reference content. */
     createSupplementItem(body: SupplementItemBody, today: string): Promise<SupplementCreatedResponse> {

@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { SupplementChange } from '@lifting-logbook/types';
 import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
 import { InMemorySupplementRepository } from '../adapters/in-memory/supplement.adapter';
+import { RLS_SKIP_TX } from '../adapters/prisma/rls-context';
 import { AuthUser } from '../ports/auth';
 import { SupplementsController } from './supplements.controller';
 
@@ -51,7 +52,7 @@ describe('SupplementsController as-of', () => {
     (await factory.forUser(user)).supplement = new AnomalousLog();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never).asOf('2026-11-02', user);
+    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never, {} as never).asOf('2026-11-02', user);
 
     expect(res.items.map((i) => i.id)).toEqual(['a']);
     expect(res.firstChangeDate).toBe('2026-11-01');
@@ -68,9 +69,17 @@ describe('SupplementsController as-of', () => {
     (await factory.forUser(user)).supplement = new AnomalousLog();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never).asOf('2026-11-01', user);
+    const res = await new SupplementsController(factory, { afterWrite: async () => undefined } as never, {} as never).asOf('2026-11-01', user);
 
     expect(res.anomalies).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('SupplementsController suggestion routes (#1381)', () => {
+  // The outgoing call (up to 60 s for the AI) would otherwise run inside the request's RLS
+  // transaction, which times out at 15 s and fails the request with P2028.
+  it.each(['labelLookup', 'aiSuggestion'] as const)('%s opts out of the per-request RLS transaction', (handler) => {
+    expect(Reflect.getMetadata(RLS_SKIP_TX, SupplementsController.prototype[handler])).toBe(true);
   });
 });

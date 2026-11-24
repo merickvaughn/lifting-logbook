@@ -1,0 +1,126 @@
+{
+  "id": 31127,
+  "fullName": "Creatine Fruit Punch",
+  "servingSizes": [
+    {
+      "order": 1,
+      "minQuantity": 10.67,
+      "maxQuantity": 10.67,
+      "unit": "Gram(s)"
+    }
+  ],
+  "productType": {
+    "langualCode": "A1325",
+    "langualCodeDescription": "Other Combinations"
+  },
+  "ingredientRows": [
+    {
+      "order": 1,
+      "name": "Calories",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 10,
+          "unit": "{Calories}"
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "name": "Total Carbohydrates",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 3,
+          "unit": "Gram(s)"
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "name": "Calcium",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 40,
+          "unit": "mg"
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "name": "Phosphorus",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 70,
+          "unit": "mg"
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "name": "Magnesium",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 120,
+          "unit": "mg"
+        }
+      ]
+    },
+    {
+      "order": 6,
+      "name": "Sodium",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 10,
+          "unit": "mg"
+        }
+      ]
+    },
+    {
+      "order": 7,
+      "name": "Potassium",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 60,
+          "unit": "mg"
+        }
+      ]
+    },
+    {
+      "order": 8,
+      "name": "Micro-Peptide Creatine Complex",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 0,
+          "unit": "NP"
+        }
+      ]
+    },
+    {
+      "order": 11,
+      "name": "N.O. Pump Charger",
+      "quantity": [
+        {
+          "servingSizeOrder": 1,
+          "operator": "=",
+          "quantity": 0,
+          "unit": "NP"
+        }
+      ]
+    }
+  ]
+}

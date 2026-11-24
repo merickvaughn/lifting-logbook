@@ -1541,6 +1541,14 @@ export interface AssignContinueMax {
 export const IMPORT_SUGGESTION_MAX_SETS = 1500;
 /** Suggestion requests each user may make per hour (proposal decision 12). */
 export const IMPORT_SUGGESTION_HOURLY_LIMIT = 10;
+/** Supplement AI suggestions a lifter may request per hour (#1381). */
+export const SUPPLEMENT_SUGGESTION_HOURLY_LIMIT = 20;
+/**
+ * Supplement label lookups a lifter may request per hour, counted per API process (#1381). The form
+ * asks on each pause in typing, and an uncached lookup makes up to four requests to the NIH label
+ * database.
+ */
+export const SUPPLEMENT_LABEL_LOOKUP_HOURLY_LIMIT = 60;
 /** How long the model gets to answer a suggestion request, with no retries (proposal decision 12). */
 export const IMPORT_SUGGESTION_DEADLINE_MS = 60_000;
 

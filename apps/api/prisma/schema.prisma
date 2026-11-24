@@ -96,6 +96,18 @@ model ImportSuggestionUsage {
   @@map("import_suggestion_usage")
 }
 
+/// One row per supplement AI suggestion request that reached the provider (#1381), so each user's
+/// 20 per hour hold across API instances. Same shape and cleanup as ImportSuggestionUsage.
+/// Bookkeeping, not the lifter's data: not exported.
+model SupplementSuggestionUsage {
+  id     String   @id @default(cuid())
+  userId String
+  usedAt DateTime @default(now())
+
+  @@index([userId, usedAt])
+  @@map("supplement_suggestion_usage")
+}
+
 model MacrocycleDashboard {
   id                     String   @id @default(cuid())
   userId                 String

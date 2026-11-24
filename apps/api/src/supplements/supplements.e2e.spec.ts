@@ -11,7 +11,7 @@ import {
   SupplementSheetResponse,
   SupplementStackResponse,
 } from '@lifting-logbook/types';
-import { supplementSourceUrl } from '@lifting-logbook/core';
+import { ingredientTotals, supplementSourceUrl, totalOf } from '@lifting-logbook/core';
 import { MAX_WORKBOOK_BYTES } from '../adapters/google-sheets/google-sheet-export.client';
 import { buildXlsx, zipFixture } from '../adapters/google-sheets/xlsx.fixture';
 import { MAX_XLSX_PART_BYTES } from '../adapters/google-sheets/xlsx-to-tables';
@@ -609,6 +609,42 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
     // The largest seq the log's integer column holds is still a page boundary.
     expect(await page('?beforeSeq=2147483647')).toEqual([1, 2, 3, 4, 5]);
   });
+  describe('tiers 2 and 3 suggestions (#1381)', () => {
+    it('answers none to a blank label lookup without calling the label database, and 400s a missing name', async () => {
+      const { inject } = newUser();
+      const outbound = jest.spyOn(globalThis, 'fetch');
+      try {
+        expect((await inject('POST', '/supplements/label-lookup', { name: '  ' })).json()).toEqual({ status: 'none' });
+        expect((await inject('POST', '/supplements/label-lookup', {})).statusCode).toBe(400);
+        expect(outbound).not.toHaveBeenCalled();
+      } finally {
+        outbound.mockRestore();
+      }
+    });
+
+    it('says the AI is off when no provider is configured, and requires a name', async () => {
+      const { inject } = newUser();
+      const res = await inject('POST', '/supplements/ai-suggestion', { name: 'Zorblax' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ status: 'off' });
+      expect((await inject('POST', '/supplements/ai-suggestion', {})).statusCode).toBe(400);
+      expect((await inject('POST', '/supplements/ai-suggestion', { name: '' })).statusCode).toBe(400);
+    });
+
+    it('saves an unverified item, leaves it out of the totals, and counts it once confirmed', async () => {
+      const { add, ok, get } = newUser();
+      const item = await add('Zorblax', { unverified: true, ingredients: [{ key: 'protein', amount: 20, unit: 'g' }], doses: [{ slot: 'all', amount: '1', servings: 1, dayTypes: [] }] });
+      expect(item.unverified).toBe(true);
+      // The client computes the day's totals from this stack with core's ingredientTotals.
+      const before = (await get()).items;
+      expect(totalOf(ingredientTotals(before, 'rest'), 'protein', 'g')).toBe(0);
+      await ok('PATCH', `/supplements/items/${item.id}?today=${TODAY}`, { unverified: false });
+      const after = (await get()).items;
+      expect(after.find((i) => i.id === item.id)?.unverified).toBe(false);
+      expect(totalOf(ingredientTotals(after, 'rest'), 'protein', 'g')).toBe(20);
+    });
+  });
+
   describe('catalog (#1375)', () => {
     it('returns matches for q by name or alias, ignoring case, with reference content', async () => {
       const { inject } = newUser();

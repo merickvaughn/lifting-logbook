@@ -1,6 +1,7 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { redactSpreadsheetIdAttributes } from './google-sheet/span-redaction';
+import { redactDsldQueryAttributes } from './supplement-suggestions/span-redaction';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
@@ -10,6 +11,18 @@ import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 // which was made package-private in sdk-trace-base@2.x — causing "Span is not a
 // constructor" at $connect(). PrismaInstrumentation is excluded from the
 // instrumentations array until the Prisma v6 upgrade. See ADR-024 and issue #348.
+
+/**
+ * instrumentation-undici's settings. Outbound URLs that carry user data are rewritten before the
+ * span starts: a Sheets call's spreadsheet ID (#1432, ADR-047 decision 24) and a label search's
+ * typed supplement name (#1381). Exported so a test can check what startOtel() wires.
+ */
+export const UNDICI_INSTRUMENTATION_CONFIG = {
+  startSpanHook: (request: { origin: string; path: string }) => ({
+    ...redactSpreadsheetIdAttributes(request),
+    ...redactDsldQueryAttributes(request),
+  }),
+};
 
 // OTel semantic-convention key for the deployment environment. Stable semconv
 // uses `deployment.environment.name`; the OTLP→Prometheus translation in the
@@ -118,8 +131,7 @@ export function startOtel(): NodeSDK | undefined {
     logRecordProcessors: buildLogRecordProcessors(),
     instrumentations: [
       getNodeAutoInstrumentations({
-        // A Sheets call's URL carries the spreadsheet ID (#1432, ADR-047 decision 24).
-        '@opentelemetry/instrumentation-undici': { startSpanHook: redactSpreadsheetIdAttributes },
+        '@opentelemetry/instrumentation-undici': UNDICI_INSTRUMENTATION_CONFIG,
       }),
     ],
   });
