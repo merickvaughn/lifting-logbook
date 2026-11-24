@@ -173,8 +173,10 @@ export interface BodyWeightEntry {
 /** Week number within a training macrocycle (1-based). */
 export type WeekNumber = number;
 
+export const WEEK_TYPES = ['training', 'test', 'deload'] as const;
+
 /** Declares the character of a training week. */
-export type WeekType = 'training' | 'test' | 'deload';
+export type WeekType = (typeof WEEK_TYPES)[number];
 
 /**
  * Macrocycle number within a training program.

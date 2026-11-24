@@ -599,7 +599,7 @@ resource "google_service_account_iam_member" "cicd_wif_binding" {
 # runs `terraform plan` against prod on every merge to surface the blast radius
 # before the production approval gate (#542 / #544). It deliberately lacks the
 # write/apply authority of `cicd` (roles/owner): it can refresh state and read,
-# but cannot mutate prod or change IAM.
+# including every resource's IAM policy, but cannot mutate prod or change IAM.
 #
 # Caveat — this is NOT a zero-secret identity. Prod manages
 # google_secret_manager_secret_version resources (database_url, clerk keys, …),
@@ -626,6 +626,13 @@ resource "google_project_iam_member" "cicd_plan_roles" {
     # resources (roles/viewer covers metadata but not versions.access). See
     # the caveat above — this is the one grant that lets the SA read secrets.
     "roles/secretmanager.secretAccessor",
+    # Refreshing a resource-level *_iam_member reads that resource's IAM policy, and
+    # roles/viewer lacks some of those reads: cloudtasks.queues.getIamPolicy (the
+    # sheet-mirror queue's enqueuer grant, #1460) and storage.buckets.getIamPolicy (the
+    # staging-only ci-locks bucket). Security Reviewer holds every getIamPolicy plus get/list
+    # permissions and nothing that sets, creates, updates or deletes, so it covers the next
+    # such resource too. https://docs.cloud.google.com/iam/docs/roles-permissions/iam#iam.securityReviewer
+    "roles/iam.securityReviewer",
   ])
   project = var.project_id
   role    = each.value
