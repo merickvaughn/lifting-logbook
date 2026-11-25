@@ -9,6 +9,7 @@ jest.mock('@/lib/api', () => ({
   fetchNonCycleRecords: jest.fn().mockResolvedValue([]),
   fetchImportBatches: jest.fn().mockResolvedValue([]),
   fetchCustomPrograms: jest.fn().mockResolvedValue([]),
+  fetchRecordedPrograms: jest.fn().mockResolvedValue([]),
   // Read through the real lib/active-program, so these tests hold whichever of its reads the page uses.
   fetchUserSettings: jest.fn().mockResolvedValue({ activeProgram: '5-3-1' }),
 }));
@@ -32,6 +33,7 @@ import {
   fetchLiftRecords,
   fetchMacrocycles,
   fetchNonCycleRecords,
+  fetchRecordedPrograms,
   fetchTrainingMaxHistory,
   fetchUserSettings,
 } from '@/lib/api';
@@ -218,7 +220,32 @@ describe('HistoryPage program', () => {
     (fetchMacrocycles as jest.Mock).mockResolvedValue([]);
     (fetchImportBatches as jest.Mock).mockResolvedValue([]);
     (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM]);
+    (fetchRecordedPrograms as jest.Mock).mockResolvedValue([]);
     (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+  });
+
+  // #1454: an import can go into a template the lifter can't pick on the Programs page.
+  it('offers a template that holds the lifter’s sets, though it’s neither active nor available', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: 'rpt' });
+    (fetchRecordedPrograms as jest.Mock).mockResolvedValue(['531', 'rpt']);
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([]);
+
+    const html = renderToStaticMarkup((await historyPage({ program: '531' })) as ReactElement);
+
+    expect(html).toContain('<option value="531" selected="">5/3/1</option>');
+    expect(fetchMacrocycles).toHaveBeenCalledWith('531');
+    expect(fetchImportBatches).toHaveBeenCalledWith('531');
+    expect(html).not.toContain('role="status"');
+  });
+
+  it('shows the load notice, and the other programs, when the recorded programs can’t be fetched', async () => {
+    (fetchRecordedPrograms as jest.Mock).mockRejectedValue(new Error('API unavailable'));
+
+    const html = renderToStaticMarkup((await historyPage()) as ReactElement);
+
+    expect(html).toContain(`<option value="${CUSTOM.id}">Sheets import</option>`);
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    expect(html).toContain('role="status"');
   });
 
   it('shows the lifter’s only program, with no notice, when none is active', async () => {

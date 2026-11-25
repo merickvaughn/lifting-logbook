@@ -1537,6 +1537,15 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /users/me/recorded-programs (#1454). The pickers already list the mock's active and custom
+  // programs, so it reports no others.
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/users/me/recorded-programs') {
+    json(res, []);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /programs/custom
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/programs/custom') {

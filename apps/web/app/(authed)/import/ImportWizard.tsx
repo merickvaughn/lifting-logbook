@@ -2716,6 +2716,7 @@ export function ImportWizard({
                 // After a mismatch the control the lifter used is gone, so focus starts at the step.
                 <AssignStep
                   key={assignLoads}
+                  targets={programs.map((p) => p.id)}
                   res={assignRes}
                   draft={assignDraft}
                   onChange={setAssignDraft}
