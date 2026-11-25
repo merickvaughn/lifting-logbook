@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
+import { DEFAULT_WEIGHT_INCREMENT, type CustomLiftResponse } from '@lifting-logbook/types';
 import TrainingMaxesForm from './TrainingMaxesForm';
+import { saveTrainingMaxes } from './actions';
 
 jest.mock('./actions', () => ({
   saveTrainingMaxes: jest.fn(),
@@ -67,5 +68,43 @@ describe('TrainingMaxesForm when a lift joins the list (#1246)', () => {
 
     expect(screen.getByLabelText('Squat training max')).toHaveValue(305);
     expect(screen.getByLabelText('Romanian Deadlift training max')).toHaveValue(100);
+  });
+});
+
+describe('TrainingMaxesForm row names (#1291)', () => {
+  it("names each row by its lift's name and saves under the stored lift", async () => {
+    const user = userEvent.setup();
+    const save = saveTrainingMaxes as jest.Mock;
+    save.mockReset().mockResolvedValue([]);
+    const customId = '6f1c2e0a-9b7d-4c1e-8a2f-3d5b7c9e1f20';
+    const bench = { lift: 'bench-press', weight: 200, unit: 'lbs', dateUpdated: '2026-10-01' } as const;
+    const custom = { lift: customId, weight: 60, unit: 'lbs', dateUpdated: '2026-10-02' } as const;
+    render(
+      <TrainingMaxesForm
+        program="5-3-1"
+        lifts={['bench-press', customId]}
+        maxes={[bench, custom]}
+        customLifts={[{ id: customId, name: 'Zercher Squat' } as CustomLiftResponse]}
+        increments={{}}
+      />,
+    );
+
+    expect(screen.getByRole('cell', { name: 'Bench Press' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Zercher Squat' })).toBeInTheDocument();
+    expect(screen.queryByText('bench-press')).not.toBeInTheDocument();
+    expect(screen.queryByText(customId)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Zercher Squat training max')).toHaveValue(60);
+
+    const input = screen.getByLabelText('Bench Press training max');
+    await user.clear(input);
+    await user.type(input, '205');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(save).toHaveBeenCalledWith('5-3-1', {
+      maxes: [
+        { lift: 'bench-press', weight: 205, unit: 'lbs' },
+        { lift: customId, weight: 60, unit: 'lbs' },
+      ],
+    });
   });
 });

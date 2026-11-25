@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { formatWeight } from '@lifting-logbook/core';
+import { builtInLiftFor, formatWeight } from '@lifting-logbook/core';
 import {
   DEFAULT_WEIGHT_INCREMENT,
+  type CustomLiftResponse,
   type TrainingMaxResponse,
   type WeightUnit,
 } from '@lifting-logbook/types';
@@ -40,12 +41,15 @@ export default function TrainingMaxesForm({
   program,
   lifts,
   maxes,
+  customLifts = [],
   increments,
   unit = 'lbs',
 }: {
   program: string;
   lifts: string[];
   maxes: TrainingMaxResponse[];
+  /** Names a row whose stored `lift` is a custom lift's id (#1291). */
+  customLifts?: CustomLiftResponse[];
   /** Per-lift spinner `step`, keyed by lift name (see resolveStepIncrements). */
   increments: Record<string, number>;
   /**
@@ -70,6 +74,15 @@ export default function TrainingMaxesForm({
   if (newLifts.length > 0) {
     setRows((prev) => ({ ...buildInitialState(newLifts, maxes), ...prev }));
     return null;
+  }
+
+  // A max is usually stored by lift id; the row shows that lift's name and saves under the id
+  // (#1291). A max stored by name keeps it.
+  function nameOf(lift: string): string {
+    const custom = customLifts.find((l) => l.id === lift);
+    if (custom) return custom.name;
+    const builtIn = builtInLiftFor(lift);
+    return builtIn?.id === lift ? builtIn.name : lift;
   }
 
   function handleChange(lift: string, value: string) {
@@ -159,16 +172,17 @@ export default function TrainingMaxesForm({
           <tbody>
             {lifts.map((lift) => {
               const row = rows[lift];
+              const name = nameOf(lift);
               return (
                 <tr key={lift} className={row.error ? styles.rowError : undefined}>
-                  <td className={styles.liftName} data-label="Lift">{lift}</td>
+                  <td className={styles.liftName} data-label="Lift">{name}</td>
                   <td className={styles.weightCell} data-label="Weight">
                     <input
                       type="number"
                       step={increments[lift] ?? DEFAULT_WEIGHT_INCREMENT}
                       value={row.value}
                       placeholder="—"
-                      aria-label={`${lift} training max`}
+                      aria-label={`${name} training max`}
                       autoComplete="off"
                       className={styles.weightInput}
                       onChange={(e) => handleChange(lift, e.target.value)}
