@@ -511,12 +511,16 @@ export function ImportWizard({
   // it — or at a field that stands in for it, a program spec's drop being either
   // `WT Decrement %` or `Weight %`. Until #1442 that second kind was met by any choice at
   // all on its row, which supplied nothing and was dropped again before the commit.
-  function requirementMet(m: ColumnMapping): boolean {
-    if (m.sourceHeader) return m.destinationField !== '' && m.confidence > 0;
-    return suppliedFields.has(m.destinationField) || (m.satisfiedBy ?? []).some((f) => suppliedFields.has(f));
+  // Both kinds are judged against the field the server required the row for, not whatever
+  // the row's column now points at: re-pointing a required column elsewhere leaves that
+  // field unsupplied, however it is reached (#1449).
+  function requirementMet(m: ColumnMapping, i: number): boolean {
+    const required = preview?.columnMappings?.[i]?.destinationField ?? m.destinationField;
+    if (m.sourceHeader && required === '') return m.destinationField !== '' && m.confidence > 0;
+    return suppliedFields.has(required) || (m.satisfiedBy ?? []).some((f) => suppliedFields.has(f));
   }
 
-  const allRequiredMapped = effectiveMappings.filter((m) => m.required).every(requirementMet);
+  const allRequiredMapped = effectiveMappings.every((m, i) => !m.required || requirementMet(m, i));
 
   // The file's own column headers, offered on a required field's row so the lifter can say
   // which of them holds it. Deduplicated: a file may repeat a header.
@@ -2048,7 +2052,7 @@ export function ImportWizard({
                         // The server's own mapping for this row, before an override of ours
                         // re-pointed the column: picking it again clears the override.
                         const original = preview.columnMappings?.[i] ?? m;
-                        const isUnmappedRequired = m.required && !requirementMet(m);
+                        const isUnmappedRequired = m.required && !requirementMet(m, i);
                         // Set only on a required row standing for a field the file has no
                         // column for, once a column of the file has been named for it.
                         const supplied = !m.sourceHeader && m.required ? supplierFor(m) : undefined;

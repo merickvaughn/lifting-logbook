@@ -2233,23 +2233,42 @@ describe('ImportWizard', () => {
       await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
 
-      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'reps');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'weight');
       await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
 
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
-      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'notes' } });
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Weight: 'reps', Reps: 'weight' } });
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument());
       expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
 
       // Going back without changing anything keeps the preview and the user's work.
       await user.click(screen.getByRole('button', { name: 'Back' }));
-      expect(screen.getByLabelText('Map column Lift')).toHaveValue('notes');
+      expect(screen.getByLabelText('Map column Weight')).toHaveValue('reps');
       await user.click(screen.getByRole('button', { name: 'Next' }));
       expect(mockPreview).toHaveBeenCalledTimes(2);
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       await user.click(screen.getByRole('button', { name: 'Commit import' }));
       await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+    });
+
+    it('blocks Next and marks the row when a required column is re-pointed at another field (#1449)', async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await user.upload(screen.getByLabelText('CSV file'), AMBIGUOUS_LIFT_CSV);
+      await user.click(screen.getByRole('button', { name: 'Analyze' }));
+      await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
+      expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+
+      expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+      expect(screen.getByText(/Some required fields are not yet mapped/)).toBeInTheDocument();
+      expect(screen.getByLabelText('Map column Weight').closest('tr')?.className).toMatch(/unmappedRequired/);
     });
 
     it('says so when a column change clears Review edits, and keeps them when the mapping is unchanged', async () => {
@@ -2261,8 +2280,8 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Analyze' }));
       await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
-      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
-      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'reps');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'weight');
       await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
       await screen.findByRole('heading', { name: 'Review' });
@@ -2272,7 +2291,7 @@ describe('ImportWizard', () => {
       // Undoing and redoing a remap reorders it but changes nothing, so the exclusion stays.
       await user.click(screen.getByRole('button', { name: 'Back' }));
       await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
-      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'reps');
       await user.click(screen.getByRole('button', { name: 'Next' }));
       await screen.findByRole('heading', { name: 'Review' });
       expect(mockPreview).toHaveBeenCalledTimes(2);
@@ -2281,6 +2300,7 @@ describe('ImportWizard', () => {
       // A real change reloads the rows and says the exclusion is gone.
       await user.click(screen.getByRole('button', { name: 'Back' }));
       await user.selectOptions(screen.getByLabelText('Map column Weight'), 'weight');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'reps');
       await user.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(3));
       await waitFor(() => expect(screen.getByText(/were cleared/)).toBeInTheDocument());
@@ -2299,7 +2319,8 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Analyze' }));
       await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
-      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'reps');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'weight');
       await user.click(screen.getByRole('button', { name: 'Next' }));
 
       expect(screen.getByLabelText('Map column Reps')).toBeDisabled();
@@ -2348,7 +2369,8 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Analyze' }));
       await waitFor(() => expect(screen.getByText('Lift History')).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map
-      await user.selectOptions(screen.getByLabelText('Map column Lift'), 'notes');
+      await user.selectOptions(screen.getByLabelText('Map column Weight'), 'reps');
+      await user.selectOptions(screen.getByLabelText('Map column Reps'), 'weight');
       await user.click(screen.getByRole('button', { name: 'Next' }));
 
       await waitFor(() => expect(screen.getByText('Import preview failed (HTTP 500)')).toBeInTheDocument());
