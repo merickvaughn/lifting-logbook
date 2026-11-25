@@ -71,6 +71,7 @@ import {
   SetStatusDto,
   SupplementSettingsDto,
   SupplementAiSuggestionDto,
+  SupplementCatalogLookupDto,
   SupplementLabelLookupDto,
   SupplementSheetDto,
   UpdateSupplementItemDto,
@@ -201,13 +202,14 @@ export class SupplementsController {
   }
 
   /**
-   * Catalog entries whose name or an alias contains `q`, for autofill. The catalog is the same for
-   * every user (#1375). Fastify reads a repeated `q` as an array, which is a 400.
+   * Catalog entries whose name or an alias contains the typed name, for autofill. The catalog is
+   * the same for every user (#1375). A POST with the name in the body, so a name the lifter typed
+   * but never saved stays out of the request log and the inbound span's URL (#1458).
    */
-  @Get('catalog')
-  catalog(@Query('q') q: string | string[] | undefined): SupplementCatalogEntry[] {
-    if (Array.isArray(q)) throw new BadRequestException('q must be given once');
-    return searchSupplements(q ?? '').map(toCatalogEntry);
+  @Post('catalog')
+  @HttpCode(HttpStatus.OK)
+  catalog(@Body() body: SupplementCatalogLookupDto): SupplementCatalogEntry[] {
+    return searchSupplements(body.name).map(toCatalogEntry);
   }
 
   /**

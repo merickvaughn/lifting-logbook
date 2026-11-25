@@ -648,7 +648,7 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
   describe('catalog (#1375)', () => {
     it('returns matches for q by name or alias, ignoring case, with reference content', async () => {
       const { inject } = newUser();
-      const find = async (q: string) => (await inject('GET', `/supplements/catalog?q=${q}`)).json<SupplementCatalogEntry[]>();
+      const find = async (name: string) => (await inject('POST', '/supplements/catalog', { name })).json<SupplementCatalogEntry[]>();
       const [first] = await find('CREATINE');
       expect(first).toMatchObject({ key: 'creatine-monohydrate', name: 'Creatine monohydrate', kind: 'compound', suggestedSlot: 'all' });
       expect(first?.reference.evidence.level).toBe('strong');
@@ -656,12 +656,14 @@ describe('Supplements HTTP (e2e, in-memory adapters)', () => {
       expect(first?.reference.sources.every((key) => supplementSourceUrl(key)?.startsWith('https://'))).toBe(true);
       expect((await find('magnes')).map((e) => e.key)).toEqual(expect.arrayContaining(['magnesium', 'magnesium-glycinate', 'magnesium-citrate']));
       expect(await find('zzz-not-a-supplement')).toEqual([]);
-      expect((await inject('GET', '/supplements/catalog')).json()).toEqual([]);
+      expect(await find('')).toEqual([]);
     });
 
-    it('refuses a repeated q with a 400, not a 500', async () => {
+    it('refuses a missing or non-string name with a 400, not a 500, and no longer answers a GET (#1458)', async () => {
       const { inject } = newUser();
-      expect((await inject('GET', '/supplements/catalog?q=zinc&q=iron')).statusCode).toBe(400);
+      expect((await inject('POST', '/supplements/catalog', {})).statusCode).toBe(400);
+      expect((await inject('POST', '/supplements/catalog', { name: ['zinc', 'iron'] })).statusCode).toBe(400);
+      expect((await inject('GET', '/supplements/catalog?q=zinc')).statusCode).toBe(404);
     });
 
     it('copies reference content onto an item created from a catalog entry, and keeps typed fields', async () => {
