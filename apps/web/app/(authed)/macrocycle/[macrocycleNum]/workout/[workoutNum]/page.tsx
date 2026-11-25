@@ -1,12 +1,13 @@
 import { notFound, redirect } from 'next/navigation';
 import {
-  builtInLiftFor,
   convertWeight,
   currentMaxLookup,
+  lookupLift,
   withOccurrence,
 } from '@lifting-logbook/core';
-import type { SetResponse } from '@lifting-logbook/types';
+import type { CustomLiftResponse, SetResponse } from '@lifting-logbook/types';
 import {
+  fetchCustomLifts,
   fetchLatestBodyWeight,
   fetchModificationMaxes,
   fetchProgramSpec,
@@ -37,12 +38,18 @@ const WARMUP_IMPLEMENT: Record<string, string> = {
 };
 
 /**
- * The built-in bodyweight-component lift `liftName` names, by any of its names: a slot
- * name, catalog name or id, or a preset's alias such as "Weighted Pull-ups" (issue #1015).
+ * The bodyweight-component lift `liftName` names, if it is one. A built-in is found by any of
+ * its names: a slot name, catalog name or id, or a preset's alias such as "Weighted Pull-ups"
+ * (issue #1015). A same-named custom lift's own flag wins over a non-reserved built-in name, as
+ * `lookupLift` resolves it (ADR-036, #1319).
  */
-function bodyweightLift(liftName: string): { implement: string | undefined } | undefined {
-  const lift = builtInLiftFor(liftName);
-  return lift?.isBodyweightComponent ? { implement: WARMUP_IMPLEMENT[lift.id] } : undefined;
+function bodyweightLift(
+  liftName: string,
+  customLifts: readonly CustomLiftResponse[],
+): { implement: string | undefined } | undefined {
+  const { builtIn, custom } = lookupLift(liftName, customLifts);
+  if (!(custom?.isBodyweightComponent ?? builtIn?.isBodyweightComponent)) return undefined;
+  return { implement: custom ? undefined : builtIn && WARMUP_IMPLEMENT[builtIn.id] };
 }
 
 /** A workout is read-only when every working set across every lift has a logged record. */
@@ -67,7 +74,11 @@ export default async function WorkoutLoggingPage({
 
   const program = await getActiveProgram();
 
-  const [workout, specs, maxes, ownMaxes, latestBodyWeight, unit, focus] = await Promise.all([
+  // One read of the lifter's own lifts, shared by bodyweight detection and the progression
+  // plans (#1319). A failed read leaves bodyweight to the built-ins.
+  const customLiftsRead = fetchCustomLifts();
+
+  const [workout, specs, maxes, ownMaxes, latestBodyWeight, unit, focus, customLifts] = await Promise.all([
     fetchWorkout(program, workoutNum),
     fetchProgramSpec(program),
     fetchTrainingMaxes(program),
@@ -86,6 +97,11 @@ export default async function WorkoutLoggingPage({
     // The same focus work the details page and the timer show (#1060). A failed fetch
     // leaves the planned lifts to log.
     loadFocusPlan(program, workoutNum, 'WorkoutLoggingPage'),
+    // fallback-covered-by: apps/web/app/(authed)/macrocycle/[macrocycleNum]/workout/[workoutNum]/page.test.tsx
+    customLiftsRead.catch((err: unknown): CustomLiftResponse[] => {
+      console.error('[WorkoutLoggingPage] custom lift read failed, reading bodyweight from built-ins only', err);
+      return [];
+    }),
   ]);
 
   if (!workout) {
@@ -99,7 +115,7 @@ export default async function WorkoutLoggingPage({
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   // What each lift plans by besides its row: its progression type and last session (#1211).
-  const progressions = await loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage');
+  const progressions = await loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage', () => customLiftsRead);
 
   const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
     const tm = maxFor(wl.lift)?.weight ?? 0;
@@ -150,7 +166,7 @@ export default async function WorkoutLoggingPage({
       workingSets.push({ setNum: s.setNum, totalLoad: s.weight, reps: s.reps, amrap: s.amrap, existing: toExisting(s) });
     }
 
-    const bodyweight = bodyweightLift(wl.lift);
+    const bodyweight = bodyweightLift(wl.lift, customLifts);
 
     return {
       lift: wl.lift,
