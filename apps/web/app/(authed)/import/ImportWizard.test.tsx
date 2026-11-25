@@ -2238,7 +2238,7 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
 
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
-      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Weight: 'reps', Reps: 'weight' } });
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Weight: 'reps', Reps: 'weight' }, today: localToday() });
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument());
       expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
 
@@ -2348,7 +2348,7 @@ describe('ImportWizard', () => {
       await user.selectOptions(screen.getByLabelText('Map column Weight'), 'lift');
       await user.click(screen.getByRole('button', { name: 'Next' })); // Map → Review
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
-      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'weight', Weight: 'lift' } });
+      expect(mockPreview.mock.calls[1]?.[3]).toEqual({ overrides: { Lift: 'weight', Weight: 'lift' }, today: localToday() });
       await screen.findByRole('heading', { name: 'Review' });
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
@@ -2501,6 +2501,29 @@ describe('ImportWizard', () => {
 
       expect(mockDryRun.mock.calls[0]?.[3]).toMatchObject({ excludeKeys: ['__row_2'], splitDest: true });
       expect(mockCommit.mock.calls[0]).toEqual(mockDryRun.mock.calls[0]);
+    });
+
+    // The server bounds a row's date by the lifter's today only when the request sends it,
+    // so Review's preview and a commit without Assign must both carry it (#1427).
+    it("sends the lifter's today with the preview, the dry run and the commit", async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(liftPreview([{ key: 'k1', label: 'Bench first', kind: 'create', rowIndex: 1 }]));
+      mockCommit.mockResolvedValue({
+        ok: true,
+        data: { destination: 'lift-records', created: 1, updated: 0, skipped: 0, batchId: 'b' },
+      });
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, CSV);
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+      await user.click(screen.getByRole('button', { name: 'Commit import' }));
+      await waitFor(() => expect(mockCommit).toHaveBeenCalledTimes(1));
+
+      const today = localToday();
+      expect(mockPreview.mock.calls.length).toBeGreaterThan(0);
+      for (const call of mockPreview.mock.calls) expect(call[3]).toMatchObject({ today });
+      expect(mockDryRun.mock.calls[0]?.[3]).toMatchObject({ today });
+      expect(mockCommit.mock.calls[0]?.[3]).toMatchObject({ today });
     });
 
     it('previews again with the new choices after going back to Review', async () => {
