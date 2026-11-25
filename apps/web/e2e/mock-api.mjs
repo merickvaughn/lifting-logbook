@@ -1365,9 +1365,10 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // GET /supplements/catalog (#1409): one entry, enough to autofill a name typed as "creatine".
-  if (method === 'GET' && url.pathname === '/supplements/catalog') {
-    const q = (url.searchParams.get('q') ?? '').toLowerCase();
+  // POST /supplements/catalog (#1409, #1458): one entry, enough to autofill a name typed as "creatine".
+  if (method === 'POST' && url.pathname === '/supplements/catalog') {
+    const body = await readBody(req);
+    const q = (typeof body?.name === 'string' ? body.name : '').toLowerCase();
     json(res, q !== '' && 'creatine monohydrate'.includes(q) ? [{
       key: 'creatine-monohydrate', name: 'Creatine monohydrate', aliases: ['creatine'], kind: 'compound',
       keyCompound: 'Creatine monohydrate', suggestedDose: '5 g', timing: 'Anytime or pre-workout', suggestedSlot: 'am',

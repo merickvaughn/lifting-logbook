@@ -173,7 +173,7 @@ export interface SupplementAdvisory {
 
 export type SupplementCatalogKind = 'compound' | 'product';
 
-/** One match from `GET /supplements/catalog?q=`: what autofill fills in, plus the reference content (#1375). */
+/** One match from `POST /supplements/catalog`: what autofill fills in, plus the reference content (#1375). */
 export interface SupplementCatalogEntry {
   /** Stable id, stored on an item as `catalogKey`. Never reused or renamed. */
   key: string;

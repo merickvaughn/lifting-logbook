@@ -441,7 +441,7 @@ export function catalogReference(e: CatalogSupplement): SupplementReference {
   };
 }
 
-/** What `GET /supplements/catalog` returns for an entry. */
+/** What `POST /supplements/catalog` returns for an entry. */
 export function toCatalogEntry(e: CatalogSupplement): SupplementCatalogEntry {
   return {
     key: e.key,
