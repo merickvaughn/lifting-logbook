@@ -691,13 +691,14 @@ export function createApiClient(config: ApiClientConfig) {
     /**
      * Smart Import — classify + preview a CSV without writing (#477). Pass a
      * `destination` to override the classifier (e.g. after a low-confidence pick).
-     * `liftOverrides` applies only to a strength-goal preview (#1169).
+     * `liftOverrides` applies only to a strength-goal preview (#1169). `today` bounds a
+     * lift record's date in Review, as it does at the commit (#1427).
      */
     async previewImport(
       program: string,
       file: File,
       destination?: ImportKind,
-      opts?: Pick<CommitImportOpts, 'overrides' | 'liftOverrides'>,
+      opts?: Pick<CommitImportOpts, 'overrides' | 'liftOverrides' | 'today'>,
     ): Promise<ImportPreviewResponse> {
       const res = await rawFetch(importPath(program, 'preview', destination, opts), {
         method: 'POST',

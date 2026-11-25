@@ -284,6 +284,55 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     });
   });
 
+  // A lifter ahead of UTC is already on the server's tomorrow. Their `today` bounds a row's date,
+  // in Review and at the commit, not the server's day (#1427).
+  describe("the date bound uses the lifter's today (#1427)", () => {
+    const isoDay = (offsetDays: number) => {
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offsetDays))
+        .toISOString()
+        .slice(0, 10);
+    };
+    const tomorrow = isoDay(1);
+    const rowOn = (day: string) =>
+      ['Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes', `5-3-1,1,1,${day},Bench P.,1,180,5,`].join('\n');
+    const PREVIEW = '?mode=preview&destination=lift-records';
+    const COMMIT = '?mode=commit&destination=lift-records';
+
+    it("accepts a row dated the lifter's today in the preview and the commit", async () => {
+      const preview = (await importCsv('tz-ahead', rowOn(tomorrow), PREVIEW, { today: tomorrow })).json();
+      expect(preview.errors).toEqual([]);
+      expect(preview.preview.deltas).toHaveLength(1);
+      expect(preview.preview.deltas[0]).toMatchObject({ kind: 'create' });
+      expect(preview.preview.deltas[0].status).not.toBe('incomplete');
+
+      const commit = await importCsv('tz-ahead', rowOn(tomorrow), COMMIT, { today: tomorrow });
+      expect(commit.statusCode).toBe(200);
+      expect(commit.json().created).toBe(1);
+    });
+
+    it("keeps the server's day as the bound when no today is sent", async () => {
+      const preview = (await importCsv('tz-none', rowOn(tomorrow), PREVIEW)).json();
+      expect(preview.preview.deltas[0].status).toBe('incomplete');
+
+      const commit = await importCsv('tz-none', rowOn(tomorrow), COMMIT);
+      expect(commit.statusCode).toBe(400);
+      expect(commit.json().errors).toEqual([expect.objectContaining({ row: 1, field: 'date', code: 'DATE_INVALID' })]);
+    });
+
+    it("rejects a row dated after the lifter's today, naming the row", async () => {
+      const dayAfter = isoDay(2);
+      const preview = (await importCsv('tz-later', rowOn(dayAfter), PREVIEW, { today: tomorrow })).json();
+      expect(preview.preview.deltas[0].status).toBe('incomplete');
+
+      const commit = await importCsv('tz-later', rowOn(dayAfter), COMMIT, { today: tomorrow });
+      expect(commit.statusCode).toBe(400);
+      const [error] = commit.json().errors;
+      expect(error).toMatchObject({ row: 1, field: 'date', code: 'DATE_INVALID' });
+      expect(error.message).toContain(dayAfter);
+    });
+  });
+
   describe('commit (mode=commit) writes idempotently', () => {
     it('commits lift records and is idempotent on re-run', async () => {
       const first = (
