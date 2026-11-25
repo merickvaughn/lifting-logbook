@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport } from "@src/core";
+import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport, validateLiftImportSoft } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -115,6 +115,25 @@ describe("validateLiftImport", () => {
       const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP, { importDate });
       expect(errors).toHaveLength(0);
       expect(valid).toHaveLength(2);
+    });
+
+    // Review (soft) and the commit (strict) get the same importDate from the lifter's today,
+    // so they must refuse the same rows (#1427).
+    it("rejects the same boundary rows in the soft and the strict validator", () => {
+      const lifterToday = new Date(Date.UTC(2026, 10, 23));
+      const records = [
+        makeRecord({ date: new Date(Date.UTC(1970, 0, 1)) }),
+        makeRecord({ date: new Date(Date.UTC(1970, 0, 2)) }),
+        makeRecord({ date: new Date(Date.UTC(2026, 10, 22)) }),
+        makeRecord({ date: new Date(Date.UTC(2026, 10, 23)) }),
+        makeRecord({ date: new Date(Date.UTC(2026, 10, 24)) }),
+      ];
+      const strictRows = validateLiftImport(records, TEST_SLOT_MAP, { importDate: lifterToday }).errors.map((e) => e.row);
+      const softRows = validateLiftImportSoft(records, TEST_SLOT_MAP, { importDate: lifterToday }).incomplete.map(
+        (r) => r.rowIndex,
+      );
+      expect(strictRows).toEqual([1, 5]);
+      expect(softRows).toEqual(strictRows);
     });
   });
 
