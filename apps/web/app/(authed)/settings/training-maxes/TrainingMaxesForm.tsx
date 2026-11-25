@@ -85,6 +85,13 @@ export default function TrainingMaxesForm({
     return builtIn?.id === lift ? builtIn.name : lift;
   }
 
+  // Stored maxes can mix a lift's spellings (#1135), so two rows can name the same lift. Those
+  // rows add their stored value, so neither they nor their inputs' labels read the same.
+  function rowName(lift: string): string {
+    const name = nameOf(lift);
+    return lifts.some((other) => other !== lift && nameOf(other) === name) ? `${name} (${lift})` : name;
+  }
+
   function handleChange(lift: string, value: string) {
     setRows((prev) => ({
       ...prev,
@@ -172,7 +179,7 @@ export default function TrainingMaxesForm({
           <tbody>
             {lifts.map((lift) => {
               const row = rows[lift];
-              const name = nameOf(lift);
+              const name = rowName(lift);
               return (
                 <tr key={lift} className={row.error ? styles.rowError : undefined}>
                   <td className={styles.liftName} data-label="Lift">{name}</td>

@@ -107,4 +107,20 @@ describe('TrainingMaxesForm row names (#1291)', () => {
       ],
     });
   });
+
+  it('keeps two rows apart when they store two spellings of one lift', () => {
+    const byId = { lift: 'bench-press', weight: 200, unit: 'lbs', dateUpdated: '2026-10-01' } as const;
+    const byName = { lift: 'Bench Press', weight: 190, unit: 'lbs', dateUpdated: '2025-01-01' } as const;
+    render(
+      <TrainingMaxesForm
+        program="5-3-1"
+        lifts={['bench-press', 'Bench Press']}
+        maxes={[byId, byName]}
+        increments={{}}
+      />,
+    );
+
+    expect(screen.getByLabelText('Bench Press (bench-press) training max')).toHaveValue(200);
+    expect(screen.getByLabelText('Bench Press (Bench Press) training max')).toHaveValue(190);
+  });
 });
