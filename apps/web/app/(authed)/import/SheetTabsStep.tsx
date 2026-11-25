@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { GoogleSheetTab, ImportKind, ImportPreviewResponse } from '@lifting-logbook/types';
+import { localToday } from '@/lib/calendarDay';
 import { previewImport } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { ALL_KINDS, KIND_LABEL } from './steps';
@@ -107,7 +108,7 @@ export function SheetTabsStep({
     const key = previewKey(workbookId, programId, name, kind);
     inFlight.current = key;
     setPreviews((prev) => ({ ...prev, [key]: { status: 'loading' } }));
-    previewImport(programId, tabFile(tab), kind)
+    previewImport(programId, tabFile(tab), kind, { today: localToday() })
       .then((res) => setPreviews((prev) => ({ ...prev, [key]: { status: 'ready', res } })))
       .catch((e: unknown) => {
         logClientError('previewImport', e, { programId, source: 'google-sheet' });

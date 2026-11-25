@@ -93,7 +93,7 @@ describe('ImportWizard with a template program (#1115)', () => {
     await user.click(screen.getByRole('button', { name: 'Analyze' }));
     await screen.findByText('What we found');
 
-    expect(mockPreview).toHaveBeenCalledWith('5-3-1', CSV_FILE, undefined);
+    expect(mockPreview).toHaveBeenCalledWith('5-3-1', CSV_FILE, undefined, { today: expect.any(String) });
     expect(screen.queryByText(PROGRAM_FILE_NOTE)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
   });
@@ -192,7 +192,9 @@ describe('ImportWizard with a template program (#1115)', () => {
 
       expect(screen.getByLabelText('Import MYSTERY as')).toHaveValue('lift-records');
       await waitFor(() =>
-        expect(mockPreview).toHaveBeenCalledWith('5-3-1', expect.any(File), 'lift-records'),
+        expect(mockPreview).toHaveBeenCalledWith('5-3-1', expect.any(File), 'lift-records', {
+          today: expect.any(String),
+        }),
       );
       expect(screen.getByRole('button', { name: 'Import 1 tab' })).toBeEnabled();
     });
