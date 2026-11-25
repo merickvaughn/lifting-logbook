@@ -794,7 +794,7 @@ export function ImportWizard({
     setError(null);
     setBusy(true);
     try {
-      const res = cached ?? (await previewImport(programId, source, override));
+      const res = cached ?? (await previewImport(programId, source, override, { today: localToday() }));
       setPreview(res);
       clearPreviewRowState();
       // columnOverrides is keyed by sourceHeader/__req__:<field>, which collides
@@ -925,7 +925,10 @@ export function ImportWizard({
       setError(null);
       setBusy(true);
       try {
-        const res = await previewImport(programId, file, destination, { overrides: columnOverridesRecord });
+        const res = await previewImport(programId, file, destination, {
+          overrides: columnOverridesRecord,
+          today: localToday(),
+        });
         // Keeps what this step is showing: `columnOverrides` is keyed to the file's
         // own headers, and the commit applies it to the original file.
         setPreview((prev) => prev && { ...res, classification: prev.classification, columnMappings: prev.columnMappings });
@@ -1641,10 +1644,13 @@ export function ImportWizard({
   async function enterPreview() {
     if (!programId || !file || !destination) return;
     const request = reviewRequest(file);
+    // The lifter's day bounds a lift record's date, with Assign or without it (#1427).
     const opts: CommitImportOpts | undefined =
       assignActive && assignRes && assignDraft
         ? { ...request.opts, breakdown: buildBreakdown(assignDraft, assignRes), today: localToday() }
-        : request.opts;
+        : destination === 'lift-records'
+          ? { ...request.opts, today: localToday() }
+          : request.opts;
     const startGeneration = previewGeneration.current;
     setCommitErrors(null);
     setError(null);

@@ -267,6 +267,8 @@ export class ImportController {
       // rejects them rather than storing `Number('')`'s 0 that Review never showed (#1253).
       const rows = await this.resolveCommitRows(override, table, repos, excludeKeys, liftOverrides, splitDest, {
         readBlanks: assignEnabled,
+        // The lifter's day bounds a lift record's date, not the server's (#1427).
+        ...(override === 'lift-records' ? { importDate: assignImportDate(fields.get('today')) } : {}),
       });
       return mode === 'commit'
         ? this.commit(program, override, rows, repos, user.id)
@@ -293,7 +295,10 @@ export class ImportController {
     // For lift-records, use soft validation so incomplete/ambiguous rows appear in REVIEW
     if (destination === 'lift-records') {
       return {
-        ...(await this.previewLiftRecords(program, classification, destination, table, columnMappings, repos, assign)),
+        ...(await this.previewLiftRecords(program, classification, destination, table, columnMappings, repos, {
+          assign,
+          importDate: assignImportDate(fields.get('today')),
+        })),
         assignEnabled,
       };
     }
@@ -816,7 +821,7 @@ export class ImportController {
     table: SpreadsheetCell[][],
     columnMappings: ReturnType<typeof fuzzyColumnMapper>,
     repos: RepositoryBundle,
-    assign: boolean,
+    { assign, importDate }: { assign: boolean; importDate: Date },
   ): Promise<ImportPreviewResponse> {
     let parsed: LiftRecord[];
     try {
@@ -843,7 +848,7 @@ export class ImportController {
     // Custom lifts are folded into the slot map fresh per request (#911) so a row whose
     // raw text already matches an existing custom lift's name resolves immediately
     // instead of being flagged ambiguous.
-    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos), { assign });
+    const softResult = validateLiftImportSoft(parsed, await effectiveSlotMapFor(repos), { assign, importDate });
     if (softResult.hardErrors.length) {
       return { classification, destination, columnMappings, preview: null, errors: softResult.hardErrors };
     }
@@ -1015,7 +1020,10 @@ export class ImportController {
     let errors: ImportError[];
     let undated = 0;
     if (destination === 'lift-records') {
-      const result = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos), { assign });
+      const result = validateLiftImport(parsed as LiftRecord[], await effectiveSlotMapFor(repos), {
+        assign,
+        ...(options.importDate ? { importDate: options.importDate } : {}),
+      });
       ({ valid: rawValid, errors } = result);
       undated = result.undated.length;
     } else if (destination === 'training-maxes') {
@@ -1157,7 +1165,7 @@ export class ImportController {
       choices.excludeKeys,
       choices.liftOverrides,
       split,
-      { assign: true },
+      { assign: true, importDate },
     );
     const liftRecords = rows as LiftRecord[];
     const customPrograms = await this.customPrograms(userId);
@@ -1219,7 +1227,7 @@ export class ImportController {
       choices.excludeKeys,
       choices.liftOverrides,
       choices.splitDest,
-      { assign: true },
+      { assign: true, importDate: choices.importDate },
     );
     const customPrograms = await this.customPrograms(userId);
     const programs = [...BUILT_IN_KNOWN_PROGRAMS, ...customPrograms];
