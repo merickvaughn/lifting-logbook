@@ -5394,6 +5394,26 @@ describe('ImportWizard program-spec Map columns (#1401)', () => {
     expect(screen.getByText('Step 5 of 7 · Review')).toBeInTheDocument();
   });
 
+  // #1449's other known-good references: the 2025/2026 workbooks' row and the built-in RPT
+  // fixture (packages/core/tests/fixtures/rpt_program_spec.csv) pass Map columns untouched.
+  it.each([
+    ['the 2025/2026 row', ['Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps', 'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation']],
+    ['rpt_program_spec.csv', ['Week', 'Offset', 'Lift', 'Increment', 'Order', 'Sets', 'Reps', 'AMRAP?', 'Warm-Up %', 'WT Decrement %', 'Activation']],
+  ])('leaves Next enabled at Map columns for %s', async (_name, headers) => {
+    const user = userEvent.setup();
+    mockPreview.mockResolvedValue(specPreview(headers));
+
+    render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+    await user.upload(screen.getByLabelText('CSV file'), specCsv(headers));
+    await user.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(screen.getByText('Program')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Next' })); // Classify → Map columns
+
+    await screen.findByRole('heading', { name: 'Map columns' });
+    expect(screen.queryByText(/Some required fields are not yet mapped/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+
   // The dropdown lists KIND_FIELDS, which had no Weight % entry, so the only drop a lifter
   // could pick was WT Decrement % — and taking it renames the column, making the parser read
   // `1,.95,.9` as a single number and error every row. Weight % has to be offered as itself.
