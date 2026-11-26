@@ -17,7 +17,9 @@
 # a pin, and scripts/check-staging-deployed-image.py checks the run's own images (#1208).
 #
 # Usage: bash scripts/check-served-version.sh <base-url> <expected-sha> [bearer-token]
-# CHECK_SERVED_VERSION_RETRY_DELAY (seconds, default 10) exists for scripts/test_check_served_version.py.
+# CHECK_SERVED_VERSION_ATTEMPTS (default 12) and CHECK_SERVED_VERSION_RETRY_DELAY (seconds,
+# default 10) bound the wait to about 2 minutes. The delay setting exists for
+# scripts/test_check_served_version.py.
 
 set -uo pipefail
 
@@ -29,14 +31,18 @@ fi
 BASE_URL="${1%/}"
 EXPECTED="$2"
 TOKEN="${3:-}"
+ATTEMPTS="${CHECK_SERVED_VERSION_ATTEMPTS:-12}"
 DELAY="${CHECK_SERVED_VERSION_RETRY_DELAY:-10}"
 AUTH=()
 [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 
-# The new revision already serves 100% once `services replace` returns, so this rarely needs a
-# second attempt; the retry only absorbs a transient non-200 right after the traffic switch.
+# Cloud Run can keep routing requests to the previous revision after it reports 100% on the new
+# one: on 2026-11-24 the old revision answered /readyz and /version 10 s after the service
+# reported RoutesReady (#1473). So another commit's SHA is retried for the bounded window above,
+# like an unreadable answer. A service pinned to an old revision (#1042) keeps answering with it
+# for the whole window, and still fails.
 SERVED=""
-for i in $(seq 1 6); do
+for i in $(seq 1 "$ATTEMPTS"); do
   # ${AUTH[@]+...}: an empty array under `set -u` is "unbound" on bash < 4.4.
   BODY=$(curl -s --max-time 10 ${AUTH[@]+"${AUTH[@]}"} "$BASE_URL/version" || true)
   SERVED=$(printf '%s' "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gitSha',''))" 2>/dev/null || true)
@@ -44,14 +50,10 @@ for i in $(seq 1 6); do
     echo "$BASE_URL/version reports gitSha=$SERVED, the commit this run deployed."
     exit 0
   fi
-  if [ -n "$SERVED" ]; then
-    # A parseable answer naming another commit is the failure this probe exists for; retrying
-    # would only delay it.
-    break
-  fi
-  echo "/version attempt $i: no gitSha in the response, retrying in ${DELAY}s..."
+  [ "$i" -lt "$ATTEMPTS" ] || break
+  echo "/version attempt $i of $ATTEMPTS: gitSha='${SERVED:-<none>}', expected $EXPECTED; retrying in ${DELAY}s..."
   sleep "$DELAY"
 done
 
-echo "::error title=Served build mismatch::$BASE_URL/version reports gitSha='${SERVED:-<none>}', expected $EXPECTED. The URL is not answering from the revision this run deployed; check status.traffic (docs/runbooks/deploy-regression-rollback.md)."
+echo "::error title=Served build mismatch::$BASE_URL/version reports gitSha='${SERVED:-<none>}', expected $EXPECTED, after $ATTEMPTS attempts ${DELAY}s apart. The URL is not answering from the revision this run deployed; check status.traffic (docs/runbooks/deploy-regression-rollback.md)."
 exit 1

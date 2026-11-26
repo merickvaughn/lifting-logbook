@@ -6,7 +6,10 @@ reports the commit the run deployed. These tests serve canned /version responses
 ``http.server`` and run the real script against it as a subprocess, covering the branches the
 gate depends on:
   * match -> exit 0;
-  * a readable mismatch -> exit 1 after exactly ONE request (retrying would only delay the failure);
+  * the previous build answering for a few attempts, then this one -> exit 0 (#1473: Cloud Run
+    routed to the old revision 10 s after reporting 100% on the new one);
+  * a mismatch that persists for every attempt (a pinned service, #1042) -> exit 1 naming the
+    served SHA, after exactly CHECK_SERVED_VERSION_ATTEMPTS requests;
   * an unreadable answer (non-JSON, no gitSha) -> retried, then exit 1 naming no served SHA;
   * the bearer token, when given, is sent as an Authorization header, and none is sent otherwise
     (the empty-array expansion under `set -u`);
@@ -33,15 +36,18 @@ OTHER = "0000000000000000000000000000000000000000"
 
 
 class VersionServer:
-    """A localhost /version endpoint returning a fixed body; records each request's path and auth."""
+    """A localhost /version endpoint; records each request's path and auth.
+
+    ``body`` is a fixed response, or a list answered in order with its last entry repeated."""
 
     def __init__(self, body):
         requests = self.requests = []
+        bodies = body if isinstance(body, list) else [body]
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 requests.append((self.path, self.headers.get("Authorization")))
-                data = body.encode("utf-8")
+                data = bodies[min(len(requests), len(bodies)) - 1].encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
@@ -60,8 +66,11 @@ class VersionServer:
         self.httpd.server_close()
 
 
-def run_script(*args):
+def run_script(*args, attempts=None):
     env = dict(os.environ, CHECK_SERVED_VERSION_RETRY_DELAY="0")
+    env.pop("CHECK_SERVED_VERSION_ATTEMPTS", None)
+    if attempts is not None:
+        env["CHECK_SERVED_VERSION_ATTEMPTS"] = attempts
     return subprocess.run(
         [shutil.which("bash") or "bash", SCRIPT, *args],
         capture_output=True, text=True, env=env, timeout=120,
@@ -81,25 +90,40 @@ class CheckServedVersionTest(unittest.TestCase):
         self.assertIn(f"gitSha={SHA}", proc.stdout)
         self.assertEqual([p for p, _ in server.requests], ["/version"])
 
-    def test_mismatch_fails_after_one_request(self):
+    def test_previous_build_then_this_one_passes(self):
+        # The #1473 shape: the old revision keeps answering briefly after the traffic switch.
+        server = self.serve([f'{{"gitSha":"{OTHER}"}}'] * 3 + [f'{{"gitSha":"{SHA}"}}'])
+        proc = run_script(server.url, SHA)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(f"attempt 1 of 12: gitSha='{OTHER}', expected {SHA}", proc.stdout)
+        self.assertEqual(len(server.requests), 4)
+
+    def test_persistent_mismatch_fails_after_all_attempts(self):
+        # The #1042 shape: a pinned service answers with the old build for the whole window.
         server = self.serve(f'{{"gitSha":"{OTHER}"}}')
         proc = run_script(server.url, SHA)
         self.assertEqual(proc.returncode, 1, proc.stdout)
-        self.assertIn(f"reports gitSha='{OTHER}', expected {SHA}", proc.stdout)
-        self.assertEqual(len(server.requests), 1, "a readable mismatch must not be retried")
+        self.assertIn(f"reports gitSha='{OTHER}', expected {SHA}, after 12 attempts", proc.stdout)
+        self.assertEqual(len(server.requests), 12, "the default window is 12 attempts")
+
+    def test_attempts_setting_bounds_the_window(self):
+        server = self.serve(f'{{"gitSha":"{OTHER}"}}')
+        proc = run_script(server.url, SHA, attempts="3")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertEqual(len(server.requests), 3)
 
     def test_unreadable_answer_is_retried_then_fails(self):
         server = self.serve("<html>403 Forbidden</html>")
         proc = run_script(server.url, SHA)
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertIn("reports gitSha='<none>'", proc.stdout)
-        self.assertEqual(len(server.requests), 6, "an unreadable answer is retried 6 times")
+        self.assertEqual(len(server.requests), 12, "an unreadable answer is retried 12 times")
 
     def test_missing_git_sha_field_is_retried_then_fails(self):
         server = self.serve('{"environment":"production"}')
         proc = run_script(server.url, SHA)
         self.assertEqual(proc.returncode, 1, proc.stdout)
-        self.assertEqual(len(server.requests), 6)
+        self.assertEqual(len(server.requests), 12)
 
     def test_bearer_token_sent_when_given(self):
         server = self.serve(f'{{"gitSha":"{SHA}"}}')
