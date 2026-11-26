@@ -169,7 +169,8 @@ export default function StrengthGoalsForm({
       setCurrentBw(w);
       setCurrentBwUnit(preferredUnit);
       setEditingBw(false);
-    } catch {
+    } catch (err) {
+      logClientError('saveBodyWeight', err, { program });
       setBwError('Save failed');
     } finally {
       setSavingBw(false);
@@ -213,7 +214,8 @@ export default function StrengthGoalsForm({
           ? prev.map((g) => (g.lift === goalLift ? saved : g))
           : [...prev, saved],
       );
-    } catch {
+    } catch (err) {
+      logClientError('saveStrengthGoal', err, { program, lift: goalLift });
       updateRow(lift, { error: 'Save failed' });
     } finally {
       updateRows(lifts, () => ({ saving: false }));
@@ -241,7 +243,8 @@ export default function StrengthGoalsForm({
             }
           : { target: '', ratio: '' };
       });
-    } catch {
+    } catch (err) {
+      logClientError('removeStrengthGoal', err, { program, lift: goalLift });
       updateRow(lift, { error: 'Delete failed' });
     } finally {
       updateRows(lifts, () => ({ saving: false }));

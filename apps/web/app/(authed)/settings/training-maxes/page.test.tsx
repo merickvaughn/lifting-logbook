@@ -6,6 +6,7 @@ jest.mock('@/lib/api', () => ({
   fetchTrainingMaxes: jest.fn().mockResolvedValue([]),
   fetchTrainingMaxHistory: jest.fn().mockResolvedValue({ entries: [] }),
   fetchTrainingMaxImportBatches: jest.fn(),
+  fetchCustomLifts: jest.fn().mockResolvedValue([]),
 }));
 jest.mock('@/lib/active-program', () => ({
   getActiveProgram: jest.fn().mockResolvedValue('5-3-1'),
@@ -27,7 +28,7 @@ jest.mock('./TrainingMaxImports', () => ({
   ),
 }));
 
-import { fetchTrainingMaxImportBatches } from '@/lib/api';
+import { fetchCustomLifts, fetchTrainingMaxImportBatches } from '@/lib/api';
 import MissingTrainingMaxes from './MissingTrainingMaxes';
 import TrainingMaxesForm from './TrainingMaxesForm';
 import MaxHistory from './MaxHistory';
@@ -82,5 +83,32 @@ describe('TrainingMaxesPage — training-max imports (#1405)', () => {
       expect(after[i]).toEqual(expect.any(String));
       expect(after[i]).not.toBe(key);
     });
+  });
+});
+
+describe('TrainingMaxesPage — custom lift names (#1291)', () => {
+  const mockedFetchCustomLifts = fetchCustomLifts as unknown as jest.Mock;
+  const formProps = async () => {
+    const page = (await TrainingMaxesPage()) as ReactElement<{ children: ReactElement[] }>;
+    return (page.props.children.find((c) => c.type === TrainingMaxesForm) as ReactElement<{ customLifts: unknown }>)
+      .props;
+  };
+  beforeEach(() => mockedFetchImports.mockReset().mockResolvedValue([]));
+
+  it("passes the lifter's custom lifts to the form, which names their rows", async () => {
+    const lift = { id: 'c-1', name: 'Zercher Squat' };
+    mockedFetchCustomLifts.mockResolvedValueOnce([lift]);
+    expect((await formProps()).customLifts).toEqual([lift]);
+  });
+
+  it("still renders the form, without custom lifts, when they can't be read", async () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockedFetchCustomLifts.mockRejectedValueOnce(new Error('API down'));
+    expect((await formProps()).customLifts).toEqual([]);
+    expect(error).toHaveBeenCalledWith(
+      '[TrainingMaxesPage] custom lifts fetch failed, showing custom lifts by id',
+      expect.any(Error),
+    );
+    error.mockRestore();
   });
 });
