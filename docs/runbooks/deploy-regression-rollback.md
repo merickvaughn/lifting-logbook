@@ -193,7 +193,9 @@ Then:
 - **The probes reached an older revision, and `status.traffic` names the new one.** The routing
   lag lasted longer than the window. Re-run the failed job once traffic has caught up
   (`gh run rerun <run-id> --failed`), and file an issue with the timings, since a lag this long
-  would need a longer window.
+  would need a longer window. In production the re-run redeploys and waits for the
+  `environment: production` approval again, under the same conditions as the first approval
+  (`CLAUDE.md` → Waiting on a deploy).
 - **`status.traffic` names an older revision**, without `latestRevision: true`: traffic is
   pinned. See the previous section.
 - **The probes reached the new revision, but its image's `GIT_SHA` isn't this run's commit.**
