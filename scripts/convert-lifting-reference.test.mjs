@@ -44,7 +44,9 @@ test('parseRepCell never reads a weight, prose or a decimal as reps', () => {
   assert.deepEqual(parseRepCell('185x5F'), { weight: 185, reps: 5, note: '185x5F' });
   assert.deepEqual(parseRepCell('135 x 5 (F)'), { weight: 135, reps: 5, note: '135 x 5 (F)' });
   assert.deepEqual(parseRepCell('135 x 5+'), { weight: 135, reps: 5, note: 'AMRAP' });
-  for (const prose of ['135 lbs', '3 sets, felt heavy', '8.5', '5 F']) assert.deepEqual(parseRepCell(prose), { unparsed: prose });
+  for (const prose of ['135 lbs', '135lbs', '45s', '8-10', '3 sets, felt heavy', '8.5', '5 F', '3x10, 2x8', '5x5 felt easy']) {
+    assert.deepEqual(parseRepCell(prose), { unparsed: prose });
+  }
 });
 
 test('parseWeight reads numbers and BW (n), and nothing else', () => {
@@ -88,7 +90,21 @@ test('layout 1: the plan-column count carries forward when warm-ups cannot settl
   assert.equal(inferPlanColumns(next), null);
   const { records, report } = convert({ 20200509: early, 20200510: next });
   assert.deepEqual(sets(records, 'Wrist Roller'), [[1, 45, 3, ''], [2, 45, 3, '']]);
-  assert.deepEqual(report.tabs.map((t) => t.k), [1, '1 (carried)']);
+  assert.deepEqual(report.tabs.map((t) => [t.k, t.carried]), [[1, false], [1, true]]);
+});
+
+test('layout 1: a carried count is refused when the plan cells show another (light lifts, blank warm-ups)', () => {
+  // k = 2 settled here; the next tab is k = 1 (`3x15` plans), which the warm-up weights alone
+  // can't rule out for light and bodyweight lifts.
+  const before = [L1_HEADER, ['Curl', '3', '10', '35', '45', '55', '65', '75', '70', '10']];
+  const next = [
+    L1_HEADER,
+    ['Band Pull-apart', '3x15', '', '', '', '', '', '10', '15', '15', '15'],
+    ['Pull-up', '3x8', '', '', '', '', '', '', '8', '8', '7'],
+  ];
+  const { records, report } = convert({ 20200601: before, 20200602: next });
+  assert.equal(records.filter((r) => r.date === '6/2/2020').length, 0);
+  assert.equal(report.unrecognized[0].reason, "layout 1, the 2 plan columns carried from the tab before don't fit");
 });
 
 test('layout 1: a carried plan-column count that does not fit the tab is reported, not used', () => {
@@ -126,21 +142,39 @@ test('layout 1: a complex becomes rounds × components; one without rounds is re
   assert.deepEqual(report.skipped, [{ tab: '20201007', lift: 'Complex 1A', reason: 'complex: no completed rounds logged' }]);
 });
 
-test('layout 1: with two plan cells a component takes its reps, not its sets; a bare name row ends the run', () => {
+test('layout 1: with two plan cells a component takes its reps, not its sets', () => {
   // k = 2 (sets, reps), settled by the warm-ups of the tab before.
   const before = [L1_HEADER, ['Curl', '3', '10', '35', '45', '55', '65', '75', '70', '10']];
   // The header text is the same whatever k is; only the data rows lose a plan column.
   const header = L1_HEADER.slice(0, 10).concat('Sets Completed');
+  const done = [header, ['Complex 1A', '4', '', '', '', '', '', '', '65', '2'], ['Power Clean', '3', '5']];
+  const { records } = convert({ 20201005: before, 20201006: done });
+  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A'], [2, 65, 5, 'Complex 1A']]);
+});
+
+test('layout 1: a complex with any component lacking reps is skipped whole, never part-imported', () => {
+  const before = [L1_HEADER, ['Curl', '3', '10', '35', '45', '55', '65', '75', '70', '10']];
+  const header = L1_HEADER.slice(0, 10).concat('Sets Completed');
   const done = [
     header,
-    ['Complex 1A', '4', '', '', '', '', '', '', '65', '2'],
-    ['Power Clean', '3', '5'],
-    ['Pull-up'],
+    ['Complex 1A', '4', '', '', '', '', '', '', '65', '3'],
+    ['Power Clean', '', '5'],
+    ['Front Squat'],
+    ['Push Press', '', '5'],
   ];
   const { records, report } = convert({ 20201005: before, 20201006: done });
-  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A'], [2, 65, 5, 'Complex 1A']]);
-  // Pull-up is a lift with nothing logged, not a component.
-  assert.deepEqual(report.skipped, [{ tab: '20201006', lift: 'Pull-up', reason: 'no logged reps' }]);
+  assert.equal(records.filter((r) => r.date === '10/6/2020').length, 0);
+  assert.deepEqual(report.skipped, [
+    { tab: '20201006', lift: 'Complex 1A', reason: 'complex: 3 rounds logged, but the sheet has no planned reps for Front Squat' },
+  ]);
+});
+
+test('a lift whose every logged cell is unread is listed as skipped, as well as its cells', () => {
+  const rows = [L1_HEADER, ['Squat', '3', '5', '5', '100', '130', '160', '190', '220', '200', 'lots', 'more']];
+  const { records, report } = convert({ 20200601: rows });
+  assert.equal(records.length, 0);
+  assert.deepEqual(report.skipped.map((s) => s.reason), ['no readable reps (see the cells no rule covers); warm-ups left out too']);
+  assert.deepEqual(report.unparsed.map((u) => u.cell), ['lots', 'more']);
 });
 
 // Layout 2 rows in their fixed order below the names row.
@@ -201,6 +235,23 @@ test('layout 2: column A shifted a row down from the data reads the same as an a
   assert.deepEqual(b, a);
 });
 
+test('a copy of a date that could not be read is listed even though the other copy was converted', () => {
+  const { records, report } = convertWorkbooks([
+    { name: '2020.json', tabs: { 20201208: [['Exercise', 'Deadlift'], ...l2Body([DL])] } },
+    { name: '2021.json', tabs: { 20201208: [['Something', 'else']] } },
+  ]);
+  assert.equal(records.length, 7);
+  assert.deepEqual(report.unrecognized, [
+    { tab: '20201208', sources: ['2021.json'], reason: 'no layout matches; the copy in 2020.json was converted' },
+  ]);
+});
+
+test('a lift that two tabs put on one date is listed', () => {
+  const tab = (day) => [['Day', day], ['Exercise', 'Deadlift'], ...l2Body([DL])];
+  const { report } = convert({ 20210222: tab('2/23'), 20210223: tab('2/23') });
+  assert.deepEqual(report.overlaps, [{ date: '2/23/2021', lift: 'Deadlift', tabs: ['20210222', '20210223'] }]);
+});
+
 test('a date in two workbooks is converted once, and reported', () => {
   const tab = [['Exercise', 'Deadlift'], ...l2Body([DL])];
   const { records, report } = convertWorkbooks([
@@ -225,12 +276,15 @@ test('layout 2: a complex with no rounds is reported, and its components are not
   ];
   const { records, report } = convert({ 20201129: rows });
   assert.deepEqual(sets(records, 'Cable Crunch'), [[1, 30, 10, 'warm-up'], [2, 55, 10, ''], [3, 55, 11, '']]);
-  assert.deepEqual(report.skipped.map((s) => s.lift), ['Complex 1A']);
+  assert.deepEqual(report.skipped, [{ tab: '20201129', lift: 'Complex 1A', reason: 'complex: no completed rounds logged (components: Power Clean)' }]);
   // With rounds logged it is still reported, since the sheet has no reps per component.
   rows[11] = ['Set 2', '11', '3'];
   assert.deepEqual(convert({ 20201129: rows }).report.skipped, [
-    { tab: '20201129', lift: 'Complex 1A', reason: 'complex: 3 rounds logged, but the sheet has no planned reps for each component' },
+    { tab: '20201129', lift: 'Complex 1A', reason: 'complex: 3 rounds logged, but the sheet has no planned reps for its components (Power Clean)' },
   ]);
+  // A note under a component column doesn't turn it into a lift.
+  const noted = [...rows, ['Notes', '', '', 'grip slipped']];
+  assert.deepEqual(convert({ 20201129: noted }).report.skipped.map((s) => s.lift), ['Complex 1A']);
 });
 
 test('layout 3 (5/3/1): warm-ups, work sets, BBB, accessories and stray rows', () => {
@@ -258,8 +312,11 @@ test('layout 3 (5/3/1): warm-ups, work sets, BBB, accessories and stray rows', (
   assert.deepEqual(sets(records, 'Cable Rows'), [[1, 55, 12, ''], [2, 55, 12, '']]);
   assert.deepEqual(sets(records, 'Chin-up'), [[1, 180, 10, '']]);
   assert.equal(records[0].program, '5/3/1 BBB');
-  assert.deepEqual(report.unparsed, [{ tab: '20211123', lift: 'Chin-up', cell: 'inj.' }]);
-  assert.deepEqual(report.notes.map((n) => n.text), ['Felt good.', 'unread row: 135 | 5']);
+  assert.deepEqual(report.unparsed, [
+    { tab: '20211123', lift: 'Chin-up', cell: 'inj.' },
+    { tab: '20211123', lift: '(row after the Set rows)', cell: '135 | 5' },
+  ]);
+  assert.deepEqual(report.notes.map((n) => n.text), ['Felt good.']);
 });
 
 test('layout 3: a deload of warm-ups only logs nothing and reports its lifts', () => {
@@ -338,6 +395,7 @@ test('the CLI writes CSV and a report, replacing parts from an earlier run', (t)
   const run = spawnSync(process.execPath, [script, dump, '--out', join(dir, 'out')], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.equal(existsSync(join(dir, 'out', 'lifting-reference-2.csv')), false);
+  assert.match(run.stdout, /removed lifting-reference-2\.csv from an earlier run/);
   const csv = readFileSync(join(dir, 'out', 'lifting-reference.csv'), 'utf8');
   assert.equal(csv.trim().split('\n').length, 8); // header + 7 sets
   assert.match(readFileSync(join(dir, 'out', 'report.md'), 'utf8'), /7 sets from 1 session tabs/);
