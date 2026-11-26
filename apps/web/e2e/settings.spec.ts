@@ -75,9 +75,10 @@ test('training maxes offers setup for a lift with logged sets and no max', async
   await section.getByRole('button', { name: 'Set up' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Romanian Deadlift.' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toHaveCount(0);
-  // The table below now lists the lift with its new max, saved under the stored id (#1290). The
-  // table still labels its rows by that id, as it does every max; #1291 tracks naming them.
-  await expect(page.getByLabel('romanian-deadlift training max', { exact: true })).toHaveValue('100');
+  // The table below now lists the lift with its new max, saved under the stored id (#1290) and
+  // named by the lift's name, as the prompt named it (#1291).
+  await expect(page.getByRole('cell', { name: 'Romanian Deadlift', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Romanian Deadlift training max', { exact: true })).toHaveValue('100');
 });
 
 // #1405: a training-maxes import can be undone once the wizard is gone, and the form then shows
@@ -86,7 +87,7 @@ test('training maxes lists an import and undoes it, showing the restored max', a
   await request.get(`${MOCK_API}/__reset?withTrainingMaxImport=true`);
   await page.goto('/settings/training-maxes');
 
-  const bench = page.getByLabel('bench-press training max', { exact: true });
+  const bench = page.getByLabel('Bench Press training max', { exact: true });
   await expect(bench).toHaveValue('210');
   const section = page.getByRole('region', { name: 'Imported training maxes' });
   await section.getByRole('button', { name: 'Undo the import of 2026-11-21 18:04 UTC' }).click();

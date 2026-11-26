@@ -1,4 +1,5 @@
 import {
+  fetchCustomLifts,
   fetchProgramSpec,
   fetchTrainingMaxes,
   fetchTrainingMaxHistory,
@@ -18,7 +19,7 @@ import TrainingMaxImports from './TrainingMaxImports';
 export default async function TrainingMaxesPage() {
   const program = await getActiveProgram();
   let importsFailed = false;
-  const [maxes, history, specs, settings, unit, imports] = await Promise.all([
+  const [maxes, history, specs, settings, unit, imports, customLifts] = await Promise.all([
     fetchTrainingMaxes(program),
     fetchTrainingMaxHistory(program),
     fetchProgramSpec(program),
@@ -30,6 +31,13 @@ export default async function TrainingMaxesPage() {
     fetchTrainingMaxImportBatches(program).catch((err: unknown): TrainingMaxImportBatchSummary[] => {
       console.error('[TrainingMaxesPage] training-max imports fetch failed, showing no Undo', err);
       importsFailed = true;
+      return [];
+    }),
+    // Custom lifts only name a custom lift's row, so the page still renders, with stored ids for
+    // those names, when they can't be read (#1291).
+    // fallback-covered-by: apps/web/app/(authed)/settings/training-maxes/page.test.tsx
+    fetchCustomLifts().catch((err: unknown) => {
+      console.error('[TrainingMaxesPage] custom lifts fetch failed, showing custom lifts by id', err);
       return [];
     }),
   ]);
@@ -52,6 +60,7 @@ export default async function TrainingMaxesPage() {
         program={program}
         lifts={lifts}
         maxes={maxes}
+        customLifts={customLifts}
         increments={increments}
         unit={unit}
       />
