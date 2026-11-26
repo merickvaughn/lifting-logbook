@@ -64,6 +64,13 @@ Repository automation scripts. Grouped by lifecycle.
 | [`observability/tempo-setup.test.mjs`](observability/tempo-setup.test.mjs) | `node --test` coverage for `tempo-setup.sh`: one managed block on a first run, replacement rather than duplication on re-run, unrelated `~/.bashrc` content (including the sibling `mimir-query-env` block) surviving the rewrite, the written-if-absent backup anchor, `%q` round-tripping of values with shell metacharacters, a refusal saving nothing, the sourced-export path, and a failure while sourced returning non-zero without killing the calling shell. Runs the real script against a sandboxed `HOME`, asserting the sandbox took effect before anything else. Runs in CI (`ci.yml`) ([#949](https://github.com/merickvaughn/lifting-logbook/issues/949)). |
 | [`observability/tempo-query.sh`](observability/tempo-query.sh) | **Read-only** TraceQL query helper (GET-only): `search` / `trace` / `tags` / `tag-values` subcommands so span-tag validations run autonomously instead of via Grafana Explore. Sources `tempo-query-env.sh`, formats via `format-tempo-result.js`; needs `curl` + `node` and a `traces:read`-scoped token ([#829](https://github.com/merickvaughn/lifting-logbook/issues/829)). |
 
+## Data conversion (one-off)
+
+| Script | Purpose |
+|---|---|
+| [`convert-lifting-reference.mjs`](convert-lifting-reference.mjs) | Converts the 2020–2021 `Lifting_Reference` Google Sheets (one tab per session, `YYYYMMDD`, in a row-per-lift, column-per-lift or 5/3/1 layout) into lift-record CSV for the import wizard. Input is one JSON dump per workbook, `{ "<tab>": string[][] }`, of each tab's formatted values (the shape the Sheets API's `values.get` returns). Run `node scripts/convert-lifting-reference.mjs <dump.json>... --out <dir>`; it writes one `lifting-reference.csv`, split into parts only past the 5000-row import limit, so the Assign step sees every session at once, and `report.md`, which lists every skipped lift, unread cell, unread row and lift name. How each notation is read (`7+`, `135 x 9`, `4-I`, `BW (180)`, complexes, warm-ups) is in the file's header comment. Keep the dumps and output out of git. Not run in CI ([#1478](https://github.com/merickvaughn/lifting-logbook/issues/1478)). |
+| [`convert-lifting-reference.test.mjs`](convert-lifting-reference.test.mjs) | `node --test` coverage for `convert-lifting-reference.mjs` on synthetic tabs of each layout: notation parsing, the plan-column count carried between tabs, column A shifted off its data, duplicate dates across workbooks, complexes, 5/3/1 Boring But Big and deloads, and the CSV split. Run it with `node --test scripts/convert-lifting-reference.test.mjs`. |
+
 ## Verification / testing
 
 | Script | Purpose |
