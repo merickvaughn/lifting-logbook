@@ -271,6 +271,22 @@ describe('POST /api/client-errors', () => {
       expect(attributes()['client.origin.check']).toBe('same-origin');
     });
 
+    it('records a beacon from the custom domain when the allowlist holds it alongside the run.app URL (#1438)', async () => {
+      process.env.CLIENT_ERROR_ALLOWED_ORIGINS =
+        'https://lifting-logbook-prod-web-abc.a.run.app,https://liftinglogbook.com';
+      process.env.CLIENT_ERROR_DROP_CROSS_ORIGIN = 'true';
+
+      await POST(
+        post(
+          { operation: 'skipWorkout', message: 'boom' },
+          { origin: 'https://liftinglogbook.com', host: 'lifting-logbook-prod-web-abc.a.run.app' },
+        ),
+      );
+
+      expect(startSpan).toHaveBeenCalledTimes(1);
+      expect(attributes()['client.origin.check']).toBe('same-origin');
+    });
+
     it('never drops a no-Origin request even under enforcement (scripted abuse belongs to the infra rate-limit)', async () => {
       process.env.CLIENT_ERROR_ALLOWED_ORIGINS = 'https://app.example.com';
       process.env.CLIENT_ERROR_DROP_CROSS_ORIGIN = 'true';

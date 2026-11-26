@@ -85,6 +85,13 @@ inputs:
       confirms legit beacons tag same-origin (#809).
     required: false
     default: "false"
+  client_error_extra_origins:
+    description: >-
+      Comma-separated extra origins appended to CLIENT_ERROR_ALLOWED_ORIGINS when
+      client_error_guard is 'true', for a custom domain that browsers use instead of the Cloud Run
+      URL (#1438).
+    required: false
+    default: ""
   ingress_env:
     description: >-
       Newline-separated KEY=VALUE pairs set on the ingress container on every deploy, such as a
@@ -179,6 +186,7 @@ runs:
       shell: bash
       env:
         INGRESS_ENV_INPUT: ${{ inputs.ingress_env }}
+        CLIENT_ERROR_EXTRA_ORIGINS: ${{ inputs.client_error_extra_origins }}
         INGRESS_SECRET_ENV: ${{ inputs.ingress_secret_env }}
       run: |
         source infra/observability/grafana-endpoints.env
@@ -201,9 +209,11 @@ runs:
           SELF_URL=$(gcloud run services describe "${{ inputs.service }}" \
             --region="${{ inputs.region }}" --project="$PROJECT" --format='value(status.url)')
           [ -n "$SELF_URL" ] || { echo "ERROR: could not resolve ${{ inputs.service }} status.url for CLIENT_ERROR_ALLOWED_ORIGINS (#809)"; exit 1; }
+          ALLOWED_ORIGINS="$SELF_URL"
+          [ -z "$CLIENT_ERROR_EXTRA_ORIGINS" ] || ALLOWED_ORIGINS="${SELF_URL},${CLIENT_ERROR_EXTRA_ORIGINS}"
           INGRESS_EXTRA_ENV=$(printf 'CLIENT_ERROR_ALLOWED_ORIGINS=%s\nCLIENT_ERROR_DROP_CROSS_ORIGIN=%s\n' \
-            "$SELF_URL" "${{ inputs.client_error_drop_cross_origin }}")
-          echo "Same-origin guard (#809): allowlist=${SELF_URL} drop=${{ inputs.client_error_drop_cross_origin }}"
+            "$ALLOWED_ORIGINS" "${{ inputs.client_error_drop_cross_origin }}")
+          echo "Same-origin guard (#809): allowlist=${ALLOWED_ORIGINS} drop=${{ inputs.client_error_drop_cross_origin }}"
         fi
         # The caller's own env (#1295), read from the step env rather than spliced into the script.
         if [ -n "$INGRESS_ENV_INPUT" ]; then
