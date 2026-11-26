@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { CustomLiftResponse, StrengthGoalResponse, TrainingMaxResponse } from '@lifting-logbook/types';
 import { logClientError } from '@/lib/log-client-error';
 import StrengthGoalsForm from './StrengthGoalsForm';
-import { removeStrengthGoal } from './actions';
+import { removeStrengthGoal, saveBodyWeight, saveStrengthGoal } from './actions';
 
 jest.mock('./actions', () => ({
   saveStrengthGoal: jest.fn(),
@@ -203,5 +203,56 @@ describe('StrengthGoalsForm — goals with no card', () => {
     );
     expect(screen.getByText('Squat (custom)')).toBeInTheDocument();
     expect(screen.getByLabelText('Body weight ratio for Squat (custom)')).toBeInTheDocument();
+  });
+});
+
+// #1321: each card and body-weight write reports its failure, not only the on-screen message.
+describe('StrengthGoalsForm — write failures are reported', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  function renderForm(goals: StrengthGoalResponse[] = []) {
+    render(
+      <StrengthGoalsForm
+        program="5-3-1"
+        trainingMaxes={[SQUAT_TM]}
+        goals={goals}
+        bodyWeight={null}
+        preferredUnit="lbs"
+        customLifts={[]}
+      />,
+    );
+  }
+
+  it('reports a failed body weight save', async () => {
+    const user = userEvent.setup();
+    const failure = new Error('API 500');
+    (saveBodyWeight as jest.Mock).mockRejectedValue(failure);
+    renderForm();
+    await user.click(screen.getByRole('button', { name: 'Record new body weight' }));
+    await user.type(screen.getByLabelText('Body weight'), '180');
+    await user.click(screen.getByRole('button', { name: '✓' }));
+    expect(await screen.findByText('Save failed')).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledWith('saveBodyWeight', failure, { program: '5-3-1' });
+  });
+
+  it('reports a failed goal save', async () => {
+    const user = userEvent.setup();
+    const failure = new Error('API 500');
+    (saveStrengthGoal as jest.Mock).mockRejectedValue(failure);
+    renderForm();
+    await user.type(screen.getByLabelText('Body weight ratio for Back Squat'), '1.5');
+    await user.click(screen.getByRole('button', { name: '✓ Save' }));
+    expect(await screen.findByText('Save failed')).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledWith('saveStrengthGoal', failure, { program: '5-3-1', lift: 'Back Squat' });
+  });
+
+  it('reports a failed goal delete', async () => {
+    const user = userEvent.setup();
+    const failure = new Error('API 500');
+    (removeStrengthGoal as jest.Mock).mockRejectedValue(failure);
+    renderForm([{ lift: 'Back Squat', goalType: 'absolute', target: 300, unit: 'lbs', updatedAt: '2026-06-01' }]);
+    await user.click(screen.getByRole('button', { name: '✕ Remove' }));
+    expect(await screen.findByText('Delete failed')).toBeInTheDocument();
+    expect(logClientError).toHaveBeenCalledWith('removeStrengthGoal', failure, { program: '5-3-1', lift: 'Back Squat' });
   });
 });
