@@ -24,7 +24,8 @@ module.exports = [
   ...tsPlugin.configs['flat/recommended'],
   // Allow underscore-prefixed names as the conventional "intentionally unused" marker.
   {
-    files: ['**/*.ts', '**/*.tsx', '**/*.mts', '**/*.cts'],
+    // .mjs too: apps/web/e2e/mock-api.mjs omits fields by rest-destructuring into _-prefixed names (#1459).
+    files: ['**/*.ts', '**/*.tsx', '**/*.mts', '**/*.cts', '**/*.mjs'],
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
@@ -37,7 +38,9 @@ module.exports = [
   // See docs/standards/fetch-cache-semantics.md.
   {
     files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx'],
-    ignores: ['**/*.spec.ts', '**/*.test.ts', '**/*.spec.tsx', '**/*.test.tsx'],
+    // e2e/ is the Playwright harness, not app code: it runs in Node outside Next.js, and its
+    // fetch() calls go to the local mock API, never through Cloud Run IAM (#1459).
+    ignores: ['**/*.spec.ts', '**/*.test.ts', '**/*.spec.tsx', '**/*.test.tsx', 'apps/web/e2e/**'],
     plugins: {
       'lifting-logbook': localRules,
     },
