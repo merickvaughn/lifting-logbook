@@ -276,8 +276,10 @@ function parseRowPerLift(title, rows, date, k) {
       const components = [];
       const plannedReps = (row) => row.slice(1, k + 1).map(parseWeight).filter((v) => v !== null).at(-1) ?? null;
       let j = i + 1;
-      // The run ends at the Notes row, and (k > 1) at a row with Sets filled: an unlogged lift.
-      const isComponent = (row) => row.length <= k + 1 && clean(row[0]) && clean(row[0]) !== 'Notes' && (k === 1 || !clean(row[1]));
+      // The run ends at the Notes row and at an unlogged lift: one with Sets filled (k > 1) or a
+      // `3x10` plan (k = 1), where a component has only its reps.
+      const isLiftPlan = (row) => (k === 1 ? /^\d+\s*[x×]\s*\d+$/i.test(clean(row[1])) : clean(row[1]) !== '');
+      const isComponent = (row) => row.length <= k + 1 && clean(row[0]) && clean(row[0]) !== 'Notes' && !isLiftPlan(row);
       for (; j < rows.length && isComponent(rows[j]); j++) {
         components.push({ name: clean(rows[j][0]), reps: plannedReps(rows[j]) });
       }
@@ -360,20 +362,15 @@ function parse531(title, rows, date) {
   const warmupAt = rows.findIndex((r) => clean(r[0]) === 'Warm-up');
   const workAt = rows.findIndex((r) => clean(r[0]) === 'Work Sets');
   const setRows = [];
-  let bbbWeight = null;
-  let bbbDone = null;
-  const bbbRows = [];
+  const bbbWeightRows = [];
+  const bbbDoneRows = [];
   for (let r = 0; r < rows.length; r++) {
     const l = label(r);
     if (/^Set \d+$/.test(l)) setRows.push(r);
-    else if (/^5 [×x] 10$/.test(l)) {
-      bbbWeight = parseWeight(rows[r][1]);
-      bbbRows.push(r);
-    } else if (/^Sets 4 - 8$/.test(l)) {
-      bbbDone = clean(rows[r][1]);
-      bbbRows.push(r);
-    }
+    else if (/^5 [×x] 10$/.test(l)) bbbWeightRows.push(r);
+    else if (/^Sets 4 - 8$/.test(l)) bbbDoneRows.push(r);
   }
+  const bbbRows = [...bbbWeightRows, ...bbbDoneRows];
   const notesAt = rows.findIndex((r) => clean(r[0]) === 'Notes');
 
   // Main lift: warm-ups and work sets are `reps, weight` rows; logged reps are in the Set rows.
@@ -388,10 +385,23 @@ function parse531(title, rows, date) {
   setRows.slice(workRows.length).forEach((r) => {
     if (clean(rows[r][1])) s.unparsed(main.name, `${label(r)}: ${clean(rows[r][1])} (no work set for it)`);
   });
-  if (bbbWeight !== null && /^ok$/i.test(bbbDone ?? '')) {
-    for (let i = 0; i < 5; i++) main.sets.push({ weight: bbbWeight, reps: 10, notes: 'BBB' });
-  } else if (bbbWeight !== null) {
-    s.unparsed(main.name, `5 × 10 at ${bbbWeight}, Sets 4 - 8 = "${bbbDone ?? ''}"`);
+  // Boring But Big: one `5 × 10, <weight>` row and one `Sets 4 - 8, OK` row give 5 × 10 at that
+  // weight. Anything else logged in those rows (no weight, two pairs, cells past column B) is
+  // reported, not guessed at.
+  const rowText = (r) => rows[r].map(clean).join(' | ');
+  const logged = (cell) => !/^(n\/a|-)?$/i.test(clean(cell));
+  if (bbbWeightRows.length > 1 || bbbDoneRows.length > 1) {
+    for (const r of bbbRows) s.unparsed(main.name, `${rowText(r)} (more than one Boring But Big row)`);
+  } else {
+    const weightCell = bbbWeightRows.length ? clean(rows[bbbWeightRows[0]][1]) : '';
+    const done = bbbDoneRows.length ? clean(rows[bbbDoneRows[0]][1]) : '';
+    const bbbWeight = parseWeight(weightCell);
+    if (bbbWeight !== null && /^ok$/i.test(done)) {
+      for (let i = 0; i < 5; i++) main.sets.push({ weight: bbbWeight, reps: 10, notes: 'BBB' });
+    } else if (logged(weightCell) || logged(done)) {
+      s.unparsed(main.name, `5 × 10 at "${weightCell}", Sets 4 - 8 = "${done}"`);
+    }
+    for (const r of bbbRows) if (rows[r].slice(2).some(logged)) s.unparsed('(Boring But Big row)', rowText(r));
   }
   for (const w of warmups) {
     const reps = parseWeight(w[0]);

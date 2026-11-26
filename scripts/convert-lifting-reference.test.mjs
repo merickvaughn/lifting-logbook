@@ -169,12 +169,14 @@ test('layout 1: a complex just before Notes stops at the Notes row', () => {
     ['Curl', '3x10', '35', '45', '55', '65', '75', '70', '10'],
     ['Complex A', '', '', '', '', '', '', '65', '3'],
     ['Power Clean', '5'],
+    // With one plan column an unlogged lift has a `3x10` plan; a component has only its reps.
+    ['Pull-up', '3x10'],
     ['Notes', 'felt good'],
     ['second note line'],
   ];
   const { records, report } = convert({ 20201006: done });
   assert.equal(sets(records, 'Power Clean').length, 3);
-  assert.deepEqual(report.skipped, []);
+  assert.deepEqual(report.skipped, [{ tab: '20201006', lift: 'Pull-up', reason: 'no logged reps' }]);
   assert.deepEqual(report.notes.map((n) => n.text), ['felt good', 'second note line']);
 });
 
@@ -343,6 +345,27 @@ test('layout 3 (5/3/1): warm-ups, work sets, BBB, accessories and stray rows', (
     { tab: '20211123', lift: '(row after the Set rows)', cell: '135 | 5' },
   ]);
   assert.deepEqual(report.notes.map((n) => n.text), ['Felt good.']);
+});
+
+test('layout 3: Boring But Big rows that are not one weight and one OK are reported', () => {
+  const tab = (...bbb) => [
+    ['Program', '5/3/1 BBB'], ['Cycle #', '1'], ['Main Lift', 'Squat'], ['Exercise', '', 'Curl'],
+    ['Work Sets'], ['5', '200', '30'], ...bbb, ['Set 1', '5', '10'],
+  ];
+  const unread = (...bbb) => convert({ 20211101: tab(...bbb) }).report.unparsed.map((u) => [u.lift, u.cell]);
+  const bbbSets = (...bbb) => sets(convert({ 20211101: tab(...bbb) }).records, 'Squat').filter((s) => s[3] === 'BBB').length;
+  assert.deepEqual(unread(['5 × 10', ''], ['Sets 4 - 8', 'ok']), [['Squat', '5 × 10 at "", Sets 4 - 8 = "ok"']]);
+  assert.deepEqual(unread(['5 × 10', 'BW'], ['Sets 4 - 8', 'ok']), [['Squat', '5 × 10 at "BW", Sets 4 - 8 = "ok"']]);
+  assert.deepEqual(unread(['Sets 4 - 8', 'ok']), [['Squat', '5 × 10 at "", Sets 4 - 8 = "ok"']]);
+  // A plain 5/3/1 tab with N/A in both rows logged nothing.
+  assert.deepEqual(unread(['5 × 10', 'N/A', 'N/A'], ['Sets 4 - 8', 'N/A', '-']), []);
+  // Cells past column B are reported; the BBB sets still import.
+  assert.equal(bbbSets(['5 × 10', '135', '12'], ['Sets 4 - 8', 'ok']), 5);
+  assert.deepEqual(unread(['5 × 10', '135', '12'], ['Sets 4 - 8', 'ok']), [['(Boring But Big row)', '5 × 10 | 135 | 12']]);
+  // Two pairs: none imported, all four rows reported.
+  const two = [['5 × 10', '135'], ['Sets 4 - 8', 'ok'], ['5 × 10', '95'], ['Sets 4 - 8', 'no']];
+  assert.equal(bbbSets(...two), 0);
+  assert.equal(unread(...two).length, 4);
 });
 
 test('layout 3: a deload of warm-ups only logs nothing and reports its lifts', () => {
