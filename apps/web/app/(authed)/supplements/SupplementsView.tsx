@@ -134,6 +134,9 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
   // The bulk bar's button that opened a dialog, and the Edit stack/Done toggle, for focus when the bar goes.
   const bulkOpener = useRef<HTMLElement | null>(null);
   const modeToggle = useRef<HTMLButtonElement>(null);
+  // Where focus goes once a dismissed form has gone: until it and any detail panel under it leave
+  // the page, a modal dialog makes everything behind it inert, so focusing it at once would fail.
+  const afterForm = useRef<HTMLElement | null>(null);
   const openForm = (mode: FormMode, el: HTMLElement | null) => {
     formOpener.current = el;
     setForm(mode);
@@ -155,6 +158,12 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
     if (importWasOpen.current && !importOpen) importOpener.current?.focus();
     importWasOpen.current = importOpen;
   }, [importOpen]);
+
+  useEffect(() => {
+    if (form || !afterForm.current) return;
+    afterForm.current.focus();
+    afterForm.current = null;
+  }, [form]);
 
   // A tick belongs to a row as it was: after a day-type switch, a refresh, Start or an edit, a row
   // that's gone or now shows another slot or status is unticked rather than left selected unseen.
@@ -593,7 +602,7 @@ export default function SupplementsView({ stack, historyDate }: { stack: Stack; 
             if (done) setAnnouncement(done);
             // The add button, or for an edit the row whose panel it came from. A replace moves or
             // removes that row, so focus goes to the Edit stack toggle, which stays.
-            (form.kind === 'replace' ? modeToggle.current : formOpener.current)?.focus();
+            afterForm.current = form.kind === 'replace' ? modeToggle.current : formOpener.current;
           }}
         />
       )}

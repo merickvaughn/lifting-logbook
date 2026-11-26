@@ -29,6 +29,24 @@ import { logClientError } from '@/lib/log-client-error';
 
 const row = (name: RegExp) => screen.getByRole('button', { name });
 
+/**
+ * Records how many dialogs were still on the page each time `el` took focus. jsdom doesn't make the
+ * page inert behind a modal dialog, so this stands in for the browser, where focusing `el` while a
+ * dialog is still open does nothing (#1422).
+ */
+let focusSpy: jest.SpyInstance | undefined;
+function dialogsWhenFocused(el: HTMLElement): number[] {
+  const seen: number[] = [];
+  const focus = HTMLElement.prototype.focus;
+  focusSpy = jest.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options) {
+    if (this === el) seen.push(document.querySelectorAll('dialog').length);
+    focus.call(this, options);
+  });
+  return seen;
+}
+
+afterEach(() => focusSpy?.mockRestore());
+
 const replaceState = jest.spyOn(window.history, 'replaceState');
 beforeEach(() => replaceState.mockClear());
 
@@ -177,17 +195,21 @@ describe('SupplementsView add and edit entry points', () => {
   it('× on the form closes the panel too, and focus goes back to the row', async () => {
     await userEvent.click(row(/Nutricost Pre-X/));
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const focused = dialogsWhenFocused(row(/Nutricost Pre-X/));
     await userEvent.click(within(screen.getByRole('dialog', { name: 'Edit Nutricost Pre-X' })).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(row(/Nutricost Pre-X/)).toHaveFocus();
+    expect(focused).toEqual([0]);
   });
 
   it('× on an Add form sends focus back to the button that opened it', async () => {
     const opener = screen.getByRole('button', { name: '+ Add daily item' });
     await userEvent.click(opener);
+    const focused = dialogsWhenFocused(opener);
     await userEvent.click(within(screen.getByRole('dialog', { name: 'Add supplement' })).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(opener).toHaveFocus();
+    expect(focused).toEqual([0]);
   });
 });
 
