@@ -29,8 +29,8 @@
  *     listed as an unrecognized tab with the reason, never guessed at. So is a workbook's copy of
  *     a date that couldn't be read when the other copy could.
  *   - Rows a 5/3/1 tab has after its Set rows go to the unread cells; a lift whose every logged
- *     cell is unread is listed as skipped; a lift that two tabs' Day rows put on one date is
- *     listed, since its sets are numbered as one session.
+ *     cell is unread is listed as skipped; a lift that two tabs put on one date is listed, since
+ *     its sets are numbered as one session.
  *
  * The three layouts:
  *   1. Row per lift (May 2020 – Nov 2020): a header row, then
@@ -87,7 +87,7 @@ export function parseRepCell(cell) {
   const raw = clean(cell);
   if (raw === '' || /^(n\/a|ok|-)$/i.test(raw)) return null;
   // `W x R`, optionally followed by a marker (`185x5F`, `135 x 5 (F)`), kept as the note.
-  let m = raw.match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*[x×]\\s*(\\d+)(?:\\s*(\\+|\\(?${MARKER}\\)?))?$`, 'i'));
+  let m = raw.match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*[xX×]\\s*(\\d+)(?:\\s*(\\+|\\(${MARKER}\\)|${MARKER}))?$`));
   if (m) {
     const set = { weight: Number(m[1]), reps: Number(m[2]) };
     if (m[3] === '+') set.note = 'AMRAP';
@@ -237,7 +237,7 @@ export function inferPlanColumns(rows) {
 
 /**
  * Whether a plan-column count carried from an earlier tab fits this one. On every lift row:
- *   - the first plan cell is a `4x6` plan when k is 1, and a bare number (sets) when k is 2 or 3;
+ *   - the first plan cell isn't a bare number (sets) when k is 1, nor a `4x6` plan when k is 2 or 3;
  *   - the warm-up cells hold a number, N/A or nothing (warm-up 5 alone is sometimes filled);
  *   - no warm-up is heavier than 120% of the working weight plus 10 (the last is 110%; light
  *     lifts round warm-ups up by a plate).
@@ -276,7 +276,9 @@ function parseRowPerLift(title, rows, date, k) {
       const components = [];
       const plannedReps = (row) => row.slice(1, k + 1).map(parseWeight).filter((v) => v !== null).at(-1) ?? null;
       let j = i + 1;
-      for (; j < rows.length && rows[j].length <= k + 1 && clean(rows[j][0]); j++) {
+      // The run ends at the Notes row, and (k > 1) at a row with Sets filled: an unlogged lift.
+      const isComponent = (row) => row.length <= k + 1 && clean(row[0]) && clean(row[0]) !== 'Notes' && (k === 1 || !clean(row[1]));
+      for (; j < rows.length && isComponent(rows[j]); j++) {
         components.push({ name: clean(rows[j][0]), reps: plannedReps(rows[j]) });
       }
       addComplex(s, name, weight, parseWeight(r[k + 7]), components);
@@ -360,11 +362,17 @@ function parse531(title, rows, date) {
   const setRows = [];
   let bbbWeight = null;
   let bbbDone = null;
+  const bbbRows = [];
   for (let r = 0; r < rows.length; r++) {
     const l = label(r);
     if (/^Set \d+$/.test(l)) setRows.push(r);
-    else if (/^5 [×x] 10$/.test(l)) bbbWeight = parseWeight(rows[r][1]);
-    else if (/^Sets 4 - 8$/.test(l)) bbbDone = clean(rows[r][1]);
+    else if (/^5 [×x] 10$/.test(l)) {
+      bbbWeight = parseWeight(rows[r][1]);
+      bbbRows.push(r);
+    } else if (/^Sets 4 - 8$/.test(l)) {
+      bbbDone = clean(rows[r][1]);
+      bbbRows.push(r);
+    }
   }
   const notesAt = rows.findIndex((r) => clean(r[0]) === 'Notes');
 
@@ -402,12 +410,14 @@ function parse531(title, rows, date) {
     for (const r of setRows) addSet(s, a.lift, rows[r][a.col], weight);
   }
 
-  // Anything after the last known row (rows under Notes, stray rows) is reported, not guessed at.
+  // Any other row after the Set rows (stray rows, rows under Notes) is reported, not guessed at.
   // A tab with no Set rows (a deload of warm-ups only) logged nothing; its lifts are reported.
   if (setRows.length === 0) return s.finish();
-  const lastKnown = Math.max(notesAt, ...setRows, rows.findIndex((r) => /^Sets 4 - 8$/.test(clean(r[0]))));
   if (notesAt >= 0) s.note(rows[notesAt].slice(1).join(' '));
-  for (const r of rows.slice(lastKnown + 1)) if (r.some((c) => clean(c))) s.unparsed('(row after the Set rows)', r.map(clean).join(' | '));
+  const known = new Set([notesAt, ...bbbRows]);
+  for (let r = setRows.at(-1) + 1; r < rows.length; r++) {
+    if (!known.has(r) && rows[r].some((c) => clean(c))) s.unparsed('(row after the Set rows)', rows[r].map(clean).join(' | '));
+  }
   return s.finish();
 }
 
@@ -438,6 +448,7 @@ export function convertWorkbooks(workbooks) {
     }
   }
   const records = [];
+  const tabOf = new Map(); // `date|lift` → the tab it first came from
   let k = null;
   for (const title of [...byTitle.keys()].sort()) {
     const date = tabDate(title);
@@ -477,18 +488,16 @@ export function convertWorkbooks(workbooks) {
     }
     // A copy that couldn't be read is still listed, in case it was the better one.
     for (const bad of results.filter((r) => !r.result)) {
-      report.unrecognized.push({ tab: title, sources: [bad.source], reason: `${bad.reason}; the copy in ${chosen.source} was converted` });
+      report.unrecognized.push({ tab: title, sources: [bad.source], reason: `${bad.reason}; the copy in ${chosen.source} was converted`, otherCopyConverted: true });
     }
     if (chosen.layout === 1) k = chosen.k;
     report.tabs.push({ tab: title, source: chosen.source, layout: chosen.layout, k: chosen.k, carried: chosen.carried, sets: chosen.result.records.length });
-    // Day rows can put two tabs' columns on one date; their sets would be numbered as one session.
-    const fromTab = new Map(records.map((r) => [`${r.date}|${r.lift}`, r.tab]));
-    const overlaps = new Set(chosen.result.records.map((r) => `${r.date}|${r.lift}`).filter((key) => fromTab.has(key)));
-    for (const key of overlaps) {
+    // Two tabs can put a lift on one date (Day rows); its sets would be numbered as one session.
+    for (const key of new Set(chosen.result.records.map((r) => `${r.date}|${r.lift}`))) {
       const [onDate, lift] = key.split('|');
-      report.overlaps.push({ date: onDate, lift, tabs: [fromTab.get(key), title] });
+      if (tabOf.has(key)) report.overlaps.push({ date: onDate, lift, tabs: [tabOf.get(key), title] });
+      else tabOf.set(key, title);
     }
-    for (const r of chosen.result.records) r.tab = title;
     report.skipped.push(...chosen.result.skipped);
     report.unparsed.push(...chosen.result.unparsed);
     report.notes.push(...chosen.result.notes);
@@ -556,8 +565,8 @@ function toReport(records, report, files) {
     md.push('');
   };
   table('Skipped lifts', ['Tab', 'Lift', 'Reason'], report.skipped.map((s) => [s.tab, s.lift, s.reason]));
-  table('Cells no rule covers (that set was left out)', ['Tab', 'Lift', 'Cell'], report.unparsed.map((u) => [u.tab, u.lift, u.cell]));
-  table('Unrecognized tabs (not converted)', ['Tab', 'Workbooks', 'Reason'], report.unrecognized.map((u) => [u.tab, u.sources.join(', '), u.reason]));
+  table('Cells and rows no rule covers (left out)', ['Tab', 'Lift', 'Cell'], report.unparsed.map((u) => [u.tab, u.lift, u.cell]));
+  table('Unrecognized tabs and copies', ['Tab', 'Workbooks', 'Reason'], report.unrecognized.map((u) => [u.tab, u.sources.join(', '), u.reason]));
   table('Dates in more than one workbook', ['Tab', 'Copies', 'Kept', 'Same sets'], report.duplicates.map((d) => [d.tab, d.sources.join('; '), d.kept, d.same ? 'yes' : 'no']));
   table('A lift on one date from two tabs (its sets are numbered as one session)', ['Date', 'Lift', 'Tabs'], report.overlaps.map((o) => [o.date, o.lift, o.tabs.join(', ')]));
   table('Session notes (not imported)', ['Tab', 'Note'], report.notes.map((n) => [n.tab, n.text]));
@@ -586,7 +595,8 @@ function main(argv) {
   }
   for (const f of files) writeFileSync(join(out, f.name), toCsv(f.records));
   writeFileSync(join(out, 'report.md'), toReport(records, report, files));
-  console.log(`${records.length} sets → ${files.map((f) => f.name).join(', ')}; report.md: ${report.skipped.length} skipped lifts, ${report.unparsed.length} unread cells, ${report.unrecognized.length} unrecognized tabs`);
+  const unconverted = report.unrecognized.filter((u) => !u.otherCopyConverted).length;
+  console.log(`${records.length} sets → ${files.map((f) => f.name).join(', ')}; report.md: ${report.skipped.length} skipped lifts, ${report.unparsed.length} unread cells, ${unconverted} unrecognized tabs, ${report.unrecognized.length - unconverted} unreadable copies of converted dates, ${report.overlaps.length} overlaps`);
   return 0;
 }
 

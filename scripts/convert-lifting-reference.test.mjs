@@ -44,7 +44,7 @@ test('parseRepCell never reads a weight, prose or a decimal as reps', () => {
   assert.deepEqual(parseRepCell('185x5F'), { weight: 185, reps: 5, note: '185x5F' });
   assert.deepEqual(parseRepCell('135 x 5 (F)'), { weight: 135, reps: 5, note: '135 x 5 (F)' });
   assert.deepEqual(parseRepCell('135 x 5+'), { weight: 135, reps: 5, note: 'AMRAP' });
-  for (const prose of ['135 lbs', '135lbs', '45s', '8-10', '3 sets, felt heavy', '8.5', '5 F', '3x10, 2x8', '5x5 felt easy']) {
+  for (const prose of ['135 lbs', '135lbs', '45s', '8-10', '3 sets, felt heavy', '8.5', '5 F', '3x10, 2x8', '5x5 felt easy', '185x5f', '135x5 reg', '100x3 fig', '135 x 5 (F']) {
     assert.deepEqual(parseRepCell(prose), { unparsed: prose });
   }
 });
@@ -147,9 +147,35 @@ test('layout 1: with two plan cells a component takes its reps, not its sets', (
   const before = [L1_HEADER, ['Curl', '3', '10', '35', '45', '55', '65', '75', '70', '10']];
   // The header text is the same whatever k is; only the data rows lose a plan column.
   const header = L1_HEADER.slice(0, 10).concat('Sets Completed');
-  const done = [header, ['Complex 1A', '4', '', '', '', '', '', '', '65', '2'], ['Power Clean', '3', '5']];
-  const { records } = convert({ 20201005: before, 20201006: done });
+  // Component rows leave Sets blank; a row with Sets filled is an unlogged lift, not a component.
+  const done = [
+    header,
+    ['Complex 1A', '4', '', '', '', '', '', '', '65', '2'],
+    ['Power Clean', '', '5'],
+    ['Pull-up', '3'],
+    ['Notes', 'felt good'],
+  ];
+  const { records, report } = convert({ 20201005: before, 20201006: done });
   assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A'], [2, 65, 5, 'Complex 1A']]);
+  assert.deepEqual(sets(records, 'Pull-up'), []);
+  assert.deepEqual(report.skipped, [{ tab: '20201006', lift: 'Pull-up', reason: 'no logged reps' }]);
+  assert.deepEqual(report.notes.map((n) => n.text), ['felt good']);
+});
+
+test('layout 1: a complex just before Notes stops at the Notes row', () => {
+  // k = 1, settled by the warm-ups on this tab.
+  const done = [
+    L1_HEADER,
+    ['Curl', '3x10', '35', '45', '55', '65', '75', '70', '10'],
+    ['Complex A', '', '', '', '', '', '', '65', '3'],
+    ['Power Clean', '5'],
+    ['Notes', 'felt good'],
+    ['second note line'],
+  ];
+  const { records, report } = convert({ 20201006: done });
+  assert.equal(sets(records, 'Power Clean').length, 3);
+  assert.deepEqual(report.skipped, []);
+  assert.deepEqual(report.notes.map((n) => n.text), ['felt good', 'second note line']);
 });
 
 test('layout 1: a complex with any component lacking reps is skipped whole, never part-imported', () => {
@@ -242,7 +268,7 @@ test('a copy of a date that could not be read is listed even though the other co
   ]);
   assert.equal(records.length, 7);
   assert.deepEqual(report.unrecognized, [
-    { tab: '20201208', sources: ['2021.json'], reason: 'no layout matches; the copy in 2020.json was converted' },
+    { tab: '20201208', sources: ['2021.json'], reason: 'no layout matches; the copy in 2020.json was converted', otherCopyConverted: true },
   ]);
 });
 
@@ -336,6 +362,10 @@ test('layout 3: extra logged main-lift reps and a missing Main Lift name are rep
     ['Program', '5/3/1'], ['Cycle #', '1'], ['Main Lift', main], ['Exercise', '', 'Curl'],
     ['Work Sets'], ['5', '200', '30'], ['Set 1', '5', '10'], ['Set 2', '6', '10'],
   ];
+  // A row between the Set rows and Notes is reported too.
+  const stray = convert({ 20211101: [...tab('Squat'), ['Extra', '', '12'], ['Notes', 'ok day']] });
+  assert.deepEqual(stray.report.unparsed.at(-1), { tab: '20211101', lift: '(row after the Set rows)', cell: 'Extra |  | 12' });
+  assert.deepEqual(stray.report.notes.map((n) => n.text), ['ok day']);
   const named = convert({ 20211101: tab('Squat') });
   assert.deepEqual(sets(named.records, 'Squat'), [[1, 200, 5, '']]);
   assert.deepEqual(named.report.unparsed, [{ tab: '20211101', lift: 'Squat', cell: 'Set 2: 6 (no work set for it)' }]);
