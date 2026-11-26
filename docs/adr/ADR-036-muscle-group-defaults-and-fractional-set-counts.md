@@ -272,8 +272,10 @@ Consequences:
   once that max is total load they show pull-up sets at the total (e.g. 225 lb) while the logger
   shows "+45". Dips and Chin-up already behave this way
   ([#1326](https://github.com/merickvaughn/lifting-logbook/issues/1326)).
-- The logger reads only built-ins for bodyweight. A custom lift's own `isBodyweightComponent` is not
-  read there, as before this amendment ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
+- The logger resolves bodyweight through `lookupLift`, so a custom lift's own `isBodyweightComponent`
+  is read there and a same-named custom lift's flag wins over a non-reserved built-in name, such as
+  "Weighted Pull-ups". When the custom-lift read fails, the logger reads built-ins only and logs why
+  ([#1319](https://github.com/merickvaughn/lifting-logbook/issues/1319)).
 
 ## Amendment 4: saving the real name retires a legacy encoded row (2026-11-15, [#1017](https://github.com/merickvaughn/lifting-logbook/issues/1017))
 
