@@ -17,17 +17,23 @@
  * How cells are read (agreed on #1478):
  *   - Only tabs titled YYYYMMDD. Warm-ups are sets, noted `warm-up`.
  *   - A lift with no logged reps is skipped, warm-ups included, and reported.
- *   - `N+` is N reps noted `AMRAP`; `W x R` is that set's weight and reps; N followed by another
- *     marker (`4-I`, `5F`, `10+R`) is N reps with the raw text as the note.
+ *   - `N+` is N reps noted `AMRAP`; `W x R` is that set's weight and reps (anything after it, like
+ *     `185x5F`, goes in the note); N followed directly by a marker (`4-I`, `5F`, `10+R`) is N reps
+ *     with the raw text as the note.
  *   - A weight of `BW (180)` is 180. A cell no rule covers drops that one set and is reported.
- *   - A complex becomes, per completed round, one set of each component at the complex weight,
- *     with the component's planned reps. One with no rounds or no component reps is skipped.
+ *   - A layout 1 complex becomes, per completed round, one set of each component at the complex
+ *     weight, with the component's planned reps. One with no rounds or no reps per component is
+ *     skipped and reported. Layout 2 sheets never give reps per component, so its complexes are
+ *     always skipped and reported.
+ *   - Anything a tab can't be read as (a title that isn't a real date, no layout, nothing read) is
+ *     listed as an unrecognized tab with the reason, never guessed at.
  *
  * The three layouts:
  *   1. Row per lift (May 2020 – Nov 2020): a header row, then
  *      `name, <k plan cells>, warm-up ×5, working weight, set reps…`. The header text is the same
  *      on every tab but the plan columns are not: k is 1 (`4x6`), 2 (sets, reps) or 3 (sets,
- *      range, reps). k is read from the warm-up percentages, else carried from the previous tab.
+ *      range, reps). k is read from the warm-up percentages, else carried from the previous tab
+ *      if it fits this one (`planColumnsFit`); the report marks a carried k.
  *   2. Column per lift (Nov 2020 – Apr 2021): one column per lift, rows in a fixed order (names,
  *      sets, range, reps, warm-up ×5, work sets, set reps…), with an optional `Day` row of dates
  *      above the names. Column A's labels are not trusted: on most 2021 tabs they are shifted a
@@ -38,7 +44,7 @@
  *      columns C onward.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, resolve } from 'path';
 
@@ -46,15 +52,15 @@ import { join, resolve } from 'path';
 // the TypeScript constant.
 export const CSV_HEADERS = ['Program', 'Macrocycle #', 'Workout #', 'Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Notes'];
 // MAX_IMPORT_ROWS in apps/api/src/programs/import-file.util.ts.
-export const MAX_ROWS_PER_FILE = 5000;
+const MAX_ROWS_PER_FILE = 5000;
 // The reps of warm-ups 1–5 in layouts 1 and 2: the headers read "50% x 10" … "110% x 1".
-export const WARMUP_REPS = [10, 8, 6, 4, 1];
+const WARMUP_REPS = [10, 8, 6, 4, 1];
 const WARMUP_PCT = [0.5, 0.65, 0.8, 0.95, 1.1];
 
 const SESSION_TAB = /^(\d{4})(\d{2})(\d{2})$/;
 
 /** Collapses newlines and repeated spaces: "Guil.\nPress" → "Guil. Press". */
-export function clean(value) {
+function clean(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
@@ -73,36 +79,51 @@ export function parseWeight(cell) {
 export function parseRepCell(cell) {
   const raw = clean(cell);
   if (raw === '' || /^(n\/a|ok|-)$/i.test(raw)) return null;
-  let m = raw.match(/^(\d+(?:\.\d+)?)\s*[x×]\s*(\d+)(\+)?$/i);
+  // `W x R`, with anything after it (`+`, `F`, ` (F)`) kept as the note.
+  let m = raw.match(/^(\d+(?:\.\d+)?)\s*[x×]\s*(\d+)(.*)$/i);
   if (m) {
     const set = { weight: Number(m[1]), reps: Number(m[2]) };
-    if (m[3]) set.note = 'AMRAP';
+    const rest = m[3].trim();
+    if (rest === '+') set.note = 'AMRAP';
+    else if (rest) set.note = raw;
     return set;
   }
   m = raw.match(/^(\d+)(\+)?$/);
   if (m) return m[2] ? { reps: Number(m[1]), note: 'AMRAP' } : { reps: Number(m[1]) };
-  // A number then a marker: `4-I`, `5F`, `2FI`, `10+R`, `5++`. Not `1 > 6 > 1` or `-186`.
-  m = raw.match(/^(\d+)\s*[A-Za-z+\-.]/);
+  // A number then a marker right after it: `4-I`, `5F`, `2FI`, `10+R`, `5++`. Not prose
+  // (`135 lbs`), a decimal (`8.5`), `1 > 6 > 1` or `-186`.
+  m = raw.match(/^(\d+)[A-Za-z+-]/);
   if (m) return { reps: Number(m[1]), note: raw };
   return { unparsed: raw };
 }
 
-/** "YYYYMMDD" → { year, month, day }, or null. */
-export function tabDate(title) {
-  const m = SESSION_TAB.exec(title);
-  return m ? { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) } : null;
+/** { year, month, day } if that day exists on the calendar, else null. */
+function calendarDate(year, month, day) {
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day ? { year, month, day } : null;
 }
 
-export function formatDate({ year, month, day }) {
+/** "YYYYMMDD" → { year, month, day }, or null if it isn't a real date. */
+function tabDate(title) {
+  const m = SESSION_TAB.exec(title);
+  return m ? calendarDate(Number(m[1]), Number(m[2]), Number(m[3])) : null;
+}
+
+function formatDate({ year, month, day }) {
   return `${month}/${day}/${year}`;
 }
 
-/** A `Day` cell like "2/23" → a date in the tab's year (the next year if it wraps past December). */
+/**
+ * A `Day` cell like "2/23" → that date in the tab's year, or the year either side when the week
+ * crosses New Year (a December cell on a January tab, a January cell on a December tab). Null if it
+ * isn't a real date.
+ */
 function dayCellDate(cell, tab) {
   const m = clean(cell).match(/^(\d{1,2})\/(\d{1,2})$/);
   if (!m) return null;
   const month = Number(m[1]);
-  return { year: month < tab.month - 6 ? tab.year + 1 : tab.year, month, day: Number(m[2]) };
+  const year = month < tab.month - 6 ? tab.year + 1 : month > tab.month + 6 ? tab.year - 1 : tab.year;
+  return calendarDate(year, month, Number(m[2]));
 }
 
 const isDayCell = (cell) => /^\d{1,2}\/\d{1,2}$/.test(clean(cell));
@@ -178,9 +199,9 @@ function addComplex(session, name, weight, rounds, components) {
     session.skip(name, 'complex: no completed rounds logged');
     return;
   }
-  if (weight === null || components.length === 0 || components.some((c) => c.reps === null)) {
-    session.skip(name, 'complex: no weight or no planned reps for its components');
-    return;
+  if (weight === null) return session.skip(name, 'complex: no weight');
+  if (components.length === 0 || components.some((c) => c.reps === null)) {
+    return session.skip(name, 'complex: the sheet has no planned reps for each component');
   }
   for (const c of components) {
     const lift = session.lift(c.name);
@@ -205,24 +226,47 @@ export function inferPlanColumns(rows) {
   return best > 0 && winners.length === 1 ? Number(winners[0]) : null;
 }
 
-export function parseRowPerLift(title, rows, date, k) {
+/**
+ * Whether a plan-column count carried from an earlier tab fits this one: on every lift row the
+ * warm-up cells hold a number, N/A or nothing, and no warm-up is heavier than 120% of the working
+ * weight plus 10 (the last is 110%; light lifts round warm-ups up by a plate). A wrong k shifts
+ * plan text, weights and reps into each other's columns and fails this. Calibrated on the real
+ * dumps (#1478): every tab whose k the warm-ups settle passes with that k.
+ */
+export function planColumnsFit(rows, k) {
+  const numberOrBlank = (cell) => parseWeight(cell) !== null || /^(n\/a)?$/i.test(clean(cell));
+  return rows.slice(1).every((r) => {
+    const name = clean(r[0]);
+    if (!name || name === 'Notes' || /^Complex/i.test(name) || r.length <= k + 1) return true;
+    const warmups = r.slice(k + 1, k + 6);
+    if (!warmups.every(numberOrBlank)) return false;
+    const ww = parseWeight(r[k + 6]);
+    return ww === null || warmups.map(parseWeight).every((w) => w === null || w <= ww * 1.2 + 10);
+  });
+}
+
+function parseRowPerLift(title, rows, date, k) {
   const s = newSession(title, date);
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const name = clean(r[0]);
     if (!name) continue;
     if (name === 'Notes') {
-      rows.slice(i + 1).forEach((n) => s.note(n.join(' ')));
+      rows.slice(i).forEach((n, at) => s.note((at === 0 ? n.slice(1) : n).join(' ')));
       break;
     }
     const weight = parseWeight(r[k + 6]);
     if (/^Complex/i.test(name)) {
-      // Its components are the rows below that stop before the warm-ups (a name and planned reps).
+      // Its components are the rows below that stop before the warm-ups: a name, and the planned
+      // reps in the last filled plan cell (the sheets leave Sets blank: `Power Clean, , 5`). The
+      // run is all rows with reps, or all rows without; a row of the other kind ends it.
       const components = [];
+      const plannedReps = (row) => row.slice(1, k + 1).map(parseWeight).filter((v) => v !== null).at(-1) ?? null;
       let j = i + 1;
       for (; j < rows.length && rows[j].length <= k + 1 && clean(rows[j][0]); j++) {
-        const reps = rows[j].slice(1, k + 1).map(parseWeight).find((v) => v !== null && v !== undefined);
-        components.push({ name: clean(rows[j][0]), reps: reps ?? null });
+        const reps = plannedReps(rows[j]);
+        if (components.length > 0 && (reps === null) !== (components[0].reps === null)) break;
+        components.push({ name: clean(rows[j][0]), reps });
       }
       addComplex(s, name, weight, parseWeight(r[k + 7]), components);
       i = j - 1;
@@ -237,36 +281,49 @@ export function parseRowPerLift(title, rows, date, k) {
 
 // ── Layout 2: column per lift ───────────────────────────────────────────────────────────────
 
-export function parseColumnPerLift(title, rows, date) {
+function parseColumnPerLift(title, rows, date) {
   const s = newSession(title, date);
   // The names row is the first whose cells past column A hold a lift name, not a date or number.
   const namesAt = rows.findIndex((r) => r.slice(1).some((c) => clean(c) && !isDayCell(c) && parseWeight(c) === null));
+  if (namesAt < 0) return null;
   const dayRow = namesAt > 0 && rows[namesAt - 1].slice(1).some(isDayCell) ? rows[namesAt - 1] : null;
-  const names = rows[namesAt] ?? [];
+  const names = rows[namesAt];
   const at = (offset, col) => rows[namesAt + offset]?.[col];
   const WORK = 9;
   const FIRST_SET = 10;
+  // Set rows end at Notes. Column A may sit a row below the data (`Exercise` beside the row after
+  // the names), so the Notes label then marks the row after the first notes row.
+  const shift = clean(rows[namesAt][0]) !== 'Exercise' && clean(rows[namesAt + 1]?.[0]) === 'Exercise' ? 1 : 0;
+  const notesLabel = rows.findIndex((r, i) => i > namesAt && clean(r[0]) === 'Notes');
+  const end = notesLabel < 0 ? rows.length : Math.max(namesAt + FIRST_SET, notesLabel - shift);
+  rows.slice(end).forEach((r) => s.note(r.slice(1).join(' ')));
   for (let col = 1; col < names.length; col++) {
     const name = clean(names[col]);
     if (!name) continue;
     const weight = parseWeight(at(WORK, col));
     if (/^Complex/i.test(name)) {
-      // "Sets Completed" sits in a Set row of this column, with the count below it.
+      // The component columns to its right are empty below their names: the sheet has no planned
+      // reps per component, so a complex in this layout is never expanded, only reported.
       let rounds = null;
-      for (let o = FIRST_SET; namesAt + o < rows.length; o++) {
+      for (let o = FIRST_SET; namesAt + o < end; o++) {
         if (/sets completed/i.test(clean(at(o, col)))) rounds = parseWeight(at(o + 1, col));
       }
-      const components = [];
-      for (let c = col + 1; c < names.length && rows.slice(namesAt + 1).every((r) => !clean(r[c])); c++) {
-        components.push({ name: clean(names[c]), reps: null });
-      }
-      addComplex(s, name, weight, rounds, components);
-      col += components.length;
+      let c = col + 1;
+      while (c < names.length && rows.slice(namesAt + 1).every((r) => !clean(r[c]))) c++;
+      s.skip(name, rounds > 0 ? `complex: ${rounds} rounds logged, but the sheet has no planned reps for each component` : 'complex: no completed rounds logged');
+      col = c - 1;
       continue;
     }
-    const onDate = dayRow ? (dayCellDate(dayRow[col], date) ?? date) : date;
+    let onDate = date;
+    if (dayRow && clean(dayRow[col])) {
+      onDate = dayCellDate(dayRow[col], date);
+      if (!onDate) {
+        s.unparsed(name, `Day "${clean(dayRow[col])}" (not a date; lift left out)`);
+        continue;
+      }
+    }
     const lift = s.lift(name, { onDate });
-    for (let o = FIRST_SET; namesAt + o < rows.length; o++) addSet(s, lift, at(o, col), weight);
+    for (let o = FIRST_SET; namesAt + o < end; o++) addSet(s, lift, at(o, col), weight);
     addWarmups(lift, [4, 5, 6, 7, 8].map((o) => parseWeight(at(o, col))));
   }
   return s.finish();
@@ -274,12 +331,13 @@ export function parseColumnPerLift(title, rows, date) {
 
 // ── Layout 3: 5/3/1 ─────────────────────────────────────────────────────────────────────────
 
-export function parse531(title, rows, date) {
+function parse531(title, rows, date) {
   const s = newSession(title, date);
   const program = clean(rows[0]?.[1]) || undefined;
   const label = (r) => clean(rows[r]?.[0]);
   const mainName = clean(rows[2]?.[1]) || (label(3) !== 'Exercise' ? label(3) : '');
-  const main = s.lift(mainName, { program });
+  // With no Main Lift name its sets can't be imported: they are collected, then reported.
+  const main = mainName ? s.lift(mainName, { program }) : { name: '(no Main Lift name)', warmups: [], sets: [] };
   const accessories = (rows[3] ?? []).slice(2).map((n, i) => ({ col: i + 2, lift: clean(n) ? s.lift(n, { program }) : null }));
 
   const warmupAt = rows.findIndex((r) => clean(r[0]) === 'Warm-up');
@@ -303,6 +361,10 @@ export function parse531(title, rows, date) {
     const logged = setRows[i] === undefined ? undefined : rows[setRows[i]][1];
     addSet(s, main, logged, parseWeight(w[1]), clean(w[0]).endsWith('+') ? 'AMRAP' : undefined);
   });
+  // Reps logged in a Set row with no work set above to give their weight.
+  setRows.slice(workRows.length).forEach((r) => {
+    if (clean(rows[r][1])) s.unparsed(main.name, `${label(r)}: ${clean(rows[r][1])} (no work set for it)`);
+  });
   if (bbbWeight !== null && /^ok$/i.test(bbbDone ?? '')) {
     for (let i = 0; i < 5; i++) main.sets.push({ weight: bbbWeight, reps: 10, notes: 'BBB' });
   } else if (bbbWeight !== null) {
@@ -312,6 +374,9 @@ export function parse531(title, rows, date) {
     const reps = parseWeight(w[0]);
     const weight = parseWeight(w[1]);
     if (reps !== null && weight !== null) main.warmups.push({ weight, reps, notes: 'warm-up' });
+  }
+  if (!mainName && main.sets.length + main.warmups.length > 0) {
+    s.skip(main.name, `${main.sets.length} sets and ${main.warmups.length} warm-ups left out`);
   }
 
   // Accessories: the weight is on the first Work Sets row, the reps in the Set rows.
@@ -352,7 +417,7 @@ export function convertWorkbooks(workbooks) {
   const byTitle = new Map();
   for (const wb of workbooks) {
     for (const title of Object.keys(wb.tabs)) {
-      if (!tabDate(title)) continue;
+      if (!SESSION_TAB.test(title)) continue;
       if (!byTitle.has(title)) byTitle.set(title, []);
       byTitle.get(title).push({ source: wb.name, rows: wb.tabs[title] });
     }
@@ -362,19 +427,31 @@ export function convertWorkbooks(workbooks) {
   for (const title of [...byTitle.keys()].sort()) {
     const date = tabDate(title);
     const results = byTitle.get(title).map(({ source, rows }) => {
-      const layout = detectLayout(rows);
-      let result = null;
-      let inferredK;
-      if (layout === 1) {
-        inferredK = inferPlanColumns(rows) ?? k;
-        if (inferredK !== null) result = parseRowPerLift(title, rows, date, inferredK);
-      } else if (layout === 2) result = parseColumnPerLift(title, rows, date);
-      else if (layout === 3) result = parse531(title, rows, date);
-      return { source, layout, k: inferredK, result };
+      const out = { source, layout: date ? detectLayout(rows) : null, k: undefined, result: null, reason: null };
+      if (!date) out.reason = 'the title is not a real date';
+      else if (out.layout === null) out.reason = 'no layout matches';
+      else if (out.layout === 1) {
+        const inferred = inferPlanColumns(rows);
+        if (inferred !== null) out.k = inferred;
+        else if (k === null) out.reason = 'layout 1, plan columns unknown';
+        else if (!planColumnsFit(rows, k)) out.reason = `layout 1, the ${k} plan columns carried from the tab before don't fit`;
+        else out.k = `${k} (carried)`;
+        if (out.k !== undefined) out.result = parseRowPerLift(title, rows, date, parseInt(out.k, 10));
+      } else if (out.layout === 2) {
+        out.result = parseColumnPerLift(title, rows, date);
+        if (!out.result) out.reason = 'layout 2, no lift names row';
+      } else out.result = parse531(title, rows, date);
+      // A tab that read nothing at all, not even a lift to skip, was not understood.
+      const r = out.result;
+      if (r && r.records.length + r.skipped.length + r.unparsed.length === 0) {
+        out.result = null;
+        out.reason = `layout ${out.layout}, nothing read`;
+      }
+      return out;
     });
     const ok = results.filter((r) => r.result);
     if (ok.length === 0) {
-      report.unrecognized.push({ tab: title, sources: results.map((r) => r.source) });
+      report.unrecognized.push({ tab: title, sources: results.map((r) => r.source), reason: [...new Set(results.map((r) => r.reason))].join('; ') });
       continue;
     }
     ok.sort((a, b) => b.result.records.length - a.result.records.length);
@@ -383,7 +460,7 @@ export function convertWorkbooks(workbooks) {
       const same = ok.every((r) => JSON.stringify(r.result.records) === JSON.stringify(chosen.result.records));
       report.duplicates.push({ tab: title, kept: chosen.source, sources: ok.map((r) => `${r.source} (${r.result.records.length} sets)`), same });
     }
-    if (chosen.layout === 1) k = chosen.k;
+    if (chosen.layout === 1) k = parseInt(chosen.k, 10);
     report.tabs.push({ tab: title, source: chosen.source, layout: chosen.layout, k: chosen.k, sets: chosen.result.records.length });
     report.skipped.push(...chosen.result.skipped);
     report.unparsed.push(...chosen.result.unparsed);
@@ -424,19 +501,22 @@ export function toCsv(records) {
  * January). Split into parts of at most `max` rows only past the import limit, never inside a date.
  */
 export function splitFiles(records, max = MAX_ROWS_PER_FILE) {
+  // A date's records need not be next to each other (a Day row can date columns 2/23, 2/25, 2/23),
+  // so gather each date's records first, in order of first appearance.
+  const byDate = new Map();
+  for (const r of records) {
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date).push(r);
+  }
   const parts = [[]];
-  let i = 0;
-  while (i < records.length) {
-    let j = i;
-    while (j < records.length && records[j].date === records[i].date) j++;
-    if (parts.at(-1).length + (j - i) > max && parts.at(-1).length > 0) parts.push([]);
-    parts.at(-1).push(...records.slice(i, j));
-    i = j;
+  for (const group of byDate.values()) {
+    if (parts.at(-1).length + group.length > max && parts.at(-1).length > 0) parts.push([]);
+    parts.at(-1).push(...group);
   }
   return parts.map((p, n) => ({ name: `lifting-reference${parts.length > 1 ? `-${n + 1}` : ''}.csv`, records: p }));
 }
 
-export function toReport(records, report, files) {
+function toReport(records, report, files) {
   const liftCounts = new Map();
   for (const r of records) liftCounts.set(r.lift, (liftCounts.get(r.lift) ?? 0) + 1);
   const md = ['# Lifting_Reference conversion report', ''];
@@ -450,7 +530,7 @@ export function toReport(records, report, files) {
   };
   table('Skipped lifts', ['Tab', 'Lift', 'Reason'], report.skipped.map((s) => [s.tab, s.lift, s.reason]));
   table('Cells no rule covers (that set was left out)', ['Tab', 'Lift', 'Cell'], report.unparsed.map((u) => [u.tab, u.lift, u.cell]));
-  table('Unrecognized tabs (not converted)', ['Tab', 'Workbooks'], report.unrecognized.map((u) => [u.tab, u.sources.join(', ')]));
+  table('Unrecognized tabs (not converted)', ['Tab', 'Workbooks', 'Reason'], report.unrecognized.map((u) => [u.tab, u.sources.join(', '), u.reason]));
   table('Dates in more than one workbook', ['Tab', 'Copies', 'Kept', 'Same sets'], report.duplicates.map((d) => [d.tab, d.sources.join('; '), d.kept, d.same ? 'yes' : 'no']));
   table('Session notes (not imported)', ['Tab', 'Note'], report.notes.map((n) => [n.tab, n.text]));
   table('Lift names (map unmatched ones in the wizard\'s Review step)', ['Lift', 'Sets'], [...liftCounts].sort((a, b) => a[0].localeCompare(b[0])));
@@ -470,6 +550,8 @@ function main(argv) {
   const { records, report } = convertWorkbooks(workbooks);
   const files = splitFiles(records);
   mkdirSync(out, { recursive: true });
+  // Parts left by an earlier run would be uploaded alongside this one's and import twice.
+  for (const old of readdirSync(out)) if (/^lifting-reference(-\d+)?\.csv$/.test(old)) unlinkSync(join(out, old));
   for (const f of files) writeFileSync(join(out, f.name), toCsv(f.records));
   writeFileSync(join(out, 'report.md'), toReport(records, report, files));
   console.log(`${records.length} sets → ${files.map((f) => f.name).join(', ')}; report.md: ${report.skipped.length} skipped lifts, ${report.unparsed.length} unread cells, ${report.unrecognized.length} unrecognized tabs`);
