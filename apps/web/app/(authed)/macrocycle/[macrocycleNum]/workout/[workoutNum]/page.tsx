@@ -49,7 +49,8 @@ function bodyweightLift(
 ): { implement: string | undefined } | undefined {
   const { builtIn, custom } = lookupLift(liftName, customLifts);
   if (!(custom?.isBodyweightComponent ?? builtIn?.isBodyweightComponent)) return undefined;
-  return { implement: custom ? undefined : builtIn && WARMUP_IMPLEMENT[builtIn.id] };
+  // A custom lift sharing a built-in's name keeps that built-in's warm-up implement.
+  return { implement: builtIn && WARMUP_IMPLEMENT[builtIn.id] };
 }
 
 /** A workout is read-only when every working set across every lift has a logged record. */

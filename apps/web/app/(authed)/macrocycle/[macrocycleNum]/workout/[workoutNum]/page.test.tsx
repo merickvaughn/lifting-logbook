@@ -782,6 +782,17 @@ describe("WorkoutLoggingPage — a custom lift's own bodyweight flag (#1319)", (
     ]);
   });
 
+  it("keeps a built-in's warm-up implement for a same-named custom lift flagged bodyweight", async () => {
+    seedWorkout([{ lift: 'Weighted Pull-ups', planned: true, sets: [] }]);
+    mockedCustomLifts.mockResolvedValueOnce([customLift('Weighted Pull-ups', true)]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
+      ['Weighted Pull-ups', true, 'lat pulldown'],
+    ]);
+  });
+
   it('reads bodyweight from the built-ins alone, and says why, when the custom lift read fails', async () => {
     const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     seedWorkout([
