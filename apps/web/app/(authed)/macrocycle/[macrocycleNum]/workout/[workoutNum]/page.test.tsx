@@ -76,6 +76,7 @@ import {
   fetchFocusPlan,
   fetchModificationMaxes,
   fetchAllLiftMetadata,
+  fetchCustomLifts,
 } from '@/lib/api';
 import { getUserSettings } from '@/lib/active-program';
 import { getUserToday } from '@/lib/userToday';
@@ -89,6 +90,7 @@ const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
 const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 const mockedModificationMaxes = fetchModificationMaxes as unknown as jest.Mock;
 const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
+const mockedCustomLifts = fetchCustomLifts as unknown as jest.Mock;
 const mockedUserSettings = getUserSettings as unknown as jest.Mock;
 const mockedUserToday = getUserToday as unknown as jest.Mock;
 
@@ -743,5 +745,72 @@ describe('WorkoutLoggingPage — bodyweight-component lifts by any of their name
       ['Chin-up', true, 'lat pulldown'],
       ['Squat', false, undefined],
     ]);
+  });
+});
+
+describe("WorkoutLoggingPage — a custom lift's own bodyweight flag (#1319)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function customLift(name: string, isBodyweightComponent: boolean) {
+    return {
+      id: `id-${name}`,
+      name,
+      classification: 'accessory',
+      movementProfile: 'compound',
+      isBodyweightComponent,
+      isCustom: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+  }
+
+  it('reads a custom lift flagged bodyweight as bodyweight, and lets a same-named custom lift flagged false override a built-in alias', async () => {
+    seedWorkout([
+      { lift: 'Ring Dip', planned: true, sets: [] },
+      { lift: 'Weighted Pull-ups', planned: true, sets: [] },
+      { lift: 'Chin-up', planned: true, sets: [] },
+    ]);
+    mockedCustomLifts.mockResolvedValueOnce([customLift('Ring Dip', true), customLift('Weighted Pull-ups', false)]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
+      ['Ring Dip', true, undefined],
+      ['Weighted Pull-ups', false, undefined],
+      ['Chin-up', true, 'lat pulldown'],
+    ]);
+  });
+
+  it("keeps a built-in's warm-up implement for a same-named custom lift flagged bodyweight", async () => {
+    seedWorkout([{ lift: 'Weighted Pull-ups', planned: true, sets: [] }]);
+    mockedCustomLifts.mockResolvedValueOnce([customLift('Weighted Pull-ups', true)]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
+      ['Weighted Pull-ups', true, 'lat pulldown'],
+    ]);
+  });
+
+  it('reads bodyweight from the built-ins alone, and says why, when the custom lift read fails', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    seedWorkout([
+      { lift: 'Ring Dip', planned: true, sets: [] },
+      { lift: 'Weighted Pull-ups', planned: true, sets: [] },
+    ]);
+    mockedCustomLifts.mockRejectedValueOnce(new Error('API down'));
+
+    const { lifts } = await renderPage();
+
+    expect(lifts.map((l) => [l.lift, l.isBodyweightComponent, l.warmUpImplement])).toEqual([
+      ['Ring Dip', false, undefined],
+      ['Weighted Pull-ups', true, 'lat pulldown'],
+    ]);
+    expect(errSpy).toHaveBeenCalledWith(
+      '[WorkoutLoggingPage] custom lift read failed, reading bodyweight from built-ins only',
+      expect.any(Error),
+    );
+    errSpy.mockRestore();
   });
 });

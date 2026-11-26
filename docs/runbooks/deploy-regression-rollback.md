@@ -154,6 +154,54 @@ within minutes. To hold staging on an old revision for investigation, pause thos
 Before #1042 the opposite was true, and a forgotten pin on `lifting-logbook-stg-api` meant every
 PR's `Staging Integration Tests` ran against a July build from 2026-07-10 to 2026-10-09.
 
+### Traffic check passes but `/version` reports another build
+
+**Symptom:** in a `Deploy` job, "Verify the newest revision serves 100% of traffic" passes, but
+the next `/version` smoke step fails with `Served build mismatch: <url>/version reports
+gitSha='<old sha>', expected <this run's sha>, after 12 attempts 10s apart`.
+
+[`scripts/check-served-version.sh`](../../scripts/check-served-version.sh) already retries for
+about 2 minutes, because Cloud Run can keep routing requests to the previous revision after it
+reports 100% on the new one. On 2026-11-24 the old revision answered `/readyz` and `/version`
+10 s after the service reported `RoutesReady`
+([#1473](https://github.com/merickvaughn/lifting-logbook/issues/1473)). A failure after the
+whole window means something else is wrong. Find which revision answered and what it runs (api
+shown; use `lifting-logbook-prod-web` for web, and the staging names above for staging):
+
+```sh
+# Which revision served the probes (set the window around the failed step's time)
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="lifting-logbook-prod-api"
+  AND httpRequest.requestUrl:"/version"
+  AND timestamp>="2026-11-24T19:53:00Z" AND timestamp<="2026-11-24T20:05:00Z"' \
+  --project=lifting-logbook-prod --order=asc \
+  --format='value(timestamp,resource.labels.revision_name,httpRequest.status)'
+
+# What the service routes to, and when routes were last reported ready
+gcloud run services describe lifting-logbook-prod-api \
+  --region=us-central1 --project=lifting-logbook-prod \
+  --format='yaml(status.traffic,status.latestReadyRevisionName,status.conditions)'
+
+# The image a revision runs, and the GIT_SHA baked into it (/version reads that env var)
+gcloud run revisions describe REVISION \
+  --region=us-central1 --project=lifting-logbook-prod --format='value(status.imageDigest)'
+docker buildx imagetools inspect IMAGE_DIGEST --format '{{json .Image.Config.Env}}'
+```
+
+Then:
+
+- **The probes reached an older revision, and `status.traffic` names the new one.** The routing
+  lag lasted longer than the window. Re-run the failed job once traffic has caught up
+  (`gh run rerun <run-id> --failed`), and file an issue with the timings, since a lag this long
+  would need a longer window. In production the re-run redeploys and waits for the
+  `environment: production` approval again, under the same conditions as the first approval
+  (`CLAUDE.md` → Waiting on a deploy).
+- **`status.traffic` names an older revision**, without `latestRevision: true`: traffic is
+  pinned. See the previous section.
+- **The probes reached the new revision, but its image's `GIT_SHA` isn't this run's commit.**
+  The deploy shipped the wrong image. Compare `status.imageDigest` with the image `build-images`
+  pushed for the run's commit (it's tagged with the full SHA in Artifact Registry).
+
 ### If migrations were applied
 
 Do not roll back the deployment until the impact of the migration is understood:
