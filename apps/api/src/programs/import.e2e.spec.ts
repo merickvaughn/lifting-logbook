@@ -66,7 +66,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     program: string,
     csv: string,
     query = '',
-    fields: Record<string, string> = {},
+    fields: Record<string, string> | Array<[string, string]> = {},
     order: 'fields-first' | 'file-first' = 'fields-first',
   ) => {
     const boundary = '----SmartImportBoundary';
@@ -77,7 +77,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       '',
       csv,
     ];
-    const fieldParts = Object.entries(fields).flatMap(([name, value]) => [
+    const fieldParts = (Array.isArray(fields) ? fields : Object.entries(fields)).flatMap(([name, value]) => [
       `--${boundary}`,
       `Content-Disposition: form-data; name="${name}"`,
       '',
@@ -1774,6 +1774,12 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
           expect(res.statusCode).toBe(413);
         },
       );
+
+      it('counts a repeated field name each time it is sent', async () => {
+        const repeated = Array.from({ length: 50 }, () => ['notes', '1'] as [string, string]);
+        const res = await importCsv('p1146-repeated-field', LIFT_CSV, COMMIT, repeated);
+        expect(res.statusCode).toBe(413);
+      });
 
       it('commits with both excludeKeys and liftOverrides', async () => {
         const res = await importCsv('p1146-both-fields', LIFT_CSV, COMMIT, {

@@ -68,11 +68,12 @@ export async function readImportForm(
   let csvText: string | null = null;
   const fields = new Map<string, string>();
   const truncated: string[] = [];
+  let fieldCount = 0; // every field part, so a repeated name counts each time
   try {
     for await (const part of parts) {
       if (part.type === 'file') {
         csvText = await csvTextOf(part);
-      } else if (fields.size + truncated.length >= MAX_IMPORT_FIELDS) {
+      } else if (++fieldCount > MAX_IMPORT_FIELDS) {
         throw new PayloadTooLargeException(`More than ${MAX_IMPORT_FIELDS} form fields`);
       } else if (part.valueTruncated) {
         truncated.push(part.fieldname);
