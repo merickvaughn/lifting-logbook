@@ -66,7 +66,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     program: string,
     csv: string,
     query = '',
-    fields: Record<string, string> = {},
+    fields: Record<string, string> | Array<[string, string]> = {},
     order: 'fields-first' | 'file-first' = 'fields-first',
   ) => {
     const boundary = '----SmartImportBoundary';
@@ -77,7 +77,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       '',
       csv,
     ];
-    const fieldParts = Object.entries(fields).flatMap(([name, value]) => [
+    const fieldParts = (Array.isArray(fields) ? fields : Object.entries(fields)).flatMap(([name, value]) => [
       `--${boundary}`,
       `Content-Disposition: form-data; name="${name}"`,
       '',
@@ -1761,6 +1761,33 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().message).toBe('No file uploaded');
+    });
+
+    describe('form field count (#1146)', () => {
+      const fieldsOf = (n: number) =>
+        Object.fromEntries(Array.from({ length: n }, (_, i) => [`extra${i}`, 'x']));
+
+      it.each(['fields-first', 'file-first'] as const)(
+        'rejects too many fields with 413, %s',
+        async (order) => {
+          const res = await importCsv('p1146-many-fields', LIFT_CSV, COMMIT, fieldsOf(50), order);
+          expect(res.statusCode).toBe(413);
+        },
+      );
+
+      it('counts a repeated field name each time it is sent', async () => {
+        const repeated = Array.from({ length: 50 }, () => ['notes', '1'] as [string, string]);
+        const res = await importCsv('p1146-repeated-field', LIFT_CSV, COMMIT, repeated);
+        expect(res.statusCode).toBe(413);
+      });
+
+      it('commits with both excludeKeys and liftOverrides', async () => {
+        const res = await importCsv('p1146-both-fields', LIFT_CSV, COMMIT, {
+          excludeKeys: JSON.stringify(['1:1:20260101:bench-press:1']),
+          liftOverrides: JSON.stringify({ '1': 'bench-press' }),
+        });
+        expect(res.statusCode).toBe(200);
+      });
     });
 
     it('reads a field sent after the file', async () => {
