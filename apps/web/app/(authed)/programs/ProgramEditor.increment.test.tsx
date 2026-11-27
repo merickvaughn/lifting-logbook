@@ -5,6 +5,8 @@ import ProgramEditor from './ProgramEditor';
 // ProgramEditor statically imports the server-only ./actions module and next/navigation's
 // router; neither is exercised by these tests (no Save click), so both are stubbed to keep
 // this a pure client render of the spec-seeding behavior.
+// The editor reads the lifts' modifications in the browser (#1155); these tests don't exercise them.
+jest.mock('@/lib/client-api', () => ({ fetchLiftModificationsByLift: jest.fn().mockResolvedValue({}) }));
 jest.mock('./actions', () => ({
   createCustomProgram: jest.fn(),
   updateCustomProgram: jest.fn(),

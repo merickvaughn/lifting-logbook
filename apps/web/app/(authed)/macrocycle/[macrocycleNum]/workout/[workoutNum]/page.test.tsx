@@ -464,6 +464,16 @@ describe('WorkoutLoggingPage — warm-ups resolve through the workout’s day (i
     expect(lifts[0]?.lift).toBe('Front Squat');
     expect(lifts[0]?.warmUpSets.map((s) => s.totalLoad)).toEqual([80, 100, 120]);
   });
+
+  it("hands the logger the slot's start-on modifications, and none after a replace (#1155)", async () => {
+    seedWeekTwo([{ lift: 'Squat' }, { lift: 'Front Squat', replaces: 'Squat' }], []);
+    mockedSpec.mockResolvedValue([{ ...spec('Squat'), modifications: ['m-wide'] }]);
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.startOn).toEqual(['m-wide']);
+    expect(lifts[1]?.startOn).toBeUndefined();
+  });
 });
 
 describe('WorkoutLoggingPage — focus work (#1060)', () => {

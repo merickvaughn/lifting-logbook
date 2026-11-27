@@ -35,6 +35,7 @@ const APP_DB_URL = APP_ROLE_URL ?? '';
 
 async function cleanUsers(prisma: PrismaClient): Promise<void> {
   // Takes the own maxes with it, through the foreign key.
+  await prisma.customProgram.deleteMany({ where: { userId: { in: USERS } } });
   await prisma.liftModification.deleteMany({ where: { userId: { in: USERS } } });
   await prisma.liftRecord.deleteMany({ where: { userId: { in: USERS } } });
   await prisma.trainingMaxHistory.deleteMany({ where: { userId: { in: USERS } } });
@@ -192,6 +193,32 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
     const restored = await create('Bench Press', 'Paused');
     expect(restored.id).toBe(paused.id);
     expect((await prisma.liftModification.findUniqueOrThrow({ where: { id: paused.id } })).archivedAt).toBeNull();
+  });
+
+  it('archives a modification a program slot starts on, which the slot still names (#1155)', async () => {
+    const wide = await create('Cable Curl', 'Wide grip');
+    const row = (week: number) => ({
+      week, offset: 0, order: 1, lift: 'Cable Curl', increment: 5, sets: 3, reps: 10, amrap: false,
+      warmUpPct: '0.5', wtDecrementPct: 0, activation: 'None', modifications: [wide.id],
+    });
+    const created = await owner('POST', '/programs/custom', { name: 'Curls', specs: [1, 2, 3].map(row) });
+    expect(created.statusCode).toBe(201);
+    const { id: programId } = created.json() as { id: string };
+
+    expect((await owner('DELETE', `/lifts/modifications/${wide.id}`)).statusCode).toBe(204);
+
+    expect((await prisma.liftModification.findUniqueOrThrow({ where: { id: wide.id } })).archivedAt).not.toBeNull();
+    expect((await owner('GET', '/lifts/modifications?lift=Cable%20Curl')).json()).toEqual([]);
+    const program = await owner('GET', `/programs/custom/${programId}`);
+    expect((program.json() as { specs: { modifications?: string[] }[] }).specs.map((s) => s.modifications)).toEqual([
+      [wide.id], [wide.id], [wide.id],
+    ]);
+
+    // A save that leaves the field out keeps the stored list, so an older client can't clear it.
+    const keep = { ...row(1) } as Record<string, unknown>;
+    delete keep.modifications;
+    const kept = await owner('PUT', `/programs/custom/${programId}`, { specs: [keep] });
+    expect((kept.json() as { specs: { modifications?: string[] }[] }).specs[0]?.modifications).toEqual([wide.id]);
   });
 
   it("another user's sets naming the same id don't keep a modification from deleting", async () => {

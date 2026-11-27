@@ -347,6 +347,8 @@
 }
 
 .instanceSpec { overflow-x: auto; }
+.startOn { border: 0; margin: 0 0 0.5rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.startOn legend { font-size: 0.85rem; padding: 0; }
 
 .addExerciseRow { display: flex; align-items: center; gap: 0.5rem; }
 

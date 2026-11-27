@@ -194,6 +194,7 @@ export default async function WorkoutLoggingPage({
       warmUpImplement: bodyweight?.implement,
       warmUpSets,
       workingSets,
+      ...(!wl.replaces && spec?.modifications?.length && { startOn: spec.modifications }),
       ...(spec && { plan: { spec, liftMax: tm, ...(progression && { progression }) } }),
       ...(progression && { progressionRule: { type: progression.rule.type, increment: progression.rule.increment } }),
     };

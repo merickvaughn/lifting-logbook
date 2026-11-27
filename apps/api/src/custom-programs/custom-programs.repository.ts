@@ -8,7 +8,7 @@ import {
 import { knownProgramFromSpec, type KnownProgram } from '@lifting-logbook/core';
 import { PrismaExecutor, runInteractive } from '../adapters/prisma/prisma-tx.util';
 
-type ProgressionColumns = { progression: string | null; repsLow: number | null };
+type ProgressionColumns = { progression: string | null; repsLow: number | null; modifications: string[] };
 
 /** The natural key of a spec row, `@@unique([programId, week, offset, lift, order])`. */
 const specKey = (s: { week: number; offset: number; lift: string; order: number }): string =>
@@ -25,6 +25,7 @@ function progressionColumns(s: CustomProgramSpecRow, stored?: ProgressionColumns
   const keptRepsLow = stored?.repsLow ?? null;
   return {
     progression: s.progression === undefined ? stored?.progression ?? null : s.progression,
+    modifications: s.modifications ?? stored?.modifications ?? [],
     repsLow:
       s.repsLow !== undefined ? s.repsLow : keptRepsLow !== null && keptRepsLow <= s.reps ? keptRepsLow : null,
   };
@@ -45,6 +46,7 @@ function toSpecRow(s: {
   weekType: string | null;
   progression: string | null;
   repsLow: number | null;
+  modifications: string[];
 }): CustomProgramSpecRow {
   return {
     week: s.week,
@@ -61,6 +63,7 @@ function toSpecRow(s: {
     ...(s.weekType !== null && { weekType: s.weekType }),
     ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
     ...(s.repsLow !== null && { repsLow: s.repsLow }),
+    ...(s.modifications.length > 0 && { modifications: s.modifications }),
   };
 }
 
@@ -199,9 +202,9 @@ export class CustomProgramsRepository {
         ? []
         : await tx.customProgramSpec.findMany({
             where: { programId: id },
-            select: { week: true, offset: true, lift: true, order: true, progression: true, repsLow: true },
+            select: { week: true, offset: true, lift: true, order: true, progression: true, repsLow: true, modifications: true },
           });
-      const stored = new Map(storedSpecs.map((s) => [specKey(s), { progression: s.progression, repsLow: s.repsLow }]));
+      const stored = new Map(storedSpecs.map((s) => [specKey(s), { progression: s.progression, repsLow: s.repsLow, modifications: s.modifications }]));
       const specs = specPayload(stored);
       return tx.customProgram.update({
         where: { id },

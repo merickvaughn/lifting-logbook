@@ -572,6 +572,8 @@ export interface LiftingProgramSpecResponse {
   progression?: LiftProgressionType;
   /** The bottom of the row's rep range; `reps` is the top. */
   repsLow?: number;
+  /** Ids of the modifications this slot starts with on (#1155). Absent means none. */
+  modifications?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +711,11 @@ export interface CustomProgramSpecRow {
    * except that a kept value above the row's `reps` is cleared.
    */
   repsLow?: number | null;
+  /**
+   * Ids of the modifications this slot starts with on (#1155). Left out keeps the stored row's
+   * list, so a client that predates the field can't clear it; `[]` clears it.
+   */
+  modifications?: string[];
 }
 
 export interface CustomProgramResponse {

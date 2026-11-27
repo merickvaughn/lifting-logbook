@@ -1045,7 +1045,8 @@ export default function WorkoutLogger({
       .reverse()
       .map((ws) => loggedSets.get(setKey(lift, ws.setNum)))
       .find((record) => record !== undefined);
-    return lastLogged ? modificationIds(lastLogged) : [];
+    // Nothing logged yet: the slot's start-on list, then off (#1155).
+    return lastLogged ? modificationIds(lastLogged) : lift.startOn ?? [];
   }
 
   /**

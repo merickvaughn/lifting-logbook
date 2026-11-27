@@ -47,6 +47,11 @@ export type LiftInstance = {
   id: string;
   lift: string;
   weeks: Record<EditableWeek, WeekParams>;
+  /**
+   * Ids of the lift modifications this slot starts with on (#1155). One list for the slot, the same
+   * on all three weeks' rows.
+   */
+  modifications: string[];
 };
 
 export type WorkoutDayModel = {
@@ -149,6 +154,8 @@ export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
             // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
             // below it, clear it rather than send a range the API rejects and the UI can't fix.
             repsLow: params.repsLow != null && params.repsLow <= params.reps ? params.repsLow : null,
+            // Sent even when empty, so clearing the last one clears it in the store (#1155).
+            modifications: inst.modifications,
           });
         }
       });
@@ -209,7 +216,13 @@ export function daysFromSpecs(specs: CustomProgramSpecRow[]): WorkoutDayModel[] 
               instRows[0];
             return pickWeekParams(row);
           };
-          return { id: uid(), lift, weeks: { 1: pick(1), 2: pick(2), 3: pick(3) } };
+          const first = instRows.find((r) => r.week === 1) ?? instRows[0];
+          return {
+            id: uid(),
+            lift,
+            weeks: { 1: pick(1), 2: pick(2), 3: pick(3) },
+            modifications: first.modifications ?? [],
+          };
         });
 
       return { id: uid(), offset, instances };
