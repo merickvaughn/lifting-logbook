@@ -1,4 +1,4 @@
-import type { LiftingProgramSpecResponse, LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
+import type { LiftingProgramSpecResponse, LiftRecordResponse, SetResponse, WeightUnit } from '@lifting-logbook/types';
 import type { ComplexPlan, ProgressionPlan } from '@/lib/workoutPlan';
 
 export interface WarmUpSetData {
@@ -103,15 +103,25 @@ export interface WorkoutLoggerProps {
    */
   ownMaxes: Readonly<Record<string, number>> | null;
   /**
-   * The workout's complex slots (#1495), shown read-only: logging a complex is #1496. They are
-   * kept out of `lifts`, so nothing is logged under a `complex:<id>` key.
+   * The workout's complex slots (#1495), each logged on a card of its own (#1496). They are kept
+   * out of `lifts`, so nothing is logged under a `complex:<id>` key.
    */
   complexes?: ComplexSlot[];
 }
 
-/** A complex slot as the logger shows it: what it is and its planned working weights, in lbs. */
+/** A set logged in a complex, as the workout lists it under the complex's slot (#1496). */
+export type LoggedComplexSet = Pick<SetResponse, 'id' | 'setNum' | 'weight' | 'reps'> & {
+  /** The component lift, as stored. */
+  lift: string;
+  complexRound: number;
+};
+
+/** A complex slot as the logger shows it: what it is, its planned working weights in lbs, and its logged sets. */
 export interface ComplexSlot {
   complex: ComplexPlan;
   tm: number;
   workWeights: number[];
+  /** Which complex slot of the workout it is, from 0, which places its sets (`complexSetKey`). */
+  ordinal: number;
+  logged: LoggedComplexSet[];
 }

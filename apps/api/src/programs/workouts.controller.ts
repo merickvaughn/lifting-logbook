@@ -6,7 +6,7 @@ import {
   Logger,
   Param,
 } from '@nestjs/common';
-import { LiftRecord, liftIdFor } from '@lifting-logbook/core';
+import { LiftRecord, complexIdOf, liftIdFor } from '@lifting-logbook/core';
 import { WorkoutResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { modificationNamesFor } from '../lifts/lift-modification.util';
@@ -108,6 +108,11 @@ export class WorkoutsController {
     const macrocycleStartDate = 'macrocycleDate' in dashboard ? dashboard.macrocycleDate : undefined;
 
     const macrocycleId = locked && 'macrocycleDate' in dashboard ? await macrocycleIdFor(repos, dashboard) : undefined;
+    // A planned complex slot takes the sets logged in its complex, which name it (#1496). Read only
+    // for a day that plans one.
+    const complexNames = planned.some(({ lift }) => complexIdOf(lift) !== undefined)
+      ? new Map((await repos.barbellComplex.list()).map((c) => [c.id, c.name]))
+      : undefined;
     const grouped = toWorkoutResponse(program, dashboard.macrocycleNum, workoutNum, week, adjustedRecords, {
       overrideDate: overrideDate ?? undefined,
       plannedLifts: planned,
@@ -118,6 +123,7 @@ export class WorkoutsController {
       offset: workoutKey ? workoutKey.offset : null,
       renamedLifts: renamed,
       modificationNames: await modificationNamesFor(repos, adjustedRecords),
+      complexNames,
     });
     const response = await this.withLastSessions(repos.liftRecord, program, dashboard.macrocycleNum, grouped);
     return macrocycleId ? { ...response, macrocycleId } : response;

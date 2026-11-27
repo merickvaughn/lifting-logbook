@@ -58,6 +58,20 @@ const PROGRAM_SPEC = [
   { week: 1, lift: 'overhead-press', order: 4, offset: 0, increment: 5, sets: 3, reps: 5, amrap: true, warmUpPct: '0.4,0.5,0.6', wtDecrementPct: 0, activation: 'none' },
 ];
 
+// The complex /__reset?withComplex=true plans in workout 1 (#1496): deadlift and squat, whose
+// training maxes come from INITIAL_TRAINING_MAXES, so squat (300) limits it.
+const BEAR_COMPLEX = {
+  id: 'complex-bear',
+  name: 'Bear',
+  components: [
+    { lift: 'deadlift', reps: 1 },
+    { lift: 'squat', reps: 2 },
+  ],
+  createdAt: '2026-01-01T00:00:00.000Z',
+};
+const COMPLEX_SLOT = `complex:${BEAR_COMPLEX.id}`;
+const COMPLEX_SPEC_ROW = { week: 1, lift: COMPLEX_SLOT, order: 5, offset: 0, increment: 5, sets: 2, reps: 1, amrap: false, warmUpPct: '', wtDecrementPct: 0, activation: 'none' };
+
 const TM_HISTORY = {
   entries: [
     { id: 'h1', lift: 'squat', weight: 300, unit: 'lbs', date: '2025-01-01', isPR: false, source: 'test', goalMet: false },
@@ -296,6 +310,10 @@ function createInitialState() {
     barbellComplexes: [],
     // Never reused, like focusSeq, so a complex created after a delete gets a fresh id.
     complexSeq: 0,
+    // /__reset?withComplex=true (#1496): workout 1 also plans COMPLEX_SLOT, and the sets logged in
+    // it are kept here, as the API lists them under the slot (`toWorkoutResponse`).
+    complexSlot: false,
+    complexSets: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
     liftModifications: [],
     // /programs/:p/modification-maxes (#1153) — own maxes. One list serves every program.
@@ -859,6 +877,10 @@ const server = createServer(async (req, res) => {
           estimate: { weight: 250, unit: 'lbs', from: { date: '2025-01-06', weight: 250, reps: 5 } },
         },
       ];
+    }
+    if (url.searchParams.get('withComplex') === 'true') {
+      state.complexSlot = true;
+      state.barbellComplexes = [{ ...BEAR_COMPLEX }];
     }
     if (url.searchParams.get('withNonCycleWorkout') === 'true') {
       state.nonCycleRecords = [1, 2, 3].map((setNum) =>
@@ -1852,7 +1874,10 @@ const server = createServer(async (req, res) => {
     // GET /programs/:p/workouts/:workoutNum
     if (method === 'GET' && rest[0] === 'workouts' && rest.length === 2) {
       const workoutNum = Number(rest[1]);
-      json(res, { ...WORKOUT, workoutNum, skipped: state.skippedWorkouts.has(workoutNum) });
+      const lifts = state.complexSlot
+        ? [...WORKOUT.lifts, { lift: COMPLEX_SLOT, planned: true, sets: state.complexSets }]
+        : WORKOUT.lifts;
+      json(res, { ...WORKOUT, workoutNum, lifts, skipped: state.skippedWorkouts.has(workoutNum) });
       return;
     }
 
@@ -1874,7 +1899,7 @@ const server = createServer(async (req, res) => {
 
     // GET /programs/:p/spec
     if (method === 'GET' && rest[0] === 'spec') {
-      json(res, PROGRAM_SPEC);
+      json(res, state.complexSlot ? [...PROGRAM_SPEC, COMPLEX_SPEC_ROW] : PROGRAM_SPEC);
       return;
     }
 
@@ -1976,7 +2001,28 @@ const server = createServer(async (req, res) => {
         name: state.liftModifications.find((m) => m.id === id)?.name ?? id,
       }));
       const record = { id: `r-${Date.now()}`, ...fields, ...(named.length > 0 && { modifications: named }) };
+      // A complex's set is kept, as the workout lists it under the slot with its lift (#1496).
+      if (state.complexSlot && body.complex !== undefined) {
+        record.id = `r-complex-${body.occurrence}-${body.setNum}`;
+        const { id, setNum, weight, reps, lift, complexRound } = record;
+        state.complexSets = [
+          ...state.complexSets.filter((x) => x.id !== id),
+          { id, setNum, weight, reps, amrap: false, notes: '', lift, complex: body.complex, complexRound },
+        ];
+      }
       json(res, record, 201);
+      return;
+    }
+
+    // DELETE /programs/:p/lift-records/:id (#1496): only the complex sets the mock keeps.
+    if (method === 'DELETE' && rest[0] === 'lift-records' && rest.length === 2) {
+      const id = decodeURIComponent(rest[1]);
+      if (!state.complexSets.some((x) => x.id === id)) {
+        json(res, { statusCode: 404, message: 'Lift record not found' }, 404);
+        return;
+      }
+      state.complexSets = state.complexSets.filter((x) => x.id !== id);
+      noContent(res);
       return;
     }
 

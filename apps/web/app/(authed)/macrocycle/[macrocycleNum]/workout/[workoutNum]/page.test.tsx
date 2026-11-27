@@ -161,10 +161,18 @@ async function renderPage(): Promise<{
 }
 
 describe('WorkoutLoggingPage — a complex slot (#1495)', () => {
-  it('keeps the complex out of the lifts to log and hands it to the logger to show, planned', async () => {
+  it('keeps the complex out of the lifts to log and hands it to the logger with its planned weights and logged sets', async () => {
     seedWorkout([
       { lift: 'Squat', planned: true, sets: [] },
-      { lift: 'complex:c-bear', planned: true, sets: [] },
+      {
+        lift: 'complex:c-bear',
+        planned: true,
+        // A set the API listed under the slot, and one with no round, which isn't the complex's.
+        sets: [
+          { ...LOGGED_SET, id: 'bear-1', setNum: 2, weight: 150, reps: 1, lift: 'Front Squat', complexRound: 1 },
+          { ...LOGGED_SET, id: 'stray', setNum: 3 },
+        ],
+      },
     ]);
     mockedMaxes.mockResolvedValue([
       { lift: 'Squat', weight: 200 },
@@ -205,6 +213,8 @@ describe('WorkoutLoggingPage — a complex slot (#1495)', () => {
         },
         tm: 150,
         workWeights: [150],
+        ordinal: 0,
+        logged: [{ id: 'bear-1', setNum: 2, weight: 150, reps: 1, lift: 'Front Squat', complexRound: 1 }],
       },
     ]);
   });

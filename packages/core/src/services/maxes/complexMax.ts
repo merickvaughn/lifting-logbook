@@ -11,6 +11,33 @@ export function complexIdOf(lift: string): string | undefined {
   return lift.startsWith(COMPLEX_LIFT_PREFIX) ? lift.slice(COMPLEX_LIFT_PREFIX.length) : undefined;
 }
 
+/** The highest `occurrence` and `setNum` a logged set can have: the create endpoint's bounds. */
+export const MAX_SET_OCCURRENCE = 20;
+export const MAX_SET_NUM = 50;
+
+/**
+ * Where a logged complex set is stored (#1496): the `occurrence` and `setNum` of one component's
+ * set in one round, for the workout's `slot`-th complex slot (from 0) with `components` lifts.
+ *
+ * The natural key holds the lift, occurrence and set number but not the complex, so a complex set
+ * must not take a number the lift's own sets use. Each complex slot takes an occurrence from the
+ * top of the range, `MAX_SET_OCCURRENCE - slot`, which no day plans a lift often enough to reach,
+ * and numbers its sets `(round - 1) * components + component + 1`, so a lift that is in the
+ * complex twice still gets a set of its own each round. `undefined` once that passes
+ * `MAX_SET_NUM`, or for a slot past the range: no more rounds fit.
+ */
+export function complexSetKey(
+  slot: number,
+  round: number,
+  component: number,
+  components: number,
+): { occurrence: number; setNum: number } | undefined {
+  const occurrence = MAX_SET_OCCURRENCE - slot;
+  const setNum = (round - 1) * components + component + 1;
+  if (occurrence < 1 || round < 1 || setNum > MAX_SET_NUM) return undefined;
+  return { occurrence, setNum };
+}
+
 /**
  * The max a complex plans from, or the components that have none. `limitingLift` is the
  * component the weight comes from.

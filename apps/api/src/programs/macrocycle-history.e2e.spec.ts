@@ -283,6 +283,7 @@ describe('Macrocycle history HTTP (e2e, in-memory adapters)', () => {
         macrocycleNum: num, workoutNum: 1, date: '2025-01-08', lift: 'Squat', setNum: 2, weight: 500, reps: 5,
       }],
       ['PATCH lift-records/:id', 'PATCH', `/programs/${PROGRAM}/lift-records/${PROGRAM}-${num}-1-20250106-Squat-1`, { weight: 500 }],
+      ['DELETE lift-records/:id', 'DELETE', `/programs/${PROGRAM}/lift-records/${PROGRAM}-${num}-1-20250106-Squat-1`, undefined],
       ['POST lift-override', 'POST', `/programs/${PROGRAM}/macrocycles/${num}/workouts/1/lift-overrides`, { action: 'add', lift: 'Squat' }],
       ['DELETE lift-override', 'DELETE', `/programs/${PROGRAM}/macrocycles/${num}/workouts/1/lift-overrides/Squat`, undefined],
       ['PATCH reschedule', 'PATCH', `/programs/${PROGRAM}/macrocycles/${num}/workouts/1/reschedule`, { newDate: '2026-01-09' }],

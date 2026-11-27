@@ -1,4 +1,4 @@
-import { complexIdOf, complexLift, complexMax } from '@src/core';
+import { MAX_SET_NUM, MAX_SET_OCCURRENCE, complexIdOf, complexLift, complexMax, complexSetKey } from '@src/core';
 
 const maxes = (byLift: Record<string, number>) => (lift: string) => byLift[lift];
 
@@ -28,6 +28,24 @@ describe('complexMax — weakest-link loading (#1495)', () => {
     expect(complexMax(repeated, maxes({ 'Power Clean': 135, 'Front Squat': 0 }))).toEqual({
       missing: ['Front Squat', 'Push Press'],
     });
+  });
+});
+
+describe('complexSetKey — where a logged complex set is stored (#1496)', () => {
+  it('numbers each round’s components in order, from an occurrence at the top of the range', () => {
+    expect(complexSetKey(0, 1, 0, 3)).toEqual({ occurrence: MAX_SET_OCCURRENCE, setNum: 1 });
+    expect(complexSetKey(0, 1, 2, 3)).toEqual({ occurrence: MAX_SET_OCCURRENCE, setNum: 3 });
+    expect(complexSetKey(0, 2, 0, 3)).toEqual({ occurrence: MAX_SET_OCCURRENCE, setNum: 4 });
+  });
+
+  it('gives a second complex slot in the day an occurrence of its own', () => {
+    expect(complexSetKey(1, 1, 0, 3)?.occurrence).toBe(MAX_SET_OCCURRENCE - 1);
+  });
+
+  it('has no key once a round would pass the highest set number', () => {
+    expect(complexSetKey(0, 25, 1, 2)).toEqual({ occurrence: MAX_SET_OCCURRENCE, setNum: MAX_SET_NUM });
+    expect(complexSetKey(0, 26, 0, 2)).toBeUndefined();
+    expect(complexSetKey(MAX_SET_OCCURRENCE, 1, 0, 2)).toBeUndefined();
   });
 });
 

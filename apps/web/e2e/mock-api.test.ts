@@ -378,3 +378,34 @@ describe('mock-api barbell complexes (#1495)', () => {
     ]);
   });
 });
+
+describe('mock-api complex logging (#1496)', () => {
+  beforeEach(async () => {
+    await fetch(`${BASE}/__reset?withComplex=true`);
+  });
+
+  const slotSets = async () => {
+    const workout = (await (await fetch(`${BASE}/programs/5-3-1/workouts/1`)).json()) as {
+      lifts: { lift: string; sets: { id: string; lift?: string; complexRound?: number }[] }[];
+    };
+    return workout.lifts.find((l) => l.lift === 'complex:complex-bear')?.sets;
+  };
+
+  it('lists a logged complex set under the slot, and deletes it by id', async () => {
+    expect(await slotSets()).toEqual([]);
+    const set = { macrocycleNum: 1, workoutNum: 1, lift: 'squat', occurrence: 20, setNum: 2, weight: 135, reps: 2 };
+    const res = await jsonRequest('/programs/5-3-1/lift-records', 'POST', JSON.stringify({ ...set, complex: 'Bear', complexRound: 1 }));
+    const { id } = (await res.json()) as { id: string };
+    expect(await slotSets()).toEqual([expect.objectContaining({ id, lift: 'squat', complexRound: 1 })]);
+
+    const del = () => fetch(`${BASE}/programs/5-3-1/lift-records/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    expect((await del()).status).toBe(204);
+    expect(await slotSets()).toEqual([]);
+    expect((await del()).status).toBe(404);
+  });
+
+  it('plans no complex slot without the flag', async () => {
+    await fetch(`${BASE}/__reset`);
+    expect(await slotSets()).toBeUndefined();
+  });
+});

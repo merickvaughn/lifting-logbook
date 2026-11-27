@@ -15,7 +15,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { CreateLiftRecordRequest } from '@lifting-logbook/types';
+import { COMPLEX_LIMITS, CreateLiftRecordRequest } from '@lifting-logbook/types';
 import {
   BARE_DATE_MESSAGE,
   BARE_DATE_PATTERN,
@@ -109,6 +109,24 @@ export class CreateLiftRecordDto
   @IsOptional()
   @IsString()
   program?: string;
+
+  // The complex the set was done in, by name, as logged and imported sets name it (#1494, #1496).
+  // Not checked against the lifter's complexes: like an imported set's, the tag stands for the set
+  // even after the complex is renamed or deleted.
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(COMPLEX_LIMITS.MAX_NAME_LENGTH)
+  complex?: string;
+
+  // A round is at most the set number, since each round takes a set of its own. Refused without
+  // `complex` by LiftRecordsController.createLiftRecord.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  complexRound?: number;
 
   // Upper bounds are generous (well beyond any realistic program length) — they exist
   // to turn an obvious client bug (a stray digit, an off-by-orders-of-magnitude loop

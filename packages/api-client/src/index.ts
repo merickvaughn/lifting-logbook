@@ -632,6 +632,14 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
     },
+    /** Deletes one logged set by its id (#1496): how a complex round is removed. */
+    deleteLiftRecord(program: string, id: string, macrocycleId?: string): Promise<void> {
+      return request(`/programs/${enc(program)}/lift-records/${enc(id)}`, {
+        method: 'DELETE',
+        headers: macrocycleHeaders(macrocycleId, false),
+        cache: 'no-store',
+      });
+    },
 
     // -- Non-cycle workouts (proposal 2026-11-06, decision 23, #1184) --------
     // Later sets and edits go through createLiftRecord/updateLiftRecord under NON_CYCLE_PROGRAM,

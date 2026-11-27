@@ -9,6 +9,7 @@ import {
   TrainingMax,
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
+  complexIdOf,
   liftIdFor,
   liftOccurrenceKey,
   liftOccurrences,
@@ -404,6 +405,11 @@ export interface WorkoutResponseOptions {
   renamedLifts?: ReadonlyMap<string, string> | undefined;
   /** The names of the modifications on the records' sets, from `modificationNamesFor`. */
   modificationNames?: ReadonlyMap<string, string> | undefined;
+  /**
+   * The lifter's complexes' names by id (#1496), so a planned `complex:<id>` slot can take the
+   * sets tagged with its complex's name.
+   */
+  complexNames?: ReadonlyMap<string, string> | undefined;
 }
 
 /**
@@ -445,7 +451,24 @@ export const toWorkoutResponse = (
     offset,
     renamedLifts,
     modificationNames = new Map<string, string>(),
+    complexNames,
   } = options;
+
+  // A set logged in a complex (#1496) belongs to the planned slot of that complex, not to its
+  // lift's own sets: by the complex's name, as sets name it, and with a round, as the logger
+  // writes it. One with no such slot, or no round, stays with its lift. When a day plans one
+  // complex twice, the first slot takes its sets.
+  const complexSlotByName = new Map<string, { lift: string; occurrence: number }>();
+  if (plannedLifts && complexNames) {
+    const slotOccurrences = liftOccurrences(plannedLifts);
+    plannedLifts.forEach(({ lift }, i) => {
+      const id = complexIdOf(lift);
+      const name = id === undefined ? undefined : complexNames.get(id);
+      if (name !== undefined && !complexSlotByName.has(name)) {
+        complexSlotByName.set(name, { lift, occurrence: slotOccurrences[i] ?? 0 });
+      }
+    });
+  }
 
   // A record stored by catalog id, as import stores it, has lost its spelling, so it
   // joins the lift the plan names, or takes that lift's swap (#1118). Keys here are ids,
@@ -480,6 +503,11 @@ export const toWorkoutResponse = (
       ...modificationRefs(r, modificationNames),
       ...withComplex(r.complex, r.complexRound),
     };
+    const complexSlot = r.complex && r.complexRound != null ? complexSlotByName.get(r.complex) : undefined;
+    if (complexSlot) {
+      addSet(complexSlot.lift, complexSlot.occurrence, { ...set, lift: r.lift });
+      continue;
+    }
     const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;
     if (lift === r.lift) addSet(lift, occurrence, set);

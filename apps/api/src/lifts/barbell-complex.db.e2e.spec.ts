@@ -9,8 +9,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaClient } from '@prisma/client';
-import { complexLift } from '@lifting-logbook/core';
-import { BarbellComplexResponse, WorkoutResponse } from '@lifting-logbook/types';
+import { MAX_SET_OCCURRENCE, complexLift } from '@lifting-logbook/core';
+import { BarbellComplexResponse, LiftRecordResponse, WorkoutResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
@@ -50,6 +50,7 @@ const SPEC_ROW = {
 
 async function cleanUsers(prisma: PrismaClient): Promise<void> {
   const where = { userId: { in: USERS } };
+  await prisma.liftRecord.deleteMany({ where });
   await prisma.barbellComplex.deleteMany({ where });
   // Specs cascade from their program.
   await prisma.customProgram.deleteMany({ where });
@@ -155,5 +156,71 @@ describeOrSkip('Barbell complexes HTTP (e2e, PrismaRepositoryFactory, #1495)', (
     const workout = await owner('GET', `/programs/${id}/workouts/1`);
     expect(workout.statusCode).toBe(200);
     expect((workout.json() as WorkoutResponse).lifts.map((l) => l.lift)).toEqual(['Bench Press', complexLift(bear.id)]);
+  });
+
+  it('logs a complex’s rounds beside its lift’s own sets, lists them under the complex, and deletes one (#1496)', async () => {
+    const press = await owner('POST', '/lifts/complexes', {
+      name: 'Press complex',
+      components: [
+        { lift: 'Bench Press', reps: 3 },
+        { lift: 'Push Press', reps: 2 },
+      ],
+    });
+    const complex = press.json() as BarbellComplexResponse;
+    const program = await owner('POST', '/programs/custom', {
+      name: 'Press day',
+      specs: [
+        { ...SPEC_ROW, lift: 'Bench Press', order: 1 },
+        { ...SPEC_ROW, lift: complexLift(complex.id), order: 2 },
+      ],
+    });
+    const { id } = program.json() as { id: string };
+    await owner('POST', `/programs/${id}/macrocycles/initialize`, {});
+    const set = { program: id, macrocycleNum: 1, workoutNum: 1, date: '2026-11-27', weight: 135 };
+
+    // The lift's own set 1, and the complex's Bench Press set 1 in its own occurrence: no clash.
+    const own = await owner('POST', `/programs/${id}/lift-records`, { ...set, lift: 'Bench Press', setNum: 1, reps: 5 });
+    expect(own.statusCode).toBe(201);
+    const logged: LiftRecordResponse[] = [];
+    for (const [setNum, lift, reps, round] of [
+      [1, 'Bench Press', 3, 1],
+      [2, 'Push Press', 2, 1],
+      [3, 'Bench Press', 3, 2],
+      [4, 'Push Press', 1, 2],
+    ] as const) {
+      const res = await owner('POST', `/programs/${id}/lift-records`, {
+        ...set,
+        lift,
+        occurrence: MAX_SET_OCCURRENCE,
+        setNum,
+        reps,
+        complex: 'Press complex',
+        complexRound: round,
+      });
+      expect(res.statusCode).toBe(201);
+      logged.push(res.json() as LiftRecordResponse);
+    }
+    expect(logged[0]).toMatchObject({ complex: 'Press complex', complexRound: 1 });
+    const roundAlone = await owner('POST', `/programs/${id}/lift-records`, { ...set, lift: 'Push Press', setNum: 9, reps: 1, complexRound: 1 });
+    expect(roundAlone.statusCode).toBe(400);
+
+    const read = async () => ((await owner('GET', `/programs/${id}/workouts/1`)).json() as WorkoutResponse).lifts;
+    const [bench, slot] = await read();
+    expect(bench?.sets.map((s) => [s.setNum, s.reps])).toEqual([[1, 5]]);
+    expect(slot?.lift).toBe(complexLift(complex.id));
+    expect(slot?.planned).toBe(false);
+    expect(slot?.sets.map((s) => [s.complexRound, s.lift, s.reps, s.weight])).toEqual([
+      [1, 'Bench Press', 3, 135],
+      [1, 'Push Press', 2, 135],
+      [2, 'Bench Press', 3, 135],
+      [2, 'Push Press', 1, 135],
+    ]);
+
+    for (const record of logged.slice(2)) {
+      expect((await owner('DELETE', `/programs/${id}/lift-records/${encodeURIComponent(record.id)}`)).statusCode).toBe(204);
+    }
+    expect((await read())[1]?.sets.map((s) => s.complexRound)).toEqual([1, 1]);
+    const again = await owner('DELETE', `/programs/${id}/lift-records/${encodeURIComponent(logged[3]?.id ?? '')}`);
+    expect(again.statusCode).toBe(404);
   });
 });
