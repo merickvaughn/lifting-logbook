@@ -18,13 +18,13 @@ This document maps every critical user flow to its test coverage across the API 
 | Body weight logging | ✅ | ✅† | ❌ |
 | History page — lift records + TM history together | ✅ each | ✅ | ✅ |
 | User settings (`GET`/`PATCH /users/me/settings`) | ✅ | ✅ | ❌ |
-| Custom programs (`GET`/`POST /programs/custom`) | N/A‡ | ✅ | ❌ |
+| Custom programs (`GET`/`POST /programs/custom`) | ✅‡ | ✅ | ❌ |
 | Switch program (`POST /programs/:p/switch`) | ✅ | ✅ | ✅ |
 | Set up a missing training max (Settings, Finish workout, import result) | ✅ | ✅ | ✅ |
 
 **†** Body weight has no Prisma adapter. `BODY_WEIGHT_REPOSITORY` is always wired to `InMemoryBodyWeightRepository` — even when `DATABASE_URL` is set. The DB-spec test exercises the HTTP contract but cannot make DB-level persistence assertions.
 
-**‡** Custom programs are backed exclusively by Prisma (no in-memory variant exists for `CustomProgramsRepository` — see `docs/domain-model.md` D17, still open). User settings and switch program got their in-memory coverage in #1029/#1030.
+**‡** Custom programs are backed exclusively by Prisma (no in-memory variant exists for `CustomProgramsRepository` — see `docs/domain-model.md` D17, still open), so the in-memory spec covers only the no-database contract: the list is empty, `GET :id` is 404, and writes return 503 (#1479). User settings and switch program got their in-memory coverage in #1029/#1030.
 
 ## Test Files
 
@@ -32,6 +32,7 @@ This document maps every critical user flow to its test coverage across the API 
 |---|---|
 | `apps/api/src/programs/programs.e2e.spec.ts` | Full API surface via in-memory adapters. Runs on every `npm test`. |
 | `apps/api/src/user-settings/user-settings.e2e.spec.ts` | `GET`/`PATCH /users/me/settings` via in-memory adapters (issue #1029). Runs on every `npm test`. |
+| `apps/api/src/custom-programs/custom-programs.e2e.spec.ts` | `/programs/custom` routes with no database: empty list, 404 on `GET :id`, 503 on writes (issue #1479). Runs on every `npm test`. |
 | `apps/api/src/programs/programs.db.e2e.spec.ts` | Full API surface via Prisma adapters. Postgres is auto-provisioned by Jest globalSetup (Testcontainers locally; service container in CI). HTTP requests run through the restricted `lifting_app` role (RLS-enforced) by default; direct DB seeding/cleanup and cross-user fixture setup use the owner/superuser connection via `LIFTING_TC_OWNER_DATABASE_URL`. Runs on every `npm test -w @lifting-logbook/api` when Docker is available. |
 | `apps/api/src/adapters/prisma/rls.db.e2e.spec.ts` | Row-Level Security enforcement and request-wiring tests (issues #511, #644). Connects as `lifting_app` for policy-enforcement assertions and full-app-boot HTTP tests; uses the owner connection only for cross-user seeding/cleanup and RLS-independent metadata checks against `pg_policy`/`pg_roles`. |
 | `apps/api/src/observability/otel.e2e.spec.ts` | OTel + nestjs-pino trace correlation smoke test. |
