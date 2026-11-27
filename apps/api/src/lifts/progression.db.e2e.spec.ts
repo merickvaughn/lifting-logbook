@@ -2,8 +2,9 @@
 // Postgres is provisioned by jest.global-setup.js. As in lift-modification.db.e2e.spec.ts:
 //   - `app` boots against the restricted lifting_app role, so every HTTP assertion below runs
 //     through RlsInterceptor and forced row-level security, as production does;
-//   - `owner` is the owner connection, used to seed and clean up across synthetic users, and to
-//     run the backfill migration the way the migrate job does.
+//   - `owner` is the owner connection, used to seed and clean up across synthetic users. It is a
+//     superuser, which row-level security never filters, unlike the migrate job's role, so the
+//     backfill's effect in production is tested as a role like the migrator (#1236), last below.
 // That one user can't read another's values is proven in rls.db.e2e.spec.ts.
 import 'reflect-metadata';
 import { readFileSync } from 'fs';
@@ -296,8 +297,9 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
   });
 
   describe('the backfill migration', () => {
-    // Runs the shipped SQL as the owner, as the migrate job does, inside a transaction that is
-    // always rolled back: the UPDATE reaches every user's rows, so committing it would change
+    // Runs the shipped SQL as the superuser owner, so it checks what the UPDATE does to rows it
+    // can see, not whether the migrator sees them (it doesn't: see the #1236 test below). Inside
+    // a transaction that is always rolled back: the UPDATE reaches every user's rows, so committing it would change
     // rows another suite running against the same database left null on purpose.
     // Prisma runs one statement per call, so the file is split on `;` once its comments go.
     const backfillStatements = (): string[] =>
