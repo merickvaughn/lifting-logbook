@@ -129,6 +129,23 @@ export function preImageKeyNumber(key: string): number | null {
   return num === undefined ? null : Number(num);
 }
 
+/**
+ * {@link PRE_IMAGE_KEY_NUMBER} with a sign allowed, as the #1200 migration's `key_number` reads
+ * it. A number stored before #1224 checked its range, or one `macrocycle_renumber_reverse()` put
+ * back, can be negative (#1235).
+ */
+const signedKeyNumberPattern = /^(?:macrocycle-row:)?(-?[0-9]+)(?::|$)/;
+
+/**
+ * The macrocycle number a lift-records pre-image key holds, negative ones included, else null.
+ * Undo tells sets and `legacy` rows from training maxes with it, so a set on a negative number
+ * is deleted rather than read as a training max (#1235).
+ */
+export function signedPreImageKeyNumber(key: string): number | null {
+  const num = signedKeyNumberPattern.exec(key)?.[1];
+  return num === undefined ? null : Number(num);
+}
+
 /** A key's number is one of `on`, or any number but those in `except`. */
 export type KeyNumbers = { on: readonly number[] } | { except: readonly number[] };
 
