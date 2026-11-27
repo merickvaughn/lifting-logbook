@@ -240,6 +240,23 @@ export const LIFT_CATALOG: readonly CatalogLift[] = [
     muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
     progression: DOUBLE_8_12,
   },
+  // Its own lift, not a Wide grip modification of Cable Curl, so it keeps its own training max
+  // (issue #1499). The alias is the RPT-style sheet name a 2026 logbook uses, as `CBL Curls` is
+  // for Cable Curl. The profile follows the curl rule: a lone `pull`, elbow flexion, single-joint.
+  // Muscles: a supinated curl is biceps-led, with the brachioradialis (Forearms) assisting —
+  // Coratella et al. 2023, https://doi.org/10.3390/sports11030064 (supinated grip gave the
+  // highest biceps excitation of the grips tested), and Marcolin et al. 2018,
+  // https://doi.org/10.7717/peerj.5165 (biceps and brachioradialis in straight-bar curls).
+  // Neither study, nor any other primary source found, measures how grip width changes the
+  // load a lifter can curl, so the catalog records no ratio to Cable Curl: its training max
+  // starts from the lifter's own logged sets. The progression is the accessory heuristic above.
+  {
+    id: 'wide-grip-cable-curl', name: 'Wide-Grip Cable Curl', classification: 'accessory',
+    movementProfile: { patterns: ['pull'], jointActions: ['flexion'], complexity: 'simple' },
+    muscles: { primary: ['Biceps'], secondary: ['Forearms'] },
+    progression: DOUBLE_8_12,
+    aliases: ['Wide-Grip CBL Curls'], // Lifting_Logbook_2026
+  },
   // A lateral raise abducts the arm; it presses nothing and pulls nothing, so it carries no tag.
   {
     id: 'lateral-raise', name: 'Lateral Raise', classification: 'accessory',

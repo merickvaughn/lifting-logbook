@@ -54,7 +54,7 @@ const mockedGetUserSettings = getUserSettings as unknown as jest.Mock;
 const PROGRAM = { id: 'prog-1', name: 'My Program', description: null, baseTemplate: null, createdAt: '2026-01-01' };
 const CUSTOM_LIFT = {
   id: 'custom-1',
-  name: 'Wide-Grip CBL Curls',
+  name: 'Drag Curls',
   classification: 'accessory',
   movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
   isBodyweightComponent: false,
@@ -191,7 +191,7 @@ describe('ImportPage — custom programs / custom lifts fetch (#911)', () => {
 
     expect(html).toContain('import-wizard');
     expect(html).toContain('My Program');
-    expect(html).toContain('Wide-Grip CBL Curls');
+    expect(html).toContain('Drag Curls');
   });
 
   it('falls back to an empty custom-lifts list and logs when fetchCustomLifts fails', async () => {
@@ -225,7 +225,7 @@ describe('ImportPage — custom programs / custom lifts fetch (#911)', () => {
     expect(html).toContain('import-wizard');
     // The programs fetch failing must not affect the independently-fetched
     // custom lifts (the two run concurrently, not one gated on the other).
-    expect(html).toContain('Wide-Grip CBL Curls');
+    expect(html).toContain('Drag Curls');
     const encoded = html.match(/data-programs="([^"]*)"/)?.[1];
     if (encoded === undefined) throw new Error('data-programs attribute not found');
     expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toEqual([]);
@@ -257,7 +257,7 @@ describe('ImportPage — custom programs / custom lifts fetch (#911)', () => {
     // The unit fetch failing must not affect the independently-fetched
     // programs/custom lifts.
     expect(html).toContain('My Program');
-    expect(html).toContain('Wide-Grip CBL Curls');
+    expect(html).toContain('Drag Curls');
     const encoded = html.match(/data-unit="([^"]*)"/)?.[1];
     if (encoded === undefined) throw new Error('data-unit attribute not found');
     expect(JSON.parse(encoded.replace(/&quot;/g, '"'))).toBe('lbs');

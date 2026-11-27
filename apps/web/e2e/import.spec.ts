@@ -244,8 +244,8 @@ test('import wizard REVIEW: create a new lift for an unrecognized name, resolvin
     mimeType: 'text/csv',
     buffer: Buffer.from(
       'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
-        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10\n' +
-        '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,2,90,8',
+        '5-3-1,1,1,2026-01-01,Drag Curls,1,90,10\n' +
+        '5-3-1,1,1,2026-01-01,Drag Curls,2,90,8',
     ),
   });
   await page.getByRole('button', { name: 'Analyze' }).click();
@@ -258,10 +258,10 @@ test('import wizard REVIEW: create a new lift for an unrecognized name, resolvin
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 
   // Both ambiguous rows surface the create-new affordance for the same name.
-  const prompts = page.getByText('No match — create "Wide-Grip CBL Curls" as a new lift');
+  const prompts = page.getByText('No match — create "Drag Curls" as a new lift');
   await expect(prompts).toHaveCount(2);
 
-  const createButtons = page.getByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' });
+  const createButtons = page.getByRole('button', { name: 'Create "Drag Curls" as a new lift' });
   await expect(createButtons.first()).toBeDisabled();
 
   // Pick a classification, then confirm — only the first row's chips/button are used;
@@ -281,13 +281,13 @@ test('import wizard REVIEW: create a new lift for an unrecognized name, resolvin
 
   // #1273: the new lift has sets and no training max, so the result offers one.
   await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toBeVisible();
-  const input = page.getByRole('spinbutton', { name: 'Wide-Grip CBL Curls training max' });
+  const input = page.getByRole('spinbutton', { name: 'Drag Curls training max' });
   await expect(input).toHaveValue('107.5');
   await expect(page.getByText(/^Estimated from 90 lbs × 10 on 1 Jan/)).toBeVisible();
   const saved = page.waitForRequest((r) => r.method() === 'PATCH' && r.url().includes('/training-maxes'));
   await page.getByRole('button', { name: 'Set up' }).click();
   // Saved under the lift as its sets store it, the custom lift's id, not its name (#1290).
   expect((await saved).postDataJSON()).toEqual({ maxes: [{ lift: 'custom-1', weight: 107.5, unit: 'lbs' }] });
-  await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Wide-Grip CBL Curls.' })).toBeFocused();
+  await expect(page.getByRole('status').filter({ hasText: 'Training max set up for Drag Curls.' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Lifts without a training max' })).toBeHidden();
 });

@@ -90,8 +90,8 @@ const LIFT_RECORDS = [
 // "are all rows resolved" check derive from this list, so growing it doesn't
 // require a matching hand-edit at the commit branch too.
 const AMBIGUOUS_LIFT_ROWS = [
-  { rowIndex: 1, originalLift: 'Wide-Grip CBL Curls' },
-  { rowIndex: 2, originalLift: 'Wide-Grip CBL Curls' },
+  { rowIndex: 1, originalLift: 'Drag Curls' },
+  { rowIndex: 2, originalLift: 'Drag Curls' },
 ];
 
 // The Assign step (#1256). A file with no program, macrocycle or workout columns, which the

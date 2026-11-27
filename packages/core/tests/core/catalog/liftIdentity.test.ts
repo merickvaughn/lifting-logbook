@@ -27,6 +27,10 @@ describe("liftIdFor (#1118)", () => {
     ["Dip", "dip"],
     // A preset name that is a per-entry alias.
     ["Calf Raises", "calf-raise"],
+    // #1499: the 2026 sheet's name is its own lift, not Cable Curl ("CBL Curls").
+    ["Wide-Grip CBL Curls", "wide-grip-cable-curl"],
+    ["Wide-Grip Cable Curl", "wide-grip-cable-curl"],
+    ["CBL Curls", "cable-curl"],
   ])("resolves %s to %s", (name, id) => {
     expect(liftIdFor(name)).toBe(id);
   });
@@ -39,7 +43,7 @@ describe("liftIdFor (#1118)", () => {
   });
 
   it("passes through a custom lift or an unknown name", () => {
-    expect(liftIdFor("Wide-Grip CBL Curls")).toBe("Wide-Grip CBL Curls");
+    expect(liftIdFor("Drag Curls")).toBe("Drag Curls");
     expect(liftIdFor("11111111-1111-1111-1111-111111111111")).toBe(
       "11111111-1111-1111-1111-111111111111",
     );
