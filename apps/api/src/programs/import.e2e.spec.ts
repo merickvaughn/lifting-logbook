@@ -599,6 +599,33 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    // The dry run reports what the commit would do, so it refuses what the commit refuses (#1160).
+    it('rejects a program-spec dry run to a built-in program as the commit does (#1160)', async () => {
+      const dryRun = await importCsv('5-3-1', SPEC_CSV, '?mode=dry-run&destination=program-spec');
+      const commit = await importCsv('5-3-1', SPEC_CSV, '?mode=commit&destination=program-spec');
+      expect(commit.statusCode).toBe(400);
+      expect(dryRun.statusCode).toBe(400);
+      expect(dryRun.json()).toEqual(commit.json());
+    });
+
+    describe('a fractional value in an integer column (#1160)', () => {
+      const LIFT_HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+      const SPEC_HEADER = 'Week,Offset,Lift,Increment,Order,Sets,Reps,AMRAP?,Warm-Up %,WT Decrement %,Activation';
+      it.each([
+        ['lift-records', 'reps', 'import-frac-reps', [LIFT_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Bench P.,2,180,5.5,']],
+        ['lift-records', 'setNum', 'import-frac-set', [LIFT_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Bench P.,1.5,180,5,']],
+        ['program-spec', 'sets', UUID_PROGRAM, [SPEC_HEADER, '1,0,Bench P.,2.5,1,3,8,TRUE,.6,0.05,Band Flye', '1,0,Squat,5,2,2.5,8,TRUE,.6,0.05,']],
+      ] as const)('%s %s fails row 2 in the dry run and the commit', async (destination, field, program, lines) => {
+        const csv = lines.join('\n');
+        const dryRun = await importCsv(program, csv, `?mode=dry-run&destination=${destination}`);
+        const commit = await importCsv(program, csv, `?mode=commit&destination=${destination}`);
+        expect(dryRun.statusCode).toBe(400);
+        expect(commit.statusCode).toBe(400);
+        expect(dryRun.json().errors).toEqual([expect.objectContaining({ row: 2, field })]);
+        expect(dryRun.json()).toEqual(commit.json());
+      });
+    });
+
     it('rejects a commit with no destination', async () => {
       const res = await importCsv('import-lr', LIFT_CSV, '?mode=commit');
       expect(res.statusCode).toBe(400);

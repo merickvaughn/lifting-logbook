@@ -106,6 +106,24 @@ describe("validateProgramSpecImport", () => {
     expect(codesByField).toContainEqual({ field: "sets", code: "SETS_INVALID" });
   });
 
+  // These columns are integers in the database, so a fraction must fail the row in the dry run
+  // as it would the commit, not reach the write (#1160).
+  it.each([
+    ["offset", "OFFSET_INVALID"],
+    ["order", "ORDER_INVALID"],
+    ["sets", "SETS_INVALID"],
+    ["reps", "REPS_INVALID"],
+  ] as const)("rejects a fractional %s as a row error (#1160)", (field, code) => {
+    const { valid, errors } = validateProgramSpecImport([spec(), spec({ [field]: 2.5 })]);
+    expect(valid).toHaveLength(1);
+    expect(errors).toEqual([{ row: 2, field, code, message: expect.stringMatching(/whole number/) }]);
+  });
+
+  it("rejects a whole number too large for its column (#1160)", () => {
+    const { errors } = validateProgramSpecImport([spec({ sets: 2 ** 31 })]);
+    expect(errors).toMatchObject([{ row: 1, field: "sets", code: "SETS_INVALID" }]);
+  });
+
   it("rejects an empty lift and an invalid weekType", () => {
     const { errors } = validateProgramSpecImport([
       spec({ lift: "" }),

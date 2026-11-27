@@ -59,6 +59,8 @@ const _programSpecRepo: ILiftingProgramSpecRepository = {
     Promise.resolve([]),
   saveProgramSpec: () =>
     Promise.resolve({ created: 0, updated: 0, skipped: 0 }),
+  assertWritable: (): Promise<void> =>
+    Promise.resolve(),
   deleteSpecRows: (): Promise<void> =>
     Promise.resolve(),
 };

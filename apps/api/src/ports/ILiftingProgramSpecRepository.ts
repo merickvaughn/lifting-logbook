@@ -34,6 +34,13 @@ export interface ILiftingProgramSpecRepository {
   ): Promise<SaveProgramSpecResult>;
 
   /**
+   * Throws what {@link saveProgramSpec} would throw before writing: a 400 when `program` isn't a
+   * custom program id, and a 404 when the user doesn't own it. An import dry run calls it so it
+   * refuses what the commit refuses (#1160).
+   */
+  assertWritable(program: string): Promise<void>;
+
+  /**
    * Deletes program-spec rows by natural key for undo support.
    * Each key is encoded as `"week:offset:lift:order"`.
    */
