@@ -1618,7 +1618,7 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     // left the set in place and deleted the batch.
     it('undoes a set and a legacy row on a negative macrocycle number', async () => {
       const program = 'p1235-undo-negative';
-      const repos = app
+      const repos = await app
         .get<IRepositoryFactory>(REPOSITORY_FACTORY)
         .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
       const date = new Date('2026-03-02T00:00:00.000Z');
