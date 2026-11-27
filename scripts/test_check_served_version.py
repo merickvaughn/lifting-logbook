@@ -66,11 +66,14 @@ class VersionServer:
         self.httpd.server_close()
 
 
-def run_script(*args, attempts=None):
+def run_script(*args, attempts=None, environment=None):
     env = dict(os.environ, CHECK_SERVED_VERSION_RETRY_DELAY="0")
     env.pop("CHECK_SERVED_VERSION_ATTEMPTS", None)
+    env.pop("CHECK_SERVED_VERSION_ENVIRONMENT", None)
     if attempts is not None:
         env["CHECK_SERVED_VERSION_ATTEMPTS"] = attempts
+    if environment is not None:
+        env["CHECK_SERVED_VERSION_ENVIRONMENT"] = environment
     return subprocess.run(
         [shutil.which("bash") or "bash", SCRIPT, *args],
         capture_output=True, text=True, env=env, timeout=120,
@@ -143,6 +146,34 @@ class CheckServedVersionTest(unittest.TestCase):
         proc = run_script(server.url + "/", SHA)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(server.requests[0][0], "/version")
+
+    # #1448: CHECK_SERVED_VERSION_ENVIRONMENT, set by deploy.yml to the same value for web and api.
+
+    def test_matching_environment_passes(self):
+        server = self.serve(f'{{"gitSha":"{SHA}","environment":"staging"}}')
+        proc = run_script(server.url, SHA, environment="staging")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("environment=staging", proc.stdout)
+
+    def test_wrong_environment_fails_at_once(self):
+        # The #1448 shape: staging's web build answering "production".
+        server = self.serve(f'{{"gitSha":"{SHA}","environment":"production"}}')
+        proc = run_script(server.url, SHA, environment="staging")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("reports environment='production', expected staging", proc.stdout)
+        self.assertEqual(len(server.requests), 1, "the right build with the wrong environment isn't retried")
+
+    def test_missing_environment_field_fails_when_expected(self):
+        server = self.serve(f'{{"gitSha":"{SHA}"}}')
+        proc = run_script(server.url, SHA, environment="production")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("reports environment='<none>'", proc.stdout)
+
+    def test_environment_not_checked_when_unset(self):
+        server = self.serve(f'{{"gitSha":"{SHA}","environment":"production"}}')
+        proc = run_script(server.url, SHA)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("environment=", proc.stdout)
 
     def test_missing_arguments_is_usage_error(self):
         proc = run_script("http://127.0.0.1:9")

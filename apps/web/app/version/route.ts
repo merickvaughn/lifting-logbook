@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveDeploymentEnvironment } from '../../lib/deployment-environment';
 
 // Deployment identity probe (#671): reports the git commit this container is
 // running, mirroring apps/api's GET /version. GIT_SHA is baked into the image
@@ -19,23 +20,14 @@ import { NextResponse } from 'next/server';
 // build artifact.
 export const dynamic = 'force-dynamic';
 
-// Exported (not just local) so route.test.ts can exercise the fallback logic
-// directly by passing an explicit value, rather than mutating the global
-// process.env.NODE_ENV — Next.js treats that as read-only at runtime (not
-// just in its TS types), so tests can't reliably override it. Mirrors the
-// signature of apps/api/src/otel.ts's resolveDeploymentEnvironment.
-export function resolveEnvironment(
-  nodeEnv: string | undefined = process.env.NODE_ENV,
-): string {
-  return nodeEnv && nodeEnv.trim() !== '' ? nodeEnv.trim() : 'development';
-}
-
+// `environment` comes from DEPLOYMENT_ENVIRONMENT, never NODE_ENV, which a
+// Next production build pins to 'production' on staging too (#1448).
 export async function GET() {
   // Truthy check (not ??): the Dockerfile's ARG has a default of 'unknown',
   // but a manual `docker build` without --build-arg GIT_SHA=... still yields
   // an empty string, not undefined — `??` would let that through unchanged.
   return NextResponse.json({
     gitSha: process.env.GIT_SHA || 'unknown',
-    environment: resolveEnvironment(),
+    environment: resolveDeploymentEnvironment(),
   });
 }

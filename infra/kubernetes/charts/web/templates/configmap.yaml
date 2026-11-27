@@ -4,6 +4,9 @@ metadata:
   name: {{ include "lifting-logbook-web.fullname" . }}-config
 data:
   NODE_ENV: {{ .Values.env.NODE_ENV | quote }}
+  # What /version and web telemetry report (#1448): a Next build ignores NODE_ENV at
+  # runtime, so the per-environment value is passed under a name the app reads.
+  DEPLOYMENT_ENVIRONMENT: {{ .Values.env.NODE_ENV | quote }}
   PORT: {{ .Values.env.PORT | quote }}
   # Server-side (SSR) API endpoint — cluster-internal on GKE.
   API_URL: {{ .Values.env.API_URL | quote }}
