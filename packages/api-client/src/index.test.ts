@@ -394,6 +394,30 @@ describe('createApiClient', () => {
       expect(init.body).toBe(JSON.stringify({ components }));
     });
 
+    it('DELETEs a lift record by its encoded id (#1496)', async () => {
+      mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+      await expect(makeClient().deleteLiftRecord('5-3-1', '5-3-1-1-1-20261127-Bench Press-1~20')).resolves.toBeUndefined();
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/programs/5-3-1/lift-records/5-3-1-1-1-20261127-Bench%20Press-1~20');
+      expect(init.method).toBe('DELETE');
+    });
+
+    it('treats a 404 for the set as already deleted, but throws for a missing macrocycle or another error (#1496)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'Lift record not found' }), { status: 404 }));
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).resolves.toBeUndefined();
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'macrocycle-not-found', message: 'Reload the page.' }), { status: 404 }),
+      );
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).rejects.toMatchObject({
+        status: 404,
+        code: 'macrocycle-not-found',
+      });
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).rejects.toMatchObject({ status: 500 });
+    });
+
     it('DELETEs a complex, treating a 404 as already gone and throwing on another error', async () => {
       mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
       await expect(makeClient().deleteBarbellComplex('c1')).resolves.toBeUndefined();
@@ -1113,6 +1137,7 @@ describe('createApiClient', () => {
           'mc-a',
         )],
         ['updateLiftRecord', () => client.updateLiftRecord('5-3-1', 'rec-1', {}, 'mc-a')],
+        ['deleteLiftRecord', () => client.deleteLiftRecord('5-3-1', 'rec-1', 'mc-a')],
         ['upsertLiftOverride', () => client.upsertLiftOverride('5-3-1', 1, 2, { action: 'add', lift: 'Dips' }, 'mc-a')],
         ['deleteLiftOverride', () => client.deleteLiftOverride('5-3-1', 1, 2, 'Dips', 'mc-a')],
         ['saveFocusDayState', () => client.saveFocusDayState('5-3-1', 2, emptyFocusDayState(), 'mc-a')],

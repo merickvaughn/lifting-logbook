@@ -1,6 +1,6 @@
 # Proposal: Barbell Complexes
 
-**Status:** `accepted`
+**Status:** `shipped`
 **Date:** 2026-11-27
 **Issue:** [#1493](https://github.com/merickvaughn/lifting-logbook/issues/1493) ([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494)–[#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496))
 
@@ -73,7 +73,7 @@ There is no separate complex max: a complex gets heavier when its weakest lift d
   whose lowest max decides the weight.
 - [x] The workout page names the limiting lift, and a complex with a component lacking a max shows
   unplanned with the offer to set it (web component test).
-- [ ] The complex logging card records rounds and saves one tagged set per component per round
+- [x] The complex logging card records rounds and saves one tagged set per component per round
   (web component test and Playwright e2e).
 
 ## Out of Scope

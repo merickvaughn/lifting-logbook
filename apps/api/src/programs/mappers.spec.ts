@@ -203,6 +203,56 @@ describe('toWorkoutResponse with plannedLifts', () => {
     notes: '',
   });
 
+  describe('a complex slot (#1496)', () => {
+    const tagged = (lift: string, setNum: number, round: number | undefined, complex = 'Bear') => ({
+      ...record(lift, setNum, 135),
+      occurrence: 20,
+      complex,
+      ...(round !== undefined && { complexRound: round }),
+    });
+    const plannedLifts = [{ lift: 'Squat' }, { lift: 'complex:c-bear' }];
+    const complexNames = new Map([['c-bear', 'Bear']]);
+
+    it('takes the sets tagged with its complex, round by round, each naming its lift', () => {
+      const records = [record('Squat', 1, 200), tagged('Squat', 3, 2), tagged('Squat', 1, 1), tagged('Deadlift', 2, 1)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts, complexNames });
+      expect(result.lifts).toHaveLength(2);
+      expect(result.lifts[0]?.sets.map((s) => s.setNum)).toEqual([1]);
+      expect(result.lifts[1]).toMatchObject({ lift: 'complex:c-bear', planned: false });
+      expect(result.lifts[1]?.sets.map((s) => [s.complexRound, s.lift, s.setNum])).toEqual([
+        [1, 'Squat', 1],
+        [1, 'Deadlift', 2],
+        [2, 'Squat', 3],
+      ]);
+    });
+
+    it('leaves with their lift a set of another complex, one with no round, and all of them without the names', () => {
+      const records = [tagged('Squat', 1, 1, 'Other'), tagged('Deadlift', 2, undefined)];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts, complexNames });
+      expect(result.lifts.find((l) => l.lift === 'complex:c-bear')?.sets).toEqual([]);
+      expect(result.lifts.map((l) => l.lift)).toEqual(['Squat', 'complex:c-bear', 'Squat', 'Deadlift']);
+
+      const unnamed = toWorkoutResponse(program, macrocycleNum, workoutNum, week, [tagged('Squat', 1, 1)], { plannedLifts });
+      expect(unnamed.lifts.find((l) => l.lift === 'complex:c-bear')?.sets).toEqual([]);
+    });
+
+    it('gives each slot of a complex planned twice the sets stored at its occurrence, and the first any other', () => {
+      const twice = [{ lift: 'complex:c-bear' }, { lift: 'Squat' }, { lift: 'complex:c-bear' }];
+      // The logger stores the n-th complex slot's sets at occurrence 20 - n; an import keeps its own.
+      const records = [
+        tagged('Squat', 1, 1),
+        { ...tagged('Squat', 1, 1), occurrence: 19, reps: 3 },
+        { ...tagged('Deadlift', 1, 1), occurrence: 1 },
+      ];
+      const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: twice, complexNames });
+      expect(result.lifts.map((l) => [l.lift, l.sets.map((s) => [s.lift, s.reps])])).toEqual([
+        ['complex:c-bear', [['Squat', 5], ['Deadlift', 5]]],
+        ['Squat', []],
+        ['complex:c-bear', [['Squat', 3]]],
+      ]);
+    });
+  });
+
   it('marks logged lifts as planned:false', () => {
     const records = [record('Squat', 1, 200)];
     const result = toWorkoutResponse(program, macrocycleNum, workoutNum, week, records, { plannedLifts: [{ lift: 'Squat' }] });

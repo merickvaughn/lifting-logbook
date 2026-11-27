@@ -5,6 +5,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
+import { MAX_SET_NUM, MAX_SET_OCCURRENCE } from '@lifting-logbook/core';
 import { MACROCYCLE_ID_HEADER, type UserWorkoutSchedule } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
 import { InMemoryRepositoryFactory } from '../adapters/factory/in-memory-repository-factory';
@@ -2132,6 +2133,16 @@ describe('Programs HTTP (e2e, in-memory adapters)', () => {
 
     it('rejects a setNum below 1 with 400', async () => {
       const res = await postValidation(validBody({ setNum: 0 }));
+      expect(res.statusCode).toBe(400);
+    });
+
+    // The bounds are the ones the complex card places its sets within (`complexSetKey`, #1496).
+    it.each([
+      ['occurrence', { occurrence: MAX_SET_OCCURRENCE + 1 }],
+      ['setNum', { setNum: MAX_SET_NUM + 1 }],
+      ['complexRound', { complex: 'Bear', complexRound: MAX_SET_NUM + 1 }],
+    ])('rejects a %s past the bound complexSetKey uses with 400', async (_field, overrides) => {
+      const res = await postValidation(validBody(overrides));
       expect(res.statusCode).toBe(400);
     });
 

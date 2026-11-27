@@ -632,6 +632,17 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
     },
+    /** Deletes one logged set by its id (#1496): how a complex round is removed. */
+    // A 404 for the set means it's already gone, as when a retry follows a delete whose answer was
+    // lost. A 404 for the page's macrocycle (`macrocycle-not-found`) still throws: nothing was deleted.
+    async deleteLiftRecord(program: string, id: string, macrocycleId?: string): Promise<void> {
+      const path = `/programs/${enc(program)}/lift-records/${enc(id)}`;
+      const res = await rawFetch(path, { method: 'DELETE', headers: macrocycleHeaders(macrocycleId, false), cache: 'no-store' });
+      if (res.ok) return;
+      const err = await readError(res, path);
+      if (res.status === 404 && err.code !== 'macrocycle-not-found') return;
+      throw err;
+    },
 
     // -- Non-cycle workouts (proposal 2026-11-06, decision 23, #1184) --------
     // Later sets and edits go through createLiftRecord/updateLiftRecord under NON_CYCLE_PROGRAM,

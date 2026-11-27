@@ -180,6 +180,15 @@ describe("classifyLiftRecordRows", () => {
       expect(classify([inComplex()], [inComplex()])).toEqual([{ kind: "skip", occurrence: 0 }]);
     });
 
+    it("moves a lift's extra own set past its own sets, not past a complex set logged in the app (#1496)", () => {
+      // The complex card stores its sets at the top of the occurrence range (complexSetKey).
+      const stored = [set(), inComplex({ occurrence: 20, complexRound: 1 })];
+      expect(classify([set(), set({ weight: 110 })], stored)).toEqual([
+        { kind: "skip", occurrence: 0 },
+        { kind: "create", occurrence: 1 },
+      ]);
+    });
+
     it("keeps a complex set and an identical own set of the lift in one workout", () => {
       const file = [set({ weight: 60, reps: 3 }), inComplex()];
       expect(classify(file)).toEqual([
