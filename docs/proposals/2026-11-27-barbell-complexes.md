@@ -1,6 +1,6 @@
 # Proposal: Barbell Complexes
 
-**Status:** `accepted`
+**Status:** `shipped`
 **Date:** 2026-11-27
 **Issue:** [#1493](https://github.com/merickvaughn/lifting-logbook/issues/1493) ([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494)–[#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496))
 
