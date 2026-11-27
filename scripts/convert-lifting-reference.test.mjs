@@ -214,10 +214,14 @@ test('layout 1: a multi-line Rep Range merged over the components gives each gro
   assert.deepEqual(report.skipped, []);
 
   // Lines that don't split the components evenly, or aren't reps, are reported, not guessed at.
-  for (const bad of ['3\n\n8\n\n5\n\n2', '3\n\n-']) {
+  for (const [bad, shown] of [['3\n\n8\n\n5\n\n2', '3 / 8 / 5 / 2'], ['3\n\n-', '3 / -']]) {
     const out = convert({ 20201024: before, 20201025: complex(bad) });
-    assert.equal(out.records.filter((r) => r.date === '10/25/2020').length, 0, JSON.stringify(bad));
-    assert.deepEqual(out.report.skipped.map((s) => s.lift), ['Complex 1A'], JSON.stringify(bad));
+    assert.equal(out.records.filter((r) => r.date === '10/25/2020').length, 0, shown);
+    assert.deepEqual(out.report.skipped, [{
+      tab: '20201025',
+      lift: 'Complex 1A',
+      reason: `complex: 2 rounds logged, but the Rep Range lines (${shown}) are not whole reps that split its 6 components evenly`,
+    }], shown);
   }
 });
 
