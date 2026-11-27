@@ -1612,6 +1612,38 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(undoRes).toMatchObject({ restored: 4, skipped: 0, flagged: [] });
       expect(await readMaxes()).toEqual({ 'bench-press': 182.5 });
     });
+
+    // #1235: a number stored before #1224 checked its range, or put back by
+    // macrocycle_renumber_reverse(), can be negative. Undo read such keys as training maxes,
+    // left the set in place and deleted the batch.
+    it('undoes a set and a legacy row on a negative macrocycle number', async () => {
+      const program = 'p1235-undo-negative';
+      const repos = app
+        .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
+      const date = new Date('2026-03-02T00:00:00.000Z');
+      await repos.macrocycle.create({ program, macrocycleNum: -2, startDate: date, status: 'completed', origin: 'legacy' });
+      await repos.liftRecord.appendLiftRecords(program, [
+        { program, macrocycleNum: -2, workoutNum: 1, date, lift: 'Bench Press', setNum: 1, weight: 200, reps: 5, notes: '' },
+      ]);
+      const batchId = 'batch-1235';
+      await repos.importBatch.save({
+        id: batchId,
+        userId,
+        program,
+        destination: 'lift-records',
+        createdAt: date,
+        preImage: {
+          '-2:1:20260302:Bench Press:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } },
+          'macrocycle-row:-2': { kind: 'created', wrote: { macrocycleNum: -2 } },
+        },
+      });
+
+      const undoRes = (await undoImport(program, batchId)).json();
+      expect(undoRes).toMatchObject({ restored: 1, skipped: 0, flagged: [] });
+      expect(await repos.liftRecord.getAllLiftRecords(program)).toEqual([]);
+      expect(await repos.macrocycle.list(program)).toEqual([]);
+    });
   });
 
   // A commit must work however many rows were remapped or excluded (#1121). In the
