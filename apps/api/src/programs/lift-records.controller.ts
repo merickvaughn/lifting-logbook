@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -30,6 +31,7 @@ import {
   parseLiftRecords,
   toUTCMidnight,
   validateLiftImport,
+  withComplex,
   withImportProgram,
   withModifications,
   withOccurrence,
@@ -109,6 +111,9 @@ export class LiftRecordsController {
     if (!nonCycle && body.workoutNum > MAX_WORKOUT_NUM) {
       throw new BadRequestException(`workoutNum must not be greater than ${MAX_WORKOUT_NUM}`);
     }
+    if (body.complexRound !== undefined && body.complex === undefined) {
+      throw new BadRequestException('complexRound needs complex');
+    }
 
     const repos = await this.factory.forUser(user);
     const { liftRecord, macrocycleScheduledWorkout } = repos;
@@ -164,6 +169,7 @@ export class LiftRecordsController {
       reps: body.reps,
       notes: body.notes ?? '',
       ...withModifications(body.modifications),
+      ...withComplex(body.complex, body.complexRound),
     };
     const written = await liftRecord.appendLiftRecords(program, [record]);
     if (written === 0) {
@@ -190,7 +196,9 @@ export class LiftRecordsController {
         existing.weight === record.weight &&
         existing.reps === record.reps &&
         existing.notes === record.notes &&
-        sameModifications(existing, record)
+        sameModifications(existing, record) &&
+        existing.complex === record.complex &&
+        existing.complexRound === record.complexRound
       ) {
         return toLiftRecordResponse(existing, modificationNames);
       }
@@ -290,6 +298,27 @@ export class LiftRecordsController {
     const skipped = buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames));
 
     return { written, skipped };
+  }
+
+  /**
+   * Deletes one logged set by its id (#1496): how the complex card removes a round. 204, or 404 for
+   * an id with no set. Not on the non-cycle program, whose workouts are deleted whole.
+   */
+  @Delete('lift-records/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteLiftRecord(
+    @Param('program') program: string,
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Headers(MACROCYCLE_ID_HEADER) macrocycleId?: string,
+  ): Promise<void> {
+    const repos = await this.factory.forUser(user);
+    const key = parseLiftRecordId(program, id);
+    if (!key) throw new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
+    const idRow = await checkMacrocycleId(repos, program, key.macrocycleNum, macrocycleId, 'DELETE lift-records/:id');
+    assertMacrocycleWritable(program, idRow);
+    const deleted = await repos.liftRecord.deleteLiftRecordsByNaturalKeys(program, [liftRecordNaturalKey(key)]);
+    if (deleted === 0) throw new NotFoundException(`Lift record '${id}' not found for program '${program}'`);
   }
 
   @Patch('lift-records/:id')

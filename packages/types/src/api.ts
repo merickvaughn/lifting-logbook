@@ -151,6 +151,11 @@ export interface SetResponse {
   complex?: string;
   /** Which round of {@link complex}, from 1, when known. */
   complexRound?: number;
+  /**
+   * The component lift, as stored, on a set listed under a complex slot (#1496): that slot's sets
+   * are of several lifts. Absent on a lift's own sets.
+   */
+  lift?: LiftName;
 }
 
 /** A single lift's sets within a workout. */
@@ -282,6 +287,13 @@ export interface CreateLiftRecordRequest {
    * with at most one whose `maxMode` is `own`. Omit when there are none.
    */
   modifications?: string[];
+  /**
+   * The name of the barbell complex the set was done in (#1496), as logged sets name it (#1494).
+   * Omit for an ordinary set.
+   */
+  complex?: string;
+  /** Which round of {@link complex}, from 1. Only with `complex`. */
+  complexRound?: number;
 }
 
 // ---------------------------------------------------------------------------

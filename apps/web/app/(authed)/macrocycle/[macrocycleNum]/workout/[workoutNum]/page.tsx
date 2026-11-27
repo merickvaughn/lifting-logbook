@@ -117,16 +117,21 @@ export default async function WorkoutLoggingPage({
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   // What each lift plans by besides its row: its progression type and last session (#1211).
-  // A complex slot is shown, not logged, until #1496: it stays out of `lifts`.
+  // A complex slot is logged on its own card (#1496): it stays out of `lifts`.
   const [progressions, complexList] = await Promise.all([
     loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage', () => customLiftsRead),
     loadComplexes(workout.lifts, 'WorkoutLoggingPage'),
   ]);
-  const complexes: ComplexSlot[] = workout.lifts.flatMap((wl, liftIndex) => {
+  const complexes: ComplexSlot[] = [];
+  workout.lifts.forEach((wl, liftIndex) => {
     const planned = planComplex(wl.lift, liftSpecs[liftIndex], (l) => maxFor(l)?.weight, complexList);
-    if (planned === undefined) return [];
+    if (planned === undefined) return;
     const workWeights = planned.plannedSets.filter((s) => s.type === 'work').map((s) => s.weight);
-    return [{ complex: planned.complex, tm: planned.tm, workWeights }];
+    // The API lists a complex's sets under its slot, each with its lift and round (#1496).
+    const logged = wl.sets.flatMap(({ id, setNum, weight, reps, lift, complexRound }) =>
+      lift !== undefined && complexRound !== undefined ? [{ id, setNum, weight, reps, lift, complexRound }] : [],
+    );
+    complexes.push({ complex: planned.complex, tm: planned.tm, workWeights, ordinal: complexes.length, logged });
   });
 
   const workoutLifts: LiftData[] = workout.lifts.flatMap((wl, liftIndex) => {

@@ -32,6 +32,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/lib/client-api', () => ({
   createLiftRecord: jest.fn(),
   updateLiftRecord: jest.fn(),
+  deleteLiftRecord: jest.fn(),
   recordBodyWeight: jest.fn(),
   rescheduleWorkout: jest.fn(),
   fetchLiftModifications: jest.fn(),
@@ -128,8 +129,8 @@ beforeEach(() => {
   window.sessionStorage.clear();
 });
 
-describe('WorkoutLogger — a complex slot (#1495)', () => {
-  it('shows the complex read-only, with its lifts, working weights and limiting lift', () => {
+describe('WorkoutLogger — a complex slot (#1495, #1496)', () => {
+  it('shows the complex on a card to log it, with its lifts, working weights and limiting lift', () => {
     render(
       <WorkoutLogger
         {...makeProps({
@@ -147,6 +148,8 @@ describe('WorkoutLogger — a complex slot (#1495)', () => {
               },
               tm: 150,
               workWeights: [150, 105],
+              ordinal: 0,
+              logged: [],
             },
           ],
         })}
@@ -160,7 +163,8 @@ describe('WorkoutLogger — a complex slot (#1495)', () => {
     expect(section.getByText('Front Squat × 2')).toBeInTheDocument();
     expect(section.getByText('Limited by Front Squat (150 lbs training max)')).toBeInTheDocument();
     expect(section.getByText('Working sets at 150 lbs, 105 lbs')).toBeInTheDocument();
-    expect(section.getByText('Complexes can’t be logged here yet.')).toBeInTheDocument();
+    // Logged on its card (#1496), tested in ComplexCard.test.tsx.
+    expect(section.getByRole('button', { name: 'Add a round of Bear' })).toBeInTheDocument();
   });
 });
 

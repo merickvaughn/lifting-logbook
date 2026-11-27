@@ -72,6 +72,7 @@ async function getClientAuthHeaders(): Promise<Record<string, string>> {
 export const {
   createLiftRecord,
   updateLiftRecord,
+  deleteLiftRecord,
   rescheduleWorkout,
   skipWorkout,
   unskipWorkout,

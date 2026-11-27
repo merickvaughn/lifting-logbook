@@ -231,9 +231,35 @@ neither is part of the natural key or id.
   no max or progression of its own, and while any of its lifts has no max it plans nothing and asks
   for the missing ones.
 - **Delete.** Deleting a complex leaves the rows that name it. They plan nothing and read as a
-  deleted complex (`Unknown complex` where a workout is planned) until the row is changed. A
-  complex slot is shown on a workout but not logged there yet
-  ([#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496)).
+  deleted complex (`Unknown complex` where a workout is planned) until the row is changed.
+
+**Logging** ([#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496)):
+
+- A complex slot is logged on one card in the workout logger: the weight once, prefilled from the
+  planned weight, then a round per tap, each listing every component with its reps from the
+  definition, editable until saved. Saving writes one set per component per round through
+  `POST /programs/:p/lift-records`, with `lift` the component as stored, the card's weight, the
+  round's reps, `complex` the complex's **name** and `complexRound` the round. The name, not the
+  id, is what an imported set carries and what an export writes, so logged and imported sets are
+  tagged alike; a complex renamed later keeps its earlier sets under the old name.
+- **Where a set goes.** The natural key has no complex, so a complex set takes a place of its own
+  (`complexSetKey`): occurrence `20 − n` for the day's n-th complex slot from 0, the top of the
+  range the API accepts, which no day's own repeats of a lift reach; and set number
+  `(round − 1) × components + component + 1`, so a lift that appears twice in a complex still has a
+  set of its own each round. A round that would pass set number 50 can't be added.
+- A round a failure stopped part way keeps the sets it saved, which aren't sent again, and the
+  weight and those sets' reps can't change until the round is saved.
+- **Reading it back.** `toWorkoutResponse` lists a tagged set with a round under the complex slot
+  it was logged in: the day's n-th `complex:<id>` slot for occurrence `20 − n` when that slot's
+  complex has the set's name, and otherwise, as for an imported set, the day's first slot of that
+  complex. It carries `lift` on each set, in set-number order (round order, for the card's sets),
+  and is left out of the lift's own sets, including when that lift is removed from the day. A
+  tagged set matching no planned slot (a renamed or deleted complex, or one the day doesn't plan)
+  stays with its lift, as an imported one without a round does.
+- Removing a logged round deletes its sets one by one through `DELETE /programs/:p/lift-records/:id`.
+  A 404 for the set means it's already gone, so a retry after a lost answer succeeds.
+- An import's extra own set of a lift takes the occurrence after the lift's own sets', not after a
+  complex set's, and skips any occurrence a complex set holds, so it stays in range.
 
 ### Two name registries, one bridge
 

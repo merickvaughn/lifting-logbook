@@ -79,11 +79,12 @@ describe('Macrocycle id on writes (e2e, in-memory adapters)', () => {
 
   /**
    * Every page write in decisions 2 and 3, aimed at macrocycle 1 workout 1. `recordId` is a
-   * set already logged there, for the PATCH.
+   * set already logged there, for the PATCH and then the DELETE (#1496).
    */
   const pageWrites = (recordId: string) => [
     { name: 'POST lift-records', method: 'POST', url: `${base}/lift-records`, body: logBody(2), ok: 201 },
     { name: 'PATCH lift-records/:id', method: 'PATCH', url: `${base}/lift-records/${encodeURIComponent(recordId)}`, body: { reps: 6 }, ok: 200 },
+    { name: 'DELETE lift-records/:id', method: 'DELETE', url: `${base}/lift-records/${encodeURIComponent(recordId)}`, ok: 204 },
     {
       name: 'POST lift-overrides',
       method: 'POST',
