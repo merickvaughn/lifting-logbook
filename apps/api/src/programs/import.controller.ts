@@ -1444,6 +1444,8 @@ export class ImportController {
     { rows, splitMaxes }: CommitRows,
     repos: RepositoryBundle,
   ): Promise<ImportDryRunResponse> {
+    // The commit refuses a built-in or unowned program only when it writes; refuse it here too (#1160).
+    if (destination === 'program-spec') await repos.liftingProgramSpec.assertWritable(program);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     const preview = await IMPORT_HANDLERS[destination].preview(rows as any, program, repos);
     let split: ImportDryRunResponse['split'];

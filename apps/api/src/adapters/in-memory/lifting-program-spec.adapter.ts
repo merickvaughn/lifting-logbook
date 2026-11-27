@@ -36,13 +36,18 @@ export class InMemoryLiftingProgramSpecRepository
     return this.specByProgram.get(program) ?? [];
   }
 
+  // Custom programs have no owners here: they're Prisma-only, so only the built-in check applies.
+  async assertWritable(program: string): Promise<void> {
+    if (!UUID_PATTERN.test(program)) {
+      throw new BadRequestException('Program spec import requires a custom program');
+    }
+  }
+
   async saveProgramSpec(
     program: string,
     rows: LiftingProgramSpec[],
   ): Promise<SaveProgramSpecResult> {
-    if (!UUID_PATTERN.test(program)) {
-      throw new BadRequestException('Program spec import requires a custom program');
-    }
+    await this.assertWritable(program);
 
     const current = [...(this.specByProgram.get(program) ?? [])];
     const existingByKey = new Map(current.map((r) => [programSpecNaturalKey(r), r]));
