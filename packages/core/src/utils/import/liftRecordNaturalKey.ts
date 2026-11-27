@@ -13,7 +13,7 @@ export interface LiftRecordKey {
   setNum: number;
 }
 
-type LoggedSet = LiftRecordKey & { weight: number; reps: number };
+type LoggedSet = LiftRecordKey & { weight: number; reps: number; complex?: string | null };
 
 /**
  * Returns the stringified natural key for a lift record:
@@ -56,6 +56,14 @@ function setSlotKey(r: Pick<LiftRecordKey, 'date' | 'lift' | 'setNum'>): string 
   return `${formatDateYYYYMMDD(r.date)}|${liftSpellings(r.lift)[0] ?? r.lift}|${r.setNum}`;
 }
 
+/**
+ * A set slot split by complex (#1494): a set done in a complex pairs only with stored sets of the
+ * same complex, and a lift's own set only with its own sets, though both can share a set number.
+ */
+function pairingSlotKey(r: Pick<LoggedSet, 'date' | 'lift' | 'setNum' | 'complex'>): string {
+  return `${setSlotKey(r)}|${r.complex ?? ''}`;
+}
+
 /** The dates and lifts {@link classifyLiftRecordRows} needs stored sets for. */
 export type SetSlot = Pick<LiftRecordKey, 'date' | 'lift'>;
 
@@ -93,6 +101,9 @@ const PAIRING_PASSES: readonly Pairs[] = [(s, r) => sameWorkout(s, r) && sameSet
  *   Those are the rows it could collide with under the unique key, which holds the workout
  *   number; an extra in another workout keeps its occurrence, so the workout page doesn't show
  *   it as a second time through the lift.
+ * - A set done in a complex (#1494) is compared only with sets of the same complex, and a lift's
+ *   own set only with its own sets. A lift's own sets take their occurrences first, so a complex
+ *   set sharing their set number takes the next one, whatever the file's order.
  *
  * `key` is the row's natural key under the occurrence it's stored with.
  */
@@ -102,9 +113,18 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
   stored: readonly S[],
 ): ClassifiedLiftRecordRow<T, S>[] {
   const storedBySlot = new Map<string, S[]>();
+  // The occurrences a created row could collide with under the unique key, which holds the
+  // workout number but not the complex: stored rows' by set slot and workout, and earlier created
+  // rows' by set slot and the file's macrocycle and workout, since each file macrocycle lands in a
+  // macrocycle of its own.
+  const storedTaken = new Map<string, Map<number, Set<number>>>();
+  const createdTaken = new Map<string, Map<string, Set<number>>>();
   for (const s of stored) {
-    const slot = setSlotKey(s);
+    const slot = pairingSlotKey(s);
     storedBySlot.set(slot, [...(storedBySlot.get(slot) ?? []), s]);
+    const byWorkout = storedTaken.get(setSlotKey(s)) ?? new Map<number, Set<number>>();
+    storedTaken.set(setSlotKey(s), byWorkout);
+    byWorkout.set(s.workoutNum, (byWorkout.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
   }
 
   // Exact repeats within the file go first; the rest are grouped by slot, in file order.
@@ -113,7 +133,7 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
   const bySlot = new Map<string, number[]>();
   rows.forEach((row, i) => {
     const r = recordOf(row);
-    const slot = setSlotKey(r);
+    const slot = pairingSlotKey(r);
     const repeat = `${slot}|${r.macrocycleNum}|${r.workoutNum}|${r.occurrence ?? 0}|${r.weight}|${r.reps}`;
     if (seen.has(repeat)) {
       kinds.set(i, 'skip');
@@ -125,16 +145,19 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
 
   const occurrences = new Map<number, number>();
   const pairedWith = new Map<number, S>();
-  for (const [slot, indexes] of bySlot) {
+  // A lift's own sets go before its complex sets, whatever the file's order, so they keep their
+  // occurrence and a complex set sharing a set number takes the next one (#1494).
+  const slots = [...bySlot].sort(([, [a = 0]], [, [b = 0]]) => {
+    const complexA = recordOf(rows[a] as T).complex ? 1 : 0;
+    const complexB = recordOf(rows[b] as T).complex ? 1 : 0;
+    return complexA - complexB;
+  });
+  for (const [slot, indexes] of slots) {
     const pool = [...(storedBySlot.get(slot) ?? [])];
-    // The occurrences a created row could collide with under the unique key, which holds the
-    // workout number: stored rows' by workout, and earlier created rows' by the file's
-    // macrocycle and workout, since each file macrocycle lands in a macrocycle of its own.
-    const storedTaken = new Map<number, Set<number>>();
-    for (const s of pool) {
-      storedTaken.set(s.workoutNum, (storedTaken.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
-    }
-    const createdTaken = new Map<string, Set<number>>();
+    const setSlot = setSlotKey(recordOf(rows[indexes[0] ?? 0] as T));
+    const storedInSlot = storedTaken.get(setSlot) ?? new Map<number, Set<number>>();
+    const createdInSlot = createdTaken.get(setSlot) ?? new Map<string, Set<number>>();
+    createdTaken.set(setSlot, createdInSlot);
     // Each pass pairs the rows left with the stored rows left, closest match first: same workout
     // and identical weight and reps, then identical weight and reps, then same workout, then any.
     let unpaired = indexes;
@@ -153,9 +176,9 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
       kinds.set(i, 'create');
       const r = recordOf(rows[i] as T);
       const group = `${r.macrocycleNum}|${r.workoutNum}`;
-      const created = createdTaken.get(group) ?? new Set<number>();
-      createdTaken.set(group, created);
-      const taken = new Set([...(storedTaken.get(r.workoutNum) ?? []), ...created]);
+      const created = createdInSlot.get(group) ?? new Set<number>();
+      createdInSlot.set(group, created);
+      const taken = new Set([...(storedInSlot.get(r.workoutNum) ?? []), ...created]);
       const own = r.occurrence ?? 0;
       const occurrence = taken.has(own) ? Math.max(...taken) + 1 : own;
       created.add(occurrence);
@@ -214,6 +237,18 @@ export function withComplex(
 ): { complex?: string; complexRound?: number } {
   if (!complex) return {};
   return complexRound == null ? { complex } : { complex, complexRound };
+}
+
+/**
+ * A record's `complex` and `complexRound` as a database row stores them, the write side of
+ * {@link withComplex}: null for an ordinary set, and a round only beside a complex.
+ */
+export function complexColumns(r: { complex?: string | null; complexRound?: number | null }): {
+  complex: string | null;
+  complexRound: number | null;
+} {
+  const { complex = null, complexRound = null } = withComplex(r.complex, r.complexRound);
+  return { complex, complexRound };
 }
 
 /** Inverse of {@link liftRecordSetSegment}; null when malformed. Occurrence 0 is left absent. */

@@ -31,7 +31,9 @@ export function recordLastSessions(
   const latest = new Map<string, { day: string; sets: LiftRecord[] }>();
   for (const record of records) {
     const lift = poolLiftFor(record.lift);
-    if (lift === undefined || Number.isNaN(record.date.getTime())) continue;
+    // A set done in a complex is loaded for the complex, not the lift, so it isn't the lift's
+    // session (#1494).
+    if (lift === undefined || record.complex || Number.isNaN(record.date.getTime())) continue;
     const day = toIsoDate(record.date);
     // ISO dates compare correctly as strings.
     if (day < start || day >= today) continue;

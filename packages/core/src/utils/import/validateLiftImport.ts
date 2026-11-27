@@ -52,6 +52,9 @@ const EARLIEST_LIFT_DATE_MS = Date.UTC(1970, 0, 2);
 /** A UTC `YYYY-MM-DD` label for a date. */
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
+/** The largest value a Postgres `INTEGER` column, such as `complexRound`, holds. */
+const MAX_INT32 = 2_147_483_647;
+
 /**
  * The row error for a date on or before 1970-01-01 or after the import date's UTC day, or null.
  * Lift record dates are UTC midnight of the day the file names.
@@ -79,7 +82,9 @@ export function assignBlank(r: ParsedLiftRecord, field: AssignBlankField, option
 /**
  * Row errors for an exported file's `Occurrence` and `Status` cells (#1254, decision 22), as the
  * assign parse reads them: an occurrence must be a whole number from 0, and a status one of the
- * macrocycle statuses. Absent cells are fine.
+ * macrocycle statuses. Also a `Round` beside a `Complex` (#1494), which any file may carry: a whole
+ * number from 1 that fits the database column. Absent cells are fine. The commit and the Review
+ * preview both call this, so a row the commit would reject is flagged at Review (#1402).
  */
 export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportError[] {
   const errors: ImportError[] = [];
@@ -92,6 +97,8 @@ export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportErro
       code: 'STATUS_INVALID',
       message: `Status must be one of ${MACROCYCLE_STATUSES.join(', ')}`,
     });
+  if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1 && r.complexRound <= MAX_INT32))
+    errors.push({ row, field: 'complexRound', code: 'COMPLEX_ROUND_INVALID', message: 'Round must be a whole number from 1' });
   return errors;
 }
 
@@ -143,8 +150,6 @@ export function validateLiftImport(
       if (outOfDateRange) rowErrors.push(outOfDateRange);
     }
     rowErrors.push(...exportColumnErrors(r, row));
-    if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1))
-      rowErrors.push({ row, field: 'complexRound', code: 'COMPLEX_ROUND_INVALID', message: 'Round must be a whole number from 1' });
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
     // genuinely `undefined` whenever the uploaded table has no column mapped

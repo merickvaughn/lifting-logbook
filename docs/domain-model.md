@@ -207,9 +207,13 @@ neither is part of the natural key or id.
 
 - The complex's weight is limited by its weakest lift, so a complex set never moves or estimates a
   training max: `movesLiftMax` leaves it out, as it does a later occurrence (see
-  [Progression](#progression)). It isn't a lift's last session either.
+  [Progression](#progression)). It isn't a lift's last session either: neither the workout's
+  (`getLastSessions`) nor a `double` focus block's (`recordLastSessions`) counts it, and the
+  import's set-order guess leaves it out.
 - Lift-record import reads optional `Complex` and `Round` columns from any file, and the export
-  writes them. `LiftRecordResponse` and `SetResponse` carry `complex` and `complexRound` when set.
+  writes them. Import compares a complex set only with stored sets of the same complex, and gives
+  the lift's own sets their occurrence first, so a complex set sharing a set number takes the next
+  one. `LiftRecordResponse` and `SetResponse` carry `complex` and `complexRound` when set.
 
 ### Two name registries, one bridge
 

@@ -38,6 +38,15 @@ describe('validateLiftImportSoft', () => {
     expect(result.validRows.map((v) => v.rowIndex)).toEqual([1, 3]);
   });
 
+  it('puts a row whose complex round the commit would reject in the incomplete bucket (#1494)', () => {
+    const rows = [0, 2.5, NaN, 3_000_000_000, 2].map((complexRound) => record({ lift: KNOWN_LIFT, complex: 'Complex 1A', complexRound }));
+    const result = validateLiftImportSoft(rows, SLOT_MAP);
+    expect(result.incomplete.map((r) => [r.rowIndex, r.errors.map((e) => e.code)])).toEqual(
+      [1, 2, 3, 4].map((row) => [row, ['COMPLEX_ROUND_INVALID']]),
+    );
+    expect(result.validRows).toHaveLength(1);
+  });
+
   it('puts a row with NaN weight in the incomplete bucket', () => {
     const r = record({ lift: KNOWN_LIFT, weight: NaN });
     const result = validateLiftImportSoft([r], SLOT_MAP);

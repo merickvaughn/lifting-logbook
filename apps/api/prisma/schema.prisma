@@ -28,7 +28,8 @@ model LiftRecord {
   modifications String[] @default([])
   // The barbell complex this set was done in, and its round from 1; null for an ordinary set
   // (#1494). A complex set never moves or estimates a training max. Not part of the natural key:
-  // a complex's sets of a lift take that lift's next free occurrence in the workout.
+  // a complex set is numbered like any other set of its lift, and an import gives one that shares
+  // a set number with the lift's own set the next free occurrence.
   complex       String?
   complexRound  Int?
 

@@ -69,16 +69,15 @@ export interface ProgramSpecExportRow {
  */
 export const LIFT_RECORD_EXPORT_TOKEN = 'Occurrence';
 
-/**
- * Decision 22 of docs/proposals/2026-11-06-import-macrocycle-assignment.md: the lift-record
- * headers plus three optional columns, and `Complex` and `Round` (#1494). A file with `Occurrence`
- * is treated as an export, so
- * this column is always written, 0 included.
- */
 /** The complex a set was done in, and its round (#1494). Import reads both from any file. */
 export const LIFT_RECORD_COMPLEX_HEADER = 'Complex';
 export const LIFT_RECORD_ROUND_HEADER = 'Round';
 
+/**
+ * Decision 22 of docs/proposals/2026-11-06-import-macrocycle-assignment.md: the lift-record
+ * headers plus three optional columns, and `Complex` and `Round` (#1494). A file with
+ * `Occurrence` is treated as an export, so `Occurrence` is always written, 0 included.
+ */
 export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
   ...Object.keys(LIFT_RECORD_HEADER_MAP),
   LIFT_RECORD_EXPORT_TOKEN,

@@ -4,6 +4,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
   SetSlot,
+  complexColumns,
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
@@ -155,8 +156,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
         reps: r.reps,
         notes: r.notes,
         modifications: r.modifications ?? [],
-        complex: r.complex ?? null,
-        complexRound: r.complex ? (r.complexRound ?? null) : null,
+        ...complexColumns(r),
       })),
       skipDuplicates: true,
     });
