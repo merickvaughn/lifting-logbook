@@ -22,7 +22,8 @@
  *     with the raw text as the note.
  *   - A weight of `BW (180)` is 180. A cell no rule covers drops that one set and is reported.
  *   - A layout 1 complex becomes, per completed round, one set of each component at the complex
- *     weight, with the component's planned reps. One with no rounds or no reps per component is
+ *     weight, with the component's planned reps, or its group's line of a multi-line Rep Range
+ *     merged over blank component rows (`groupReps`). One with no rounds or no reps per component is
  *     skipped and reported. Layout 2 sheets never give reps per component, so its complexes are
  *     always skipped and reported.
  *   - Anything a tab can't be read as (a title that isn't a real date, no layout, nothing read) is
@@ -201,7 +202,7 @@ function addWarmups(lift, weights) {
 }
 
 /** Expands a complex: `rounds` × one set of each component at `weight`. */
-function addComplex(session, name, weight, rounds, components) {
+function addComplex(session, name, weight, rounds, components, whyNoReps) {
   if (!(rounds > 0)) {
     session.skip(name, 'complex: no completed rounds logged');
     return;
@@ -210,12 +211,31 @@ function addComplex(session, name, weight, rounds, components) {
   const missing = components.filter((c) => c.reps === null).map((c) => c.name);
   if (components.length === 0) return session.skip(name, 'complex: no component rows below it');
   if (missing.length > 0) {
-    return session.skip(name, `complex: ${rounds} rounds logged, but the sheet has no planned reps for ${missing.join(', ')}`);
+    return session.skip(name, `complex: ${rounds} rounds logged, but ${whyNoReps ?? `the sheet has no planned reps for ${missing.join(', ')}`}`);
   }
   for (const c of components) {
     const lift = session.lift(c.name);
     for (let i = 0; i < rounds; i++) lift.sets.push({ weight, reps: c.reps, notes: name });
   }
+}
+
+/**
+ * Some complexes leave their component rows blank, and the Rep Range cell on the complex row is
+ * merged down over all of them with one line per group: `3\n\n8` over six components means 3
+ * reps for the first three and 8 for the last three (the owner's reading, #1482). Fills in the
+ * reps only when every component lacks them, there are three plan cells, and the lines are
+ * whole numbers that split the components evenly. Otherwise the complex stays unread and is
+ * reported by `addComplex`; for a multi-line cell it won't split, it returns the reason.
+ */
+function groupReps(row, k, components) {
+  if (k !== 3 || components.length === 0 || components.some((c) => c.reps !== null)) return undefined;
+  const lines = String(row[2] ?? '').split('\n').map(clean).filter(Boolean);
+  if (lines.length < 2) return undefined;
+  if (components.length % lines.length !== 0 || !lines.every((l) => /^\d+$/.test(l))) {
+    return `the Rep Range lines (${lines.join(' / ')}) are not whole reps that split its ${components.length} components evenly`;
+  }
+  const size = components.length / lines.length;
+  components.forEach((c, i) => { c.reps = Number(lines[Math.floor(i / size)]); });
 }
 
 // ── Layout 1: row per lift ──────────────────────────────────────────────────────────────────
@@ -283,7 +303,8 @@ function parseRowPerLift(title, rows, date, k) {
       for (; j < rows.length && isComponent(rows[j]); j++) {
         components.push({ name: clean(rows[j][0]), reps: plannedReps(rows[j]) });
       }
-      addComplex(s, name, weight, parseWeight(r[k + 7]), components);
+      const unsplit = groupReps(r, k, components);
+      addComplex(s, name, weight, parseWeight(r[k + 7]), components, unsplit);
       i = j - 1;
       continue;
     }

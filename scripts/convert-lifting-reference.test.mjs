@@ -197,6 +197,34 @@ test('layout 1: a complex with any component lacking reps is skipped whole, neve
   ]);
 });
 
+test('layout 1: a multi-line Rep Range merged over the components gives each group its reps (#1482)', () => {
+  const before = [L1_HEADER, ['Curl', '3', '8 - 12', '10', '50', '65', '80', '95', '110', '100', '10']];
+  const header = L1_HEADER.slice(0, 10).concat('Sets Completed');
+  const parts = ['Bent-Over Barbell Row', 'Power Clean', 'Front Squat', 'Push Press', 'Back Squat', 'Good Morning'];
+  const complex = (repRange) => [
+    header,
+    ['Complex 1A', '3 - 5\n\n5 - 7', repRange, '3\n\n-', '', '', '', '45', '75', '105', '2'],
+    ...parts.map((p) => [p]),
+  ];
+  const { records, report } = convert({ 20201024: before, 20201025: complex('3\n\n8') });
+  for (const [i, p] of parts.entries()) {
+    const reps = i < 3 ? 3 : 8;
+    assert.deepEqual(sets(records, p), [[1, 105, reps, 'Complex 1A'], [2, 105, reps, 'Complex 1A']], p);
+  }
+  assert.deepEqual(report.skipped, []);
+
+  // Lines that don't split the components evenly, or aren't reps, are reported, not guessed at.
+  for (const [bad, shown] of [['3\n\n8\n\n5\n\n2', '3 / 8 / 5 / 2'], ['3\n\n-', '3 / -']]) {
+    const out = convert({ 20201024: before, 20201025: complex(bad) });
+    assert.equal(out.records.filter((r) => r.date === '10/25/2020').length, 0, shown);
+    assert.deepEqual(out.report.skipped, [{
+      tab: '20201025',
+      lift: 'Complex 1A',
+      reason: `complex: 2 rounds logged, but the Rep Range lines (${shown}) are not whole reps that split its 6 components evenly`,
+    }], shown);
+  }
+});
+
 test('a lift whose every logged cell is unread is listed as skipped, as well as its cells', () => {
   const rows = [L1_HEADER, ['Squat', '3', '5', '5', '100', '130', '160', '190', '220', '200', 'lots', 'more']];
   const { records, report } = convert({ 20200601: rows });
