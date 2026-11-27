@@ -238,6 +238,23 @@ describe('HistoryPage program', () => {
     expect(html).not.toContain('role="status"');
   });
 
+  // #1304, #1355: the lifter switched from 5-3-1 to a custom program, and only templates holding
+  // their history are offered: 5-3-1, never the catalog's others.
+  it('offers a template the lifter switched away from, and no template they never used', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: CUSTOM.id });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([CUSTOM]);
+    (fetchRecordedPrograms as jest.Mock).mockResolvedValue(['5-3-1', CUSTOM.id]);
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([]);
+
+    const html = renderToStaticMarkup((await historyPage({ program: '5-3-1' })) as ReactElement);
+
+    const select = html.match(/id="history-program"[^>]*>(.*?)<\/select>/)?.[1] ?? '';
+    expect([...select.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1])).toEqual([CUSTOM.id, '5-3-1']);
+    expect(select).toContain('<option value="5-3-1" selected="">');
+    expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
+    expect(fetchImportBatches).toHaveBeenCalledWith('5-3-1');
+  });
+
   it('shows the load notice, and the other programs, when the recorded programs can’t be fetched', async () => {
     (fetchRecordedPrograms as jest.Mock).mockRejectedValue(new Error('API unavailable'));
 

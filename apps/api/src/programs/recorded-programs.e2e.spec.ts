@@ -69,6 +69,33 @@ describe('Recorded programs HTTP (e2e, in-memory adapters)', () => {
     expect(res.json()).toEqual(['531', 'rpt']);
   });
 
+  // #1304: an imported macrocycle with no sets still holds history History must reach.
+  it('lists a template holding only an imported macrocycle, though the user is on another program', async () => {
+    const repos = await app
+      .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+      .forUser({ id: 'recorded-macrocycle-only', email: 'recorded-macrocycle-only@example.com', provider: 'dev' });
+    await repos.userSettings.upsertSettings({ activeProgram: 'rpt' });
+    await repos.macrocycle.create({
+      program: '5-3-1',
+      macrocycleNum: 1,
+      startDate: new Date('2024-01-01T00:00:00.000Z'),
+      endDate: new Date('2024-01-26T00:00:00.000Z'),
+      status: 'completed',
+      origin: 'imported',
+    });
+    await repos.macrocycle.create({
+      program: NON_CYCLE_PROGRAM,
+      macrocycleNum: 1,
+      startDate: new Date('2024-02-01T00:00:00.000Z'),
+      status: 'completed',
+      origin: 'imported',
+    });
+
+    const res = await get('recorded-macrocycle-only');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(['5-3-1']);
+  });
+
   it("doesn't list another user's programs", async () => {
     await seed('recorded-other', ['leangains']);
     expect((await get('recorded-someone-else')).json()).toEqual([]);
