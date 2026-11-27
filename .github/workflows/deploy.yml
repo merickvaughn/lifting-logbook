@@ -1239,6 +1239,8 @@ jobs:
           # validation (#809 PR2); this prod rollout is human-gated at environment: production.
           client_error_guard: "true"
           client_error_drop_cross_origin: "true"
+          # Lifters use the custom domain, whose Origin is not the run.app URL (#1438).
+          client_error_extra_origins: "https://liftinglogbook.com"
 
       # ── Production web served-surface smoke (#490 item 3 / #382 / #407) ────
       # Verify the *live* prod web surface through the real Cloud Run ingress

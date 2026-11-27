@@ -264,3 +264,30 @@ test('History: a Lift History link opens it at the date, which before the log st
   await expect(page).toHaveURL(/\/supplements$/);
   await expect(page.getByRole('button', { name: 'History' })).toBeFocused();
 });
+
+test('closing Add supplement with × returns focus to the add button that opened it', async ({ page }) => {
+  await page.goto('/supplements');
+  const add = page.getByRole('button', { name: '+ Add to this day' }).first();
+  await add.click();
+  const dialog = page.getByRole('dialog', { name: 'Add supplement' });
+  await expect(dialog.getByLabel('Name')).toBeFocused();
+
+  await dialog.getByRole('button', { name: 'Close' }).first().click();
+  await expect(dialog).toBeHidden();
+  await expect(add).toBeFocused();
+});
+
+test('saving an edit from a row’s detail panel returns focus to that row', async ({ page }) => {
+  await page.goto('/supplements');
+  const row = page.getByRole('button', { name: /Nutricost Pre-X/ });
+  await row.click();
+  const detail = page.getByRole('dialog', { name: 'Nutricost Pre-X' });
+  await detail.getByRole('button', { name: 'Edit', exact: true }).click();
+  const form = page.getByRole('dialog', { name: 'Edit Nutricost Pre-X' });
+  await form.getByLabel('Timing').fill('30 min before training');
+  await form.getByRole('button', { name: 'Save' }).click();
+
+  await expect(form).toBeHidden();
+  await expect(detail).toBeHidden();
+  await expect(row).toBeFocused();
+});
