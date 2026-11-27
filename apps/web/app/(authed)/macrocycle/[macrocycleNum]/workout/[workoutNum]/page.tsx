@@ -165,6 +165,11 @@ export default async function WorkoutLoggingPage({
       ...(s.modifications && { modifications: s.modifications }),
     });
 
+    // The spec's AMRAP flag marks the lift's top set: its heaviest working set, the
+    // last of them when the weights are equal (#1086). That is set 1 of a descending
+    // (`wtDecrementPct` > 0) lift and the last set of straight sets.
+    const topLoad = Math.max(...workSets.map((p) => p.totalLoad));
+    const amrapIndex = workSets.map((p) => p.totalLoad).lastIndexOf(topLoad);
     const workingSets: WorkingSetData[] = workSets.map((p, i) => {
       const { setNum } = p;
       const record = logged.get(setNum);
@@ -173,8 +178,7 @@ export default async function WorkoutLoggingPage({
         setNum,
         totalLoad: p.totalLoad,
         reps: p.reps,
-        // The spec's AMRAP flag marks the lift's last working set.
-        amrap: Boolean(spec?.amrap) && i === workSets.length - 1,
+        amrap: Boolean(spec?.amrap) && i === amrapIndex,
         ...(record && { existing: toExisting(record) }),
       };
     });

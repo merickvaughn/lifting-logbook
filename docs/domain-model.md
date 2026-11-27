@@ -507,6 +507,15 @@ layers map into their own shapes rather than `packages/core` reaching outward:
 | `TimerSetPlan` | `packages/core/src/timer` | What the countdown needs. `type: 'warmup' \| 'work' \| 'activation'` |
 | `SetResponse` / `LiftRecord` | API / DB | The logged set |
 
+**A spec row's `amrap` flag marks the lift's top set** ([#1086](https://github.com/merickvaughn/lifting-logbook/issues/1086)):
+its heaviest working set, and the last of them when the weights are equal. With
+`wtDecrementPct` > 0 the work percentages fall from `1` (`PROG_SPEC_WORK_PCTS`), so that is
+set 1, the set `amrap_gated` progression reads (see [Progression](#progression)). With
+`wtDecrementPct` 0 every set has one weight, so it is the last set. The built-in 5/3/1 is
+written in the spec as a descending lift, so its AMRAP set is set 1 too, though Wendler's
+sets climb to it (`AUTHOR_SET_ORDER` only affects program matching). The logging page marks
+this set.
+
 On the read side, `WorkoutLiftResponse.planned: boolean` is **the only discriminator**:
 `true` means projected from the spec with nothing logged yet, `false` means backed by
 real records.
