@@ -38,11 +38,11 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   let importsFailed = false;
 
   // Any of the lifter's programs, not only the active one, since an import can go into any of
-  // them (#1300).
+  // them (#1300), including a template holding only macrocycles (#1304).
   const [{ program: requested }, { activeProgram, programs, failed: programsFailed }] = await Promise.all([
     searchParams,
     // fallback-covered-by: apps/web/app/(authed)/history/page.test.tsx
-    readUserPrograms('HistoryPage'),
+    readUserPrograms('HistoryPage', { macrocycles: true }),
   ]);
   if (programsFailed) loadFailed = true;
   // The program asked for, if it's one of the lifter's; else the active one, else their first.

@@ -1540,8 +1540,9 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
-  // GET /users/me/recorded-programs (#1454, #1304): the programs holding sets or macrocycles. The
-  // fixtures are 5-3-1's, and an Assign commit adds its program. The mock's custom ids aren't
+  // GET /users/me/recorded-programs (#1454, #1304): the programs holding sets. Both hold macrocycles
+  // too, so ?macrocycles=true changes nothing here. The fixtures are 5-3-1's, and an Assign commit
+  // adds its program. The mock's custom ids aren't
   // UUIDs, so it leaves them out, as the pickers would never read a real custom id as a template.
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/recorded-programs') {

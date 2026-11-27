@@ -253,6 +253,8 @@ describe('HistoryPage program', () => {
     expect(select).toContain('<option value="5-3-1" selected="">');
     expect(fetchMacrocycles).toHaveBeenCalledWith('5-3-1');
     expect(fetchImportBatches).toHaveBeenCalledWith('5-3-1');
+    // An imported macrocycle with no sets still makes its template pickable (#1304).
+    expect(fetchRecordedPrograms).toHaveBeenCalledWith({ macrocycles: true });
   });
 
   it('shows the load notice, and the other programs, when the recorded programs can’t be fetched', async () => {
