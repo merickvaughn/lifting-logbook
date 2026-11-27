@@ -117,7 +117,9 @@ type JsonCopy<T> = { [K in keyof T]: T[K] };
  * (`macrocycle-row:<n>`). JavaScript and Postgres read it alike, so the Prisma adapter filters
  * batches in SQL with the same pattern {@link preImageKeyNumber} uses. Two kinds of key hold no
  * number and read as null: a 1RM split's training max, keyed by lift id, and a non-cycle set,
- * keyed `non-cycle:<natural key>` (#1184).
+ * keyed `non-cycle:<natural key>` (#1184). A key on a negative macrocycle number reads as null
+ * too, since the pattern allows no sign; undo reads keys with {@link signedPreImageKeyNumber}
+ * instead (#1235), and #1485 tracks the other readers.
  */
 export const PRE_IMAGE_KEY_NUMBER = '^(?:macrocycle-row:)?([0-9]+)(?::|$)';
 
