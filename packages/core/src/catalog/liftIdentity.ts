@@ -63,8 +63,10 @@ export function lookupByStoredId<T>(
 /**
  * What to list each of `names` as, where one row per lift is wanted: a name stored as a
  * catalog id joins a spelling of that lift (the first in sort order) when `names` has one,
- * and every other name stays itself. The same rule as {@link lookupByStoredId}: `bench-press`
- * lists as `Bench Press`, while `C. Lat Raise` and `Lateral Raise` stay two rows (#1135).
+ * or lists as the catalog's name when it has none, and every other name stays itself. The
+ * same rule as {@link lookupByStoredId}: `bench-press` lists as `Bench Press`, while
+ * `C. Lat Raise` and `Lateral Raise` stay two rows (#1135). Import stores built-in lifts
+ * by id (#1118), so a lift with only imported sets still lists by name (#1500).
  */
 export function storedIdListing(names: Iterable<string>): (name: string) => string {
   const namedById = new Map<string, string>();
@@ -72,7 +74,12 @@ export function storedIdListing(names: Iterable<string>): (name: string) => stri
     const id = liftIdFor(name);
     if (name !== id && !namedById.has(id)) namedById.set(id, name);
   }
-  return (name) => namedById.get(name) ?? name;
+  return (name) => {
+    const named = namedById.get(name);
+    if (named !== undefined) return named;
+    const builtIn = builtInLiftFor(name);
+    return builtIn?.id === name ? builtIn.name : name;
+  };
 }
 
 /**
