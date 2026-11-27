@@ -80,6 +80,29 @@ describe('Settings → Data page', () => {
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('recorded programs fetch failed'), expect.any(Error));
   });
 
+  // #1465: a deleted custom program's sets stay under its id, so they must still export.
+  it('offers a deleted custom program that holds the lifter’s sets, named as deleted', async () => {
+    const deleted = '7d1e2f30-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockResolvedValue([custom]);
+    (fetchRecordedPrograms as jest.Mock).mockResolvedValue(['5-3-1', custom.id, deleted]);
+
+    expect(await renderPrograms()).toEqual([
+      { id: '5-3-1', name: '5-3-1', isTemplate: true },
+      custom,
+      { id: deleted, name: 'Deleted program (7d1e2f30)' },
+    ]);
+  });
+
+  // #1465: with the custom programs unread, a recorded custom id can't be told apart from a deleted one.
+  it('doesn’t call a recorded custom program deleted when the custom programs can’t be read', async () => {
+    (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
+    (fetchCustomPrograms as jest.Mock).mockRejectedValue(new Error('custom down'));
+    (fetchRecordedPrograms as jest.Mock).mockResolvedValue(['5-3-1', custom.id]);
+
+    expect((await renderPrograms()).map((p) => p.id)).toEqual(['5-3-1']);
+  });
+
   it('still offers the custom programs when settings can’t be read', async () => {
     (fetchUserSettings as jest.Mock).mockRejectedValue(new Error('settings down'));
     (fetchCustomPrograms as jest.Mock).mockResolvedValue([custom]);
