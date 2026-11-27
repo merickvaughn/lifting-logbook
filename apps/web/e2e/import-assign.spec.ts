@@ -143,6 +143,34 @@ test('Assign: an import into a program that isn’t active is undone from Histor
   await expect(page.getByText(/^Undo complete: \d+ restored/)).toBeFocused();
 });
 
+// #1304: an import into the active template stays reachable in History after the lifter switches
+// to another program, so it can still be undone there.
+test('Assign: an import into a template the lifter switched away from is undone from History', async ({ page }) => {
+  await commitThroughAssign(page);
+
+  await page.goto('/programs');
+  await page.getByRole('button', { name: 'Choose This Program' }).first().click();
+  await page.getByRole('button', { name: 'Confirm Switch' }).click();
+  await expect(page).toHaveURL(/\/macrocycle\/1/, { timeout: 10_000 });
+
+  // History opens on the new active program, which holds none of the import.
+  await page.goto('/history');
+  await openMacrocyclesTab(page);
+  const imported = page.getByRole('row').filter({ hasText: '2024-01-' });
+  await expect(imported).toHaveCount(0);
+
+  await page.getByLabel('Program').selectOption({ label: '5-3-1' });
+  await page.getByRole('button', { name: 'Show', exact: true }).click();
+  await expect(page).toHaveURL(/[?&]program=5-3-1/);
+  await openMacrocyclesTab(page);
+  await expect(imported).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Undo import of macrocycle 2' }).click();
+  await page.getByRole('button', { name: 'Undo import', exact: true }).click();
+  await expect(imported).toHaveCount(0);
+  await expect(page.getByText(/^Undo complete: \d+ restored/)).toBeFocused();
+});
+
 // #1257: an import is undone from the past-macrocycles list once the wizard is gone.
 test('Assign: an import is undone later from the past-macrocycles list', async ({ page }) => {
   const imported = await importThenOpenHistory(page);

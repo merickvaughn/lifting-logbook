@@ -98,6 +98,12 @@ describe('createApiClient', () => {
       expect((init as { cache?: string }).cache).toBe('no-store');
     });
 
+    it('asks for the programs holding macrocycles too when told to (#1304)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(['5-3-1']), { status: 200 }));
+      await expect(makeClient().fetchRecordedPrograms({ macrocycles: true })).resolves.toEqual(['5-3-1']);
+      expect(lastCall()[0]).toBe('http://api.test/users/me/recorded-programs?macrocycles=true');
+    });
+
     it('forwards the Next.js revalidate directive for cacheable reads', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
       const client = makeClient();

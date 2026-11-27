@@ -63,6 +63,14 @@ describe('Settings → Data page', () => {
     ]);
   });
 
+  // #1355: switching to a program writes a macrocycle, so asking for macrocycle programs would
+  // offer a template the lifter tried but logged nothing in.
+  it('asks for the programs holding sets only, not those holding just macrocycles', async () => {
+    await renderPrograms();
+
+    expect(fetchRecordedPrograms).toHaveBeenCalledWith({});
+  });
+
   it('still offers the active and custom programs when the recorded programs can’t be read', async () => {
     (fetchUserSettings as jest.Mock).mockResolvedValue({ activeProgram: '5-3-1' });
     (fetchCustomPrograms as jest.Mock).mockResolvedValue([custom]);

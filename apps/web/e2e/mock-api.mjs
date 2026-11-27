@@ -238,6 +238,8 @@ const GOOGLE_SHEET_LINKED = {
 function createInitialState() {
   return {
     noCurrentMacrocycle: false,
+    // POST /programs/:p/switch changes it, as on the API, so History can be read after a switch (#1304).
+    activeProgram: '5-3-1',
     // What Clear data would remove, and the backups it leaves (#1310).
     trainingDataCounts: { ...NO_TRAINING_DATA, liftRecords: 42, macrocycles: 2, trainingMaxes: 4 },
     snapshots: [],
@@ -1499,7 +1501,7 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/settings') {
     json(res, {
-      activeProgram: '5-3-1',
+      activeProgram: state.activeProgram,
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
@@ -1528,7 +1530,7 @@ const server = createServer(async (req, res) => {
       };
     }
     json(res, {
-      activeProgram: '5-3-1',
+      activeProgram: state.activeProgram,
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
@@ -1538,11 +1540,16 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
-  // GET /users/me/recorded-programs (#1454). The pickers already list the mock's active and custom
-  // programs, so it reports no others.
+  // GET /users/me/recorded-programs (#1454, #1304): the programs holding sets. Both hold macrocycles
+  // too, so ?macrocycles=true changes nothing here. The fixtures are 5-3-1's, and an Assign commit
+  // adds its program. The mock's custom ids aren't
+  // UUIDs, so it leaves them out, as the pickers would never read a real custom id as a template.
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/recorded-programs') {
-    json(res, []);
+    const programs = new Set(['5-3-1']);
+    if (state.assignedMacrocycles.length > 0) programs.add(state.assignedProgram);
+    for (const p of state.customPrograms) programs.delete(p.id);
+    json(res, [...programs].sort());
     return;
   }
 
@@ -1955,7 +1962,8 @@ const server = createServer(async (req, res) => {
 
     // POST /programs/:p/switch
     if (method === 'POST' && rest[0] === 'switch') {
-      json(res, { activeProgram: parts[1], macrocycleNum: 1 });
+      state.activeProgram = decodeURIComponent(parts[1]);
+      json(res, { activeProgram: state.activeProgram, macrocycleNum: 1 });
       return;
     }
 
