@@ -22,4 +22,11 @@ export interface LiftRecord {
    * natural key or public id: it is still set N of this lift (ADR-041).
    */
   modifications?: string[];
+  /**
+   * The barbell complex this set was done in, by name; absent for an ordinary set (#1494). A
+   * complex set never moves or estimates a training max (`movesLiftMax`).
+   */
+  complex?: string;
+  /** Which round of {@link complex} the set belongs to, from 1; absent when the source doesn't say. */
+  complexRound?: number;
 }

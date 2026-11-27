@@ -169,6 +169,22 @@ describe('missingTrainingMaxes (#1246)', () => {
     expect(missing[0]).toMatchObject({ lift: 'Romanian Deadlift', setCount: 1, estimate: { from: { weight: 100 } } });
   });
 
+  it('leaves out sets done in a complex, which never move or estimate a max (#1494)', () => {
+    const missing = missingTrainingMaxes({
+      trainingMaxes: [],
+      records: [
+        set({ lift: 'Power Clean', weight: 95, complex: 'Complex 1A' }),
+        set({ weight: 135, complex: 'Complex 1A' }),
+        set({ weight: 100 }),
+      ],
+      modificationModes: noModes,
+    });
+    // Power Clean's only sets were in the complex, so it isn't offered; Romanian Deadlift's
+    // estimate comes from its own set at 100, not the complex's 135.
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toMatchObject({ lift: 'Romanian Deadlift', setCount: 1, estimate: { from: { weight: 100 } } });
+  });
+
   it("leaves out a later occurrence's sets, which never move the max (#1027)", () => {
     const missing = missingTrainingMaxes({
       trainingMaxes: [],

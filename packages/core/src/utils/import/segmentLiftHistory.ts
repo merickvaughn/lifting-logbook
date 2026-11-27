@@ -49,6 +49,8 @@ export interface LiftHistoryRow {
   weight?: number | null;
   /** Which occurrence of the lift in its workout, from 0. Only the first gives a set order. */
   occurrence?: number | null;
+  /** The complex the set was done in (#1494). Such a set gives no set order. */
+  complex?: string | null;
 }
 
 export interface SegmentLiftHistoryOptions {
@@ -294,7 +296,9 @@ function daysBetween(a: Date, b: Date): number {
 function sessionOrders(rows: readonly LiftHistoryRow[]): Map<string, SetOrder> {
   const sets = new Map<string, LiftHistoryRow[]>();
   for (const row of rows) {
-    if ((row.occurrence ?? 0) !== 0 || !isFiniteNumber(row.weight)) continue;
+    // A set done in a complex (#1494) is loaded for the complex, so it says nothing about the
+    // order of the lift's own sets.
+    if ((row.occurrence ?? 0) !== 0 || row.complex || !isFiniteNumber(row.weight)) continue;
     const key = liftKey(row.lift);
     let liftRows = sets.get(key);
     if (!liftRows) sets.set(key, (liftRows = []));

@@ -147,6 +147,10 @@ export interface SetResponse {
   notes: string;
   /** The modifications on for this set, present only when there are any. */
   modifications?: LiftModificationRef[];
+  /** The barbell complex this set was done in, present only for a complex set (#1494). */
+  complex?: string;
+  /** Which round of {@link complex}, from 1, when known. */
+  complexRound?: number;
 }
 
 /** A single lift's sets within a workout. */
@@ -253,6 +257,10 @@ export interface LiftRecordResponse {
   notes: string;
   /** The modifications on for this set, present only when there are any. */
   modifications?: LiftModificationRef[];
+  /** The barbell complex this set was done in, present only for a complex set (#1494). */
+  complex?: string;
+  /** Which round of {@link complex}, from 1, when known. */
+  complexRound?: number;
 }
 
 /** Request body for logging a new lift record. */
@@ -764,6 +772,7 @@ export type ImportErrorCode =
   | 'ROW_LIMIT_EXCEEDED'
   | 'OCCURRENCE_INVALID'
   | 'STATUS_INVALID'
+  | 'COMPLEX_ROUND_INVALID'
   | 'UNEXPECTED_ERROR';
 
 /** A single validation error from a CSV import attempt. */

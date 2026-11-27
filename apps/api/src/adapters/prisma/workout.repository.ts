@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { LiftRecord } from '@lifting-logbook/core';
+import { LiftRecord, complexColumns } from '@lifting-logbook/core';
 import { IWorkoutRepository } from '../../ports/IWorkoutRepository';
 import { WorkoutNotFoundError } from '../../ports/errors';
 import { rowToLiftRecord } from './lift-record.repository';
@@ -44,6 +44,7 @@ export class PrismaWorkoutRepository implements IWorkoutRepository {
           reps: r.reps,
           notes: r.notes,
           modifications: r.modifications ?? [],
+          ...complexColumns(r),
         })),
       }),
     ]);

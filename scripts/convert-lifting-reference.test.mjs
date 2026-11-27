@@ -25,7 +25,11 @@ const L1_HEADER = [
 ];
 
 const convert = (tabs) => convertWorkbooks([{ name: 'wb.json', tabs }]);
-const sets = (records, lift) => records.filter((r) => r.lift === lift).map((r) => [r.setNum, r.weight, r.reps, r.notes ?? '']);
+// A complex set ends with its complex and round (#1494); any other set with its note.
+const sets = (records, lift) =>
+  records
+    .filter((r) => r.lift === lift)
+    .map((r) => (r.complex ? [r.setNum, r.weight, r.reps, r.complex, r.complexRound] : [r.setNum, r.weight, r.reps, r.notes ?? '']));
 
 test('parseRepCell reads the notations in the sheets', () => {
   assert.deepEqual(parseRepCell('8'), { reps: 8 });
@@ -137,8 +141,8 @@ test('layout 1: a complex becomes rounds × components; one without rounds is re
   // A complex row has no warm-ups to read k from; it comes from the session before.
   const before = [L1_HEADER, ['Curl', '3', '10', '10', '35', '45', '55', '65', '75', '70', '10']];
   const { records, report } = convert({ 20201005: before, 20201006: done, 20201007: notDone });
-  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A'], [2, 65, 5, 'Complex 1A']]);
-  assert.deepEqual(sets(records, 'Push Press'), [[1, 65, 8, 'Complex 1A'], [2, 65, 8, 'Complex 1A']]);
+  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A', 1], [2, 65, 5, 'Complex 1A', 2]]);
+  assert.deepEqual(sets(records, 'Push Press'), [[1, 65, 8, 'Complex 1A', 1], [2, 65, 8, 'Complex 1A', 2]]);
   assert.deepEqual(report.skipped, [{ tab: '20201007', lift: 'Complex 1A', reason: 'complex: no completed rounds logged' }]);
 });
 
@@ -156,7 +160,7 @@ test('layout 1: with two plan cells a component takes its reps, not its sets', (
     ['Notes', 'felt good'],
   ];
   const { records, report } = convert({ 20201005: before, 20201006: done });
-  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A'], [2, 65, 5, 'Complex 1A']]);
+  assert.deepEqual(sets(records, 'Power Clean'), [[1, 65, 5, 'Complex 1A', 1], [2, 65, 5, 'Complex 1A', 2]]);
   assert.deepEqual(sets(records, 'Pull-up'), []);
   assert.deepEqual(report.skipped, [{ tab: '20201006', lift: 'Pull-up', reason: 'no logged reps' }]);
   assert.deepEqual(report.notes.map((n) => n.text), ['felt good']);
@@ -209,7 +213,7 @@ test('layout 1: a multi-line Rep Range merged over the components gives each gro
   const { records, report } = convert({ 20201024: before, 20201025: complex('3\n\n8') });
   for (const [i, p] of parts.entries()) {
     const reps = i < 3 ? 3 : 8;
-    assert.deepEqual(sets(records, p), [[1, 105, reps, 'Complex 1A'], [2, 105, reps, 'Complex 1A']], p);
+    assert.deepEqual(sets(records, p), [[1, 105, reps, 'Complex 1A', 1], [2, 105, reps, 'Complex 1A', 2]], p);
   }
   assert.deepEqual(report.skipped, []);
 
@@ -444,7 +448,13 @@ test('an unrecognized tab is reported with its reason, never guessed at; non-ses
 
 test('toCsv writes the lift-record headers and quotes fields that need it', () => {
   const csv = toCsv([{ program: '5/3/1', date: '1/2/2021', lift: 'Squat', setNum: 1, weight: 100, reps: 5, notes: 'a, "b"' }]);
-  assert.equal(csv, `${CSV_HEADERS.join(',')}\n5/3/1,,,1/2/2021,Squat,1,100,5,"a, ""b"""\n`);
+  assert.equal(csv, `${CSV_HEADERS.join(',')}\n5/3/1,,,1/2/2021,Squat,1,100,5,"a, ""b""",,\n`);
+});
+
+test('toCsv writes a complex set\'s complex and round, which the app\'s importer reads (#1494)', () => {
+  const csv = toCsv([{ date: '10/6/2020', lift: 'Power Clean', setNum: 1, weight: 65, reps: 5, complex: 'Complex 1A', complexRound: 2 }]);
+  assert.deepEqual(CSV_HEADERS.slice(-2), ['Complex', 'Round']);
+  assert.equal(csv.split('\n')[1], ',,,10/6/2020,Power Clean,1,65,5,,Complex 1A,2');
 });
 
 test('splitFiles keeps one file under the limit, and past it never splits a date', () => {

@@ -12,6 +12,7 @@ import {
   liftIdFor,
   liftOccurrenceKey,
   liftOccurrences,
+  withComplex,
   withOccurrence,
   normalizeAmrap,
   noScheduleWorkoutDateUTC,
@@ -156,6 +157,7 @@ export const toLiftRecordResponse = (
   reps: r.reps,
   notes: r.notes,
   ...modificationRefs(r, modificationNames),
+  ...withComplex(r.complex, r.complexRound),
 });
 
 export const toLiftingProgramSpecResponse = (
@@ -476,6 +478,7 @@ export const toWorkoutResponse = (
       amrap: r.notes.toUpperCase().includes('AMRAP'),
       notes: r.notes,
       ...modificationRefs(r, modificationNames),
+      ...withComplex(r.complex, r.complexRound),
     };
     const lift = renamedLifts?.get(r.lift) ?? liftByStoredId.get(r.lift) ?? r.lift;
     const occurrence = r.occurrence ?? 0;

@@ -111,6 +111,30 @@ describe('serializeLiftRecords', () => {
     expect(parseLiftRecords(table)[0]).not.toHaveProperty('modifications');
   });
 
+  it('writes a complex and its round, and reads them back in either parse (#1494)', () => {
+    const table = parseCsvText(
+      serializeLiftRecords([record({ complex: 'Complex 1A', complexRound: 2 }), record({ setNum: 2 })]),
+    );
+    const [, tagged, plain] = table;
+    const cell = (r: readonly unknown[] | undefined, header: string) => r?.[LIFT_RECORD_EXPORT_HEADERS.indexOf(header)];
+    expect(cell(tagged, 'Complex')).toBe('Complex 1A');
+    expect(cell(tagged, 'Round')).toBe('2');
+    expect(cell(plain, 'Complex')).toBe('');
+    expect(cell(plain, 'Round')).toBe('');
+    for (const assign of [true, false]) {
+      const [first, second] = parseLiftRecords(table, { assign });
+      expect(first).toMatchObject({ complex: 'Complex 1A', complexRound: 2 });
+      expect(second).not.toHaveProperty('complex');
+      expect(second).not.toHaveProperty('complexRound');
+    }
+  });
+
+  it('escapes a complex name the way it escapes a lift', () => {
+    const table = parseCsvText(serializeLiftRecords([record({ complex: '=HYPERLINK(1)', complexRound: 1 })]));
+    expect(table[1]?.[LIFT_RECORD_EXPORT_HEADERS.indexOf('Complex')]).toBe("'=HYPERLINK(1)");
+    expect(parseLiftRecords(table)[0]).toMatchObject({ complex: '=HYPERLINK(1)' });
+  });
+
   // Decision 22: what the export escapes, the importer reads back as written.
   it.each(['=SUM(A1)', '+1', '-1', '@cmd', '\tx', '\rx', '\nx'])(
     'reads a lift and note starting with %j back without the apostrophe',

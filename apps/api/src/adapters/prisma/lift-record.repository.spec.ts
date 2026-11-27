@@ -295,6 +295,8 @@ describe('PrismaLiftRecordRepository', () => {
       macrocycleNum: 2,
       workoutNum: { not: 3 },
       occurrence: 0,
+      // A complex's sets aren't the lift's last session (#1494): the scope of both queries.
+      complex: null,
       date: { lte: before.through },
     };
 

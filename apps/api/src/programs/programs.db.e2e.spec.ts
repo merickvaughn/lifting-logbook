@@ -1068,6 +1068,29 @@ describeOrSkip('Programs HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(rows[0]?.macrocycleNum).toBe(rows[1]?.macrocycleNum);
     });
 
+    // #1494: a file's Complex and Round columns are stored on each set; a set without them stays plain.
+    it('stores the complex and round a file names, and leaves an ordinary set without them', async () => {
+      const csvContent = [
+        'Program,Macrocycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes,Complex,Round',
+        `${SEED_PROGRAM},1,1,10/7/2020,Squat,1,185,5,,,`,
+        `${SEED_PROGRAM},1,1,10/7/2020,Deadlift,1,95,5,,Complex 1A,1`,
+        `${SEED_PROGRAM},1,1,10/7/2020,Deadlift,2,95,5,,Complex 1A,2`,
+      ].join('\n');
+
+      const res = await postCsv(IMPORT_URL, csvContent);
+      expect(res.statusCode).toBe(201);
+
+      const rows = await prisma.liftRecord.findMany({
+        where: { userId: TEST_USER, program: SEED_PROGRAM },
+        orderBy: [{ lift: 'asc' }, { setNum: 'asc' }],
+      });
+      expect(rows.map((r) => [r.lift, r.setNum, r.complex, r.complexRound])).toEqual([
+        ['back-squat', 1, null, null],
+        ['deadlift', 1, 'Complex 1A', 1],
+        ['deadlift', 2, 'Complex 1A', 2],
+      ]);
+    });
+
     it('re-import returns written=0 and skipped=all rows from first import', async () => {
       const csvContent = readFixture();
 

@@ -108,7 +108,11 @@ const PAYLOAD_COLUMNS: Record<string, string[]> = {
   FocusDayState: ['id', 'macrocycleNum', 'program', 'state', 'updatedAt', 'userId', 'workoutNum'],
   ImportBatch: ['createdAt', 'destination', 'groupId', 'id', 'macrocycles', 'preImage', 'program', 'userId'],
   LiftModificationMax: ['dateUpdated', 'id', 'modificationId', 'program', 'userId', 'weight'],
+  // `complex` and `complexRound` are nullable (#1494), so a snapshot taken before them restores
+  // its sets as ordinary ones.
   LiftRecord: [
+    'complex',
+    'complexRound',
     'date',
     'id',
     'lift',

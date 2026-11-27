@@ -99,6 +99,15 @@ describe('toLiftRecordResponse', () => {
     expect(workout.lifts[0]?.sets[0]?.modifications).toEqual([{ id: 'a', name: 'Paused' }]);
     expect(workout.lifts[0]?.sets[1]).not.toHaveProperty('modifications');
   });
+
+  it('names the complex and round of a complex set, and nothing for an ordinary one (#1494)', () => {
+    const inComplex = liftRecord({ complex: 'Complex 1A', complexRound: 2 });
+    expect(toLiftRecordResponse(inComplex, new Map())).toMatchObject({ complex: 'Complex 1A', complexRound: 2 });
+    expect(toLiftRecordResponse(liftRecord(), new Map())).not.toHaveProperty('complex');
+    const workout = toWorkoutResponse('5-3-1', 4, 1, 1, [inComplex, liftRecord({ setNum: 2 })], {});
+    expect(workout.lifts[0]?.sets[0]).toMatchObject({ complex: 'Complex 1A', complexRound: 2 });
+    expect(workout.lifts[0]?.sets[1]).not.toHaveProperty('complex');
+  });
 });
 
 // Pre-#740 the week lookup indexed workoutNum into the stored block's distinct

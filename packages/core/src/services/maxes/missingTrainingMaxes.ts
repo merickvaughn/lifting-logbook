@@ -41,7 +41,7 @@ export interface MissingTrainingMaxesInput {
   /** The program's training maxes. */
   trainingMaxes: readonly Pick<TrainingMax, "lift" | "dateUpdated">[];
   /** The program's sets. Those of lifts that have a max, or that `lifts` leaves out, are ignored. */
-  records: readonly Pick<LiftRecord, "lift" | "date" | "weight" | "reps" | "modifications" | "occurrence">[];
+  records: readonly Pick<LiftRecord, "lift" | "date" | "weight" | "reps" | "modifications" | "occurrence" | "complex">[];
   /** The `maxMode` of each modification the records name, as `updateMaxes` takes them (#1152). */
   modificationModes: ReadonlyMap<string, LiftModificationMaxMode>;
   /** Only these lifts, matched by stable id, however each is spelled. All lifts when absent. */
@@ -97,8 +97,8 @@ export function estimateTrainingMax(sets: readonly EstimateSet[]): TrainingMaxEs
  *
  * A lift is listed when {@link missingMaxCandidate} holds, so it lists the lifts progression
  * reports as `no-training-max`. Only sets that move the lift's own max count (`movesLiftMax`): a
- * set under a `none` or `own` modification, or from a later occurrence in its workout, moves none
- * of it (#1152, #1153, #1027).
+ * set under a `none` or `own` modification, from a later occurrence in its workout, or done in a
+ * complex moves none of it (#1152, #1153, #1027, #1494).
  */
 export function missingTrainingMaxes({
   trainingMaxes,

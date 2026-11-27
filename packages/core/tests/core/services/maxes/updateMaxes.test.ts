@@ -502,6 +502,73 @@ describe("updateMaxes — a set's modifications (issue #1152)", () => {
   });
 });
 
+// A complex's weight is set by its weakest lift, so a component's set is no attempt at that
+// lift's max (#1494). Read as one, set 1 below the max proposed a lower max and was flagged.
+describe("updateMaxes — a set done in a complex (issue #1494)", () => {
+  const row: LiftingProgramSpec = {
+    week: 1,
+    offset: 0,
+    lift: "Deadlift",
+    increment: 5,
+    order: 1,
+    sets: 3,
+    reps: 5,
+    amrap: false,
+    warmUpPct: "0.6",
+    wtDecrementPct: 0,
+    activation: "",
+  };
+  const startMax: TrainingMax = { lift: "Deadlift", weight: 300, dateUpdated: new Date("2025-12-29") };
+  const set1 = (weight: number, complex?: string) =>
+    ({
+      program: "RPT",
+      macrocycleNum: 1,
+      workoutNum: 1,
+      date: new Date("2026-01-05"),
+      lift: "Deadlift",
+      setNum: 1,
+      weight,
+      reps: 5,
+      notes: "",
+      ...(complex && { complex, complexRound: 1 }),
+    }) as Parameters<typeof updateMaxes>[2][number];
+
+  it("neither moves nor flags the max for a complex set below it", () => {
+    const tagged = updateMaxes([row], [{ ...startMax }], [set1(135, "Complex 1A")], RPT);
+    expect(tagged.maxes).toEqual([startMax]);
+    expect(tagged.flagged).toEqual([]);
+    // The same set outside a complex is an attempt, and its lower max is flagged.
+    const untagged = updateMaxes([row], [{ ...startMax }], [set1(135)], RPT);
+    expect(untagged.flagged).toEqual([{ lift: "Deadlift", currentWeight: 300, proposedWeight: 140 }]);
+  });
+
+  it("leaves complex sets numbered after a linear lift's own sets out of its session", () => {
+    const linear: LiftingProgramSpec = { ...row, progression: "linear" };
+    const own = [1, 2, 3].map((setNum) => ({ ...set1(300), setNum }));
+    // The converter numbers a lift's complex sets after its own, on the same day: sets 4 and 5,
+    // short of the 5-rep target. Read as the session's, they would hold the max back.
+    const inComplex = [4, 5].map((setNum) => ({ ...set1(95, "Complex 1A"), setNum, reps: 3 }));
+    const { maxes } = updateMaxes([linear], [{ ...startMax }], [...own, ...inComplex], RPT);
+    expect(maxes).toEqual([{ lift: "Deadlift", weight: 305, dateUpdated: new Date("2026-01-05") }]);
+  });
+
+  it("doesn't move the max for a complex set above it either", () => {
+    const { maxes } = updateMaxes([row], [{ ...startMax }], [set1(310, "Complex 1A")], RPT);
+    expect(maxes).toEqual([startMax]);
+  });
+
+  it("moves no own max for a complex set under an `own` modification", () => {
+    const modes = new Map([["wide-grip", "own"] as const]);
+    const result = updateMaxes(
+      [row],
+      [{ ...startMax }],
+      [{ ...set1(310, "Complex 1A"), modifications: ["wide-grip"] }],
+      { ...RPT, modificationModes: modes },
+    );
+    expect(result.modificationMaxes).toEqual([]);
+  });
+});
+
 // An `own` modification moves a max of its own and leaves the lift's alone (#1153). Its gates are
 // the lift's: set 1 of a first occurrence, reps met, newer than the max, and a reduction is flagged.
 describe("updateMaxes — a modification's own max (issue #1153)", () => {

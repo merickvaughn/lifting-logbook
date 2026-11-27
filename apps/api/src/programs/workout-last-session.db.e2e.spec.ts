@@ -84,6 +84,14 @@ describeOrSkip('a workout lift’s last session (full app, lifting_app role)', (
         // reading any of her sets would give him hers.
         ...sets(USER_BOB, 2, '2026-11-03', 'Cable Curl', [7, 7]),
         ...sets(USER_BOB, 3, '2026-11-06', 'Cable Curl', [9]),
+        // Bob's curls in a complex in workout 2's place: sets of a complex, which aren't a session
+        // of the lift (#1494). Read as one, his last session would be these.
+        ...sets(USER_BOB, 4, '2026-11-05', 'Cable Curl', [3, 3]).map((s, i) => ({
+          ...s,
+          complex: 'Complex 1A',
+          complexRound: i + 1,
+        })),
+        ...sets(USER_BOB, 5, '2026-11-08', 'Cable Curl', [9]),
       ],
     });
     process.env.DATABASE_URL = APP_DB_URL;
@@ -112,5 +120,12 @@ describeOrSkip('a workout lift’s last session (full app, lifting_app role)', (
 
     const curl = workout.lifts.find((l) => l.lift === 'Cable Curl');
     expect(curl?.lastSession).toEqual({ date: '2026-11-03', reps: [7, 7] });
+  });
+
+  it('leaves out sets done in a complex (#1494)', async () => {
+    const workout = await getAs(USER_BOB, 5);
+
+    const curl = workout.lifts.find((l) => l.lift === 'Cable Curl');
+    expect(curl?.lastSession).toEqual({ date: '2026-11-06', reps: [9] });
   });
 });

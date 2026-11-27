@@ -2,6 +2,33 @@ import { parseLiftRecords } from "@src/core";
 import { loadCsvFixture } from "../../../testUtils";
 
 describe("parseLiftRecords", () => {
+  // #1494: any lift-record file, not only an export, can say a set was done in a complex.
+  it("reads optional Complex and Round columns from a sheet that isn't an export", () => {
+    const header = ["Program", "Macrocycle #", "Workout #", "Date", "Lift", "Set #", "Weight", "Reps", "Notes", "Complex", "Round"];
+    const [tagged, unrounded, plain, badRound] = parseLiftRecords([
+      header,
+      ["rpt", "1", "1", "10/7/2020", "Power Clean", "1", "65", "5", "", " Complex 1A ", "2"],
+      ["rpt", "1", "1", "10/7/2020", "Push Press", "1", "65", "8", "", "Complex 1A", ""],
+      ["rpt", "1", "1", "10/7/2020", "Squat", "1", "185", "5", "", "", ""],
+      ["rpt", "1", "1", "10/7/2020", "Squat", "2", "185", "5", "", "Complex 1A", "two"],
+    ]);
+    expect(tagged).toMatchObject({ complex: "Complex 1A", complexRound: 2 });
+    expect(unrounded).toMatchObject({ complex: "Complex 1A" });
+    expect(unrounded).not.toHaveProperty("complexRound");
+    expect(plain).not.toHaveProperty("complex");
+    // A round that isn't a whole number from 1 reads as NaN, which validation rejects.
+    expect(badRound!.complexRound).toBeNaN();
+  });
+
+  it("reads no complex from a file without the columns", () => {
+    const [r] = parseLiftRecords([
+      ["Program", "Macrocycle #", "Workout #", "Date", "Lift", "Set #", "Weight", "Reps", "Notes"],
+      ["rpt", "1", "1", "10/7/2020", "Squat", "1", "185", "5", ""],
+    ]);
+    expect(r).not.toHaveProperty("complex");
+    expect(r).not.toHaveProperty("complexRound");
+  });
+
   it("parses lift records from fixture data", () => {
     const data = loadCsvFixture("lift_records.csv");
     const records = parseLiftRecords(data);

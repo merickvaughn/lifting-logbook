@@ -109,7 +109,9 @@ export function assignBlank(r: ParsedLiftRecord, field: AssignBlankField, option
 /**
  * Row errors for an exported file's `Occurrence` and `Status` cells (#1254, decision 22), as the
  * assign parse reads them: an occurrence must be a whole number from 0, and a status one of the
- * macrocycle statuses. Absent cells are fine.
+ * macrocycle statuses. Also a `Round` beside a `Complex` (#1494), which any file may carry: a whole
+ * number from 1 that fits the database column. Absent cells are fine. The commit and the Review
+ * preview both call this, so a row the commit would reject is flagged at Review (#1402).
  */
 export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportError[] {
   const errors: ImportError[] = [];
@@ -122,6 +124,8 @@ export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportErro
       code: 'STATUS_INVALID',
       message: `Status must be one of ${MACROCYCLE_STATUSES.join(', ')}`,
     });
+  if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1 && r.complexRound <= INT_COLUMN_MAX))
+    errors.push({ row, field: 'complexRound', code: 'COMPLEX_ROUND_INVALID', message: 'Round must be a whole number from 1' });
   return errors;
 }
 
