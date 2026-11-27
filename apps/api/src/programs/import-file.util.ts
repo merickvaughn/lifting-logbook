@@ -11,6 +11,15 @@ export const MAX_IMPORT_ROWS = 5_000;
 /** Upload size limit for one import file; `main.ts` registers multipart with it. */
 export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 
+/**
+ * Most form fields one Smart Import request may carry. A commit reads five (`excludeKeys`,
+ * `liftOverrides`, `today`, `breakdown`, `notes`). multipart buffers every field in memory,
+ * so the count is what bounds that memory. It is counted here rather than through multipart's
+ * `limits.fields`, which destroys the file stream when it trips before the file arrives and
+ * leaves a bare `ERR_STREAM_PREMATURE_CLOSE` (a 500) instead of a status code (#1146).
+ */
+export const MAX_IMPORT_FIELDS = 5;
+
 /** An uploaded file as `@fastify/multipart` exposes it. */
 interface UploadedFile {
   toBuffer(): Promise<Buffer>;
@@ -63,6 +72,8 @@ export async function readImportForm(
     for await (const part of parts) {
       if (part.type === 'file') {
         csvText = await csvTextOf(part);
+      } else if (fields.size + truncated.length >= MAX_IMPORT_FIELDS) {
+        throw new PayloadTooLargeException(`More than ${MAX_IMPORT_FIELDS} form fields`);
       } else if (part.valueTruncated) {
         truncated.push(part.fieldname);
       } else {
