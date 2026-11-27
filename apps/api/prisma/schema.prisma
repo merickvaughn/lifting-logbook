@@ -293,6 +293,22 @@ model LiftModification {
   @@map("lift_modification")
 }
 
+// A barbell complex (#1495): several lifts done back to back with one bar and one weight. A program
+// row plans one as `complex:<id>`. Logged sets carry the complex's name, not this id, so a delete
+// removes the row outright.
+model BarbellComplex {
+  id         String   @id @default(uuid())
+  userId     String
+  name       String
+  // `[{ lift, reps }]` in the order they are done. `lift` is the lift's name, as a program row
+  // names it, so its training max is found by name.
+  components Json
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, name])
+  @@map("barbell_complex")
+}
+
 // A modification's own training max (#1153), scoped to a program the way training_max is. A side
 // table rather than a row in training_max, so readers that look a max up by lift are unaffected.
 model LiftModificationMax {

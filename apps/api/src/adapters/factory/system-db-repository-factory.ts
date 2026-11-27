@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { LiftRecord } from '@lifting-logbook/core';
 import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
+import { PrismaBarbellComplexRepository } from '../prisma/barbell-complex.repository';
 import { PrismaBodyWeightRepository } from '../prisma/body-weight.repository';
 import { PrismaCustomLiftRepository } from '../prisma/custom-lift.repository';
 import { PrismaFocusRepository } from '../prisma/focus.repository';
@@ -23,6 +24,7 @@ import { PrismaLiftMetadataRepository } from '../prisma/lift-metadata.repository
 import { PrismaWorkoutDateOverrideRepository } from '../prisma/workout-date-override.repository';
 import { PrismaWorkoutLiftOverrideRepository } from '../prisma/workout-lift-override.repository';
 import { PrismaWorkoutRepository } from '../prisma/workout.repository';
+import { InMemoryBarbellComplexRepository } from '../in-memory/barbell-complex.adapter';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
@@ -108,6 +110,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     if (adapterType === 'postgres') {
       const prisma = this.getOrCreatePrisma();
       return {
+        barbellComplex: new PrismaBarbellComplexRepository(prisma, userId),
         bodyWeight: new PrismaBodyWeightRepository(prisma, userId),
         customLift: new PrismaCustomLiftRepository(prisma, userId),
         focus: new PrismaFocusRepository(prisma, userId),
@@ -151,6 +154,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const bundle: RepositoryBundle = {
       dataSnapshot: new InMemoryDataSnapshotRepository(),
       trainingData,
+      barbellComplex: new InMemoryBarbellComplexRepository(userId),
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),

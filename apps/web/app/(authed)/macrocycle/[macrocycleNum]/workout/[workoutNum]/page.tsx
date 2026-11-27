@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import {
+  complexIdOf,
   convertWeight,
   currentMaxLookup,
   lookupLift,
@@ -16,14 +17,14 @@ import {
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
-import { loadFocusPlan } from '@/lib/loadWorkoutPlan';
+import { loadComplexes, loadFocusPlan } from '@/lib/loadWorkoutPlan';
 import { movedWorkoutPath } from '@/lib/macrocycleUrl';
 import { getPreferredUnit } from '@/lib/preferences';
-import { liftSets, liftSpecsForWorkout, planLift } from '@/lib/workoutPlan';
+import { liftSets, liftSpecsForWorkout, planComplex, planLift } from '@/lib/workoutPlan';
 import { effectiveDateOf } from '@/lib/workoutStatus';
 import { hasLoggedFocusWork, withFocusLifts } from './focusLifts';
 import WorkoutLogger from './WorkoutLogger';
-import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
+import type { ComplexSlot, LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
 
 /**
  * Hard-coded warm-up implement names for bodyweight-component exercises, by catalog id, so
@@ -118,7 +119,17 @@ export default async function WorkoutLoggingPage({
   // What each lift plans by besides its row: its progression type and last session (#1211).
   const progressions = await loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage', () => customLiftsRead);
 
-  const workoutLifts: LiftData[] = workout.lifts.map((wl, liftIndex) => {
+  // A complex slot is shown, not logged, until #1496: it stays out of `lifts`.
+  const complexList = await loadComplexes(workout.lifts, 'WorkoutLoggingPage');
+  const complexes: ComplexSlot[] = workout.lifts.flatMap((wl, liftIndex) => {
+    const planned = planComplex(wl.lift, liftSpecs[liftIndex], (l) => maxFor(l)?.weight, complexList);
+    if (planned === undefined) return [];
+    const workWeights = planned.plannedSets.filter((s) => s.type === 'work').map((s) => s.weight);
+    return [{ complex: planned.complex, tm: planned.tm, workWeights }];
+  });
+
+  const workoutLifts: LiftData[] = workout.lifts.flatMap((wl, liftIndex) => {
+    if (complexIdOf(wl.lift) !== undefined) return [];
     const tm = maxFor(wl.lift)?.weight ?? 0;
 
     // The lift's prescription — provides warmUpPct and increment. Resolved through
@@ -220,6 +231,7 @@ export default async function WorkoutLoggingPage({
     initialBodyWeight,
     unit,
     ownMaxes,
+    ...(complexes.length > 0 && { complexes }),
   };
 
   return <WorkoutLogger {...props} />;

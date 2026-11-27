@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { PROGRAMS } from '@/lib/programs';
-import type { CustomProgramResponse, CustomProgramSummaryResponse } from '@lifting-logbook/types';
+import type { BarbellComplexResponse, CustomProgramResponse, CustomProgramSummaryResponse } from '@lifting-logbook/types';
 import { deleteCustomProgram, fetchCustomProgram } from './actions';
 import ProgramEditor from './ProgramEditor';
 import styles from './programs.module.css';
@@ -13,6 +13,7 @@ type Props = {
   activeProgram: string | null;
   defaultWeightIncrement: number | null;
   customPrograms: CustomProgramSummaryResponse[];
+  complexes: BarbellComplexResponse[];
   onProgramSaved: (id: string) => void;
 };
 
@@ -22,6 +23,7 @@ export default function EditorTab({
   activeProgram,
   defaultWeightIncrement,
   customPrograms: initialPrograms,
+  complexes,
   onProgramSaved,
 }: Props) {
   const [subTab, setSubTab] = useState<EditorMode>('new');
@@ -75,6 +77,7 @@ export default function EditorTab({
         existing={editingProgram}
         activeProgram={activeProgram}
         defaultWeightIncrement={defaultWeightIncrement}
+        complexes={complexes}
         onSaved={handleSaved}
         onCancel={() => setEditingProgram(null)}
       />
@@ -103,6 +106,7 @@ export default function EditorTab({
           mode="new"
           activeProgram={activeProgram}
           defaultWeightIncrement={defaultWeightIncrement}
+          complexes={complexes}
           onSaved={handleSaved}
           onCancel={() => {}}
         />
@@ -130,6 +134,7 @@ export default function EditorTab({
               baseTemplateId={cloneTemplateId}
               activeProgram={activeProgram}
               defaultWeightIncrement={defaultWeightIncrement}
+              complexes={complexes}
               onSaved={handleSaved}
               onCancel={() => setSubTab('new')}
             />

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import {
+  BarbellComplexNotFoundError,
   CustomLiftNotFoundError,
   FocusBlockNotFoundError,
   HistoryEntryNotFoundError,
@@ -22,7 +23,8 @@ type DomainNotFound =
   | StrengthGoalNotFoundError
   | CustomLiftNotFoundError
   | FocusBlockNotFoundError
-  | LiftModificationNotFoundError;
+  | LiftModificationNotFoundError
+  | BarbellComplexNotFoundError;
 
 /**
  * Translates framework-agnostic domain "not found" errors raised by port
@@ -37,6 +39,7 @@ type DomainNotFound =
   CustomLiftNotFoundError,
   FocusBlockNotFoundError,
   LiftModificationNotFoundError,
+  BarbellComplexNotFoundError,
 )
 export class DomainNotFoundFilter implements ExceptionFilter {
   catch(err: DomainNotFound, host: ArgumentsHost): void {

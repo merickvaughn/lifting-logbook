@@ -106,6 +106,7 @@ export const {
   fetchLiftMetadata,
   fetchAllLiftMetadata,
   fetchCustomLifts,
+  fetchBarbellComplexes,
   fetchUserSettings,
   updateUserSettings,
   switchProgram,

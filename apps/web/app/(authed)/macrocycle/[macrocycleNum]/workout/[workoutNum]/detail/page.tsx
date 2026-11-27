@@ -137,6 +137,7 @@ export default async function WorkoutDetailPage({
               macrocycleNum={macrocycleNum}
               workoutNum={workoutNum}
               unit={unit}
+              program={program}
             />
           </section>
         </>

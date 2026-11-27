@@ -2,10 +2,10 @@
 
 import { useState, useTransition } from 'react';
 import type { InputHTMLAttributes } from 'react';
-import { LIFT_CATALOG } from '@lifting-logbook/core';
+import { LIFT_CATALOG, complexIdOf, complexLift } from '@lifting-logbook/core';
 import { useRouter } from 'next/navigation';
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
-import type { CustomProgramResponse, CustomProgramSpecRow } from '@lifting-logbook/types';
+import type { BarbellComplexResponse, CustomProgramResponse, CustomProgramSpecRow } from '@lifting-logbook/types';
 import { createCustomProgram, updateCustomProgram, switchProgram } from './actions';
 import { templateSeedSpecs } from '@/lib/programs';
 import {
@@ -30,6 +30,8 @@ type Props = {
   baseTemplateId?: string;
   activeProgram: string | null;
   defaultWeightIncrement: number | null;
+  /** The lifter's complexes, which a row can plan as `complex:<id>` (#1495). */
+  complexes?: readonly BarbellComplexResponse[];
   onSaved: (id: string) => void;
   onCancel: () => void;
 };
@@ -84,10 +86,17 @@ export default function ProgramEditor({
   baseTemplateId,
   activeProgram: _activeProgram,
   defaultWeightIncrement,
+  complexes = [],
   onSaved,
   onCancel,
 }: Props) {
   const router = useRouter();
+  // A row naming a complex shows the complex's name; one deleted since shows as such.
+  const complexNames = new Map(complexes.map((c) => [c.id, c.name]));
+  const liftLabel = (lift: string): string => {
+    const id = complexIdOf(lift);
+    return id === undefined ? lift : (complexNames.get(id) ?? 'Deleted complex');
+  };
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   // Seeds new instances (custom programs only — see docs/standards/training-max-precision.md).
@@ -286,11 +295,11 @@ export default function ProgramEditor({
                 day.instances.map((inst, i) => (
                   <div key={inst.id} className={styles.instanceRow}>
                     <div className={styles.instanceHeader}>
-                      <strong>{inst.lift}</strong>
+                      <strong>{liftLabel(inst.lift)}</strong>
                       <button
                         type="button"
                         className={styles.btnSecondary}
-                        aria-label={`Remove ${inst.lift} #${i + 1} from Day ${n}`}
+                        aria-label={`Remove ${liftLabel(inst.lift)} #${i + 1} from Day ${n}`}
                         onClick={() => removeInstance(day.id, inst.id)}
                       >
                         Remove
@@ -320,7 +329,7 @@ export default function ProgramEditor({
                                     min={1}
                                     max={20}
                                     value={p.sets}
-                                    aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} sets`}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} sets`}
                                     onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'sets', v)}
                                   />
                                 </td>
@@ -330,7 +339,7 @@ export default function ProgramEditor({
                                     min={1}
                                     max={20}
                                     value={p.reps}
-                                    aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} reps`}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} reps`}
                                     onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'reps', v)}
                                   />
                                 </td>
@@ -338,7 +347,7 @@ export default function ProgramEditor({
                                   <input
                                     type="checkbox"
                                     checked={p.amrap}
-                                    aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} AMRAP`}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} AMRAP`}
                                     onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'amrap', e.target.checked)}
                                   />
                                 </td>
@@ -348,7 +357,7 @@ export default function ProgramEditor({
                                     min={0}
                                     step={2.5}
                                     value={p.increment}
-                                    aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} increment`}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} increment`}
                                     onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'increment', v)}
                                   />
                                 </td>
@@ -358,7 +367,7 @@ export default function ProgramEditor({
                                     style={{ width: '120px' }}
                                     type="text"
                                     value={p.warmUpPct}
-                                    aria-label={`${inst.lift} #${i + 1} Day ${n} Week ${week} warmup percents`}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} warmup percents`}
                                     onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'warmUpPct', e.target.value)}
                                     placeholder="0.4,0.5,0.6"
                                   />
@@ -385,6 +394,13 @@ export default function ProgramEditor({
                   {ALL_LIFTS.map((lift) => (
                     <option key={lift} value={lift}>{lift}</option>
                   ))}
+                  {complexes.length > 0 && (
+                    <optgroup label="Complexes">
+                      {complexes.map((c) => (
+                        <option key={c.id} value={complexLift(c.id)}>{c.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
             </div>

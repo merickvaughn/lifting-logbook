@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import {
+  BarbellComplexConflictError,
   CustomLiftConflictError,
   FocusBlockConflictError,
   FocusBlockStaleError,
@@ -17,6 +18,7 @@ import {
 } from '../ports/errors';
 
 type DomainConflict =
+  | BarbellComplexConflictError
   | CustomLiftConflictError
   | ReservedLiftNameConflictError
   | FocusBlockConflictError
@@ -32,6 +34,7 @@ type DomainConflict =
  * stay free of `@nestjs/common` HTTP dependencies.
  */
 @Catch(
+  BarbellComplexConflictError,
   CustomLiftConflictError,
   ReservedLiftNameConflictError,
   FocusBlockConflictError,

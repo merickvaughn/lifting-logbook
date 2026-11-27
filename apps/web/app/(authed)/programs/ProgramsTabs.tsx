@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { CustomProgramSummaryResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
+import type { BarbellComplexResponse, CustomProgramSummaryResponse, UserWorkoutSchedule } from '@lifting-logbook/types';
 import BrowseTab from './BrowseTab';
 import EditorTab from './EditorTab';
 import styles from './programs.module.css';
@@ -13,6 +13,8 @@ type Props = {
   workoutSchedule: UserWorkoutSchedule | null;
   defaultWeightIncrement: number | null;
   customPrograms: CustomProgramSummaryResponse[];
+  /** The lifter's complexes, which a program row can plan (#1495). */
+  complexes: BarbellComplexResponse[];
 };
 
 export default function ProgramsTabs({
@@ -20,6 +22,7 @@ export default function ProgramsTabs({
   workoutSchedule,
   defaultWeightIncrement,
   customPrograms,
+  complexes,
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('browse');
   const [currentActive, _setCurrentActive] = useState(activeProgram);
@@ -59,6 +62,7 @@ export default function ProgramsTabs({
           activeProgram={currentActive}
           defaultWeightIncrement={defaultWeightIncrement}
           customPrograms={customPrograms}
+          complexes={complexes}
           onProgramSaved={handleProgramSaved}
         />
       )}

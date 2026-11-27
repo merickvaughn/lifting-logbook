@@ -292,6 +292,8 @@ function createInitialState() {
     trainingMaxImport: null,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
+    // /lifts/complexes (#1495) — the user's barbell complexes.
+    barbellComplexes: [],
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
     liftModifications: [],
     // /programs/:p/modification-maxes (#1153) — own maxes. One list serves every program.
@@ -1048,6 +1050,55 @@ const server = createServer(async (req, res) => {
     };
     state.customLifts.push(created);
     json(res, created, 201);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // /lifts/complexes (#1495) — list, create, edit and delete barbell complexes; 409 on a taken
+  // name. The mock doesn't check that each component names a lift.
+  // -------------------------------------------------------------------------
+  if (method === 'GET' && url.pathname === '/lifts/complexes') {
+    json(res, state.barbellComplexes);
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/lifts/complexes') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (state.barbellComplexes.some((c) => c.name === body.name)) {
+      json(res, { statusCode: 409, message: `You already have a complex named "${body.name}"` }, 409);
+      return;
+    }
+    const created = {
+      id: `complex-${state.barbellComplexes.length + 1}`,
+      name: body.name,
+      components: body.components,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    state.barbellComplexes.push(created);
+    json(res, created, 201);
+    return;
+  }
+  const complexMatch = url.pathname.match(/^\/lifts\/complexes\/([^/]+)$/);
+  if (complexMatch && (method === 'PATCH' || method === 'DELETE')) {
+    const id = decodeURIComponent(complexMatch[1]);
+    const existing = state.barbellComplexes.find((c) => c.id === id);
+    if (!existing) {
+      json(res, { statusCode: 404, message: 'Complex not found' }, 404);
+      return;
+    }
+    if (method === 'DELETE') {
+      state.barbellComplexes = state.barbellComplexes.filter((c) => c.id !== id);
+      noContent(res);
+      return;
+    }
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (body.name !== undefined && state.barbellComplexes.some((c) => c.id !== id && c.name === body.name)) {
+      json(res, { statusCode: 409, message: `You already have a complex named "${body.name}"` }, 409);
+      return;
+    }
+    Object.assign(existing, body);
+    json(res, existing);
     return;
   }
 

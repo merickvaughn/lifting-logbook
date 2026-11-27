@@ -134,6 +134,38 @@ export interface LiftModification {
   createdAt: Date;
 }
 
+/** One lift of a barbell complex and its reps in each round (#1495). */
+export interface ComplexComponent {
+  /**
+   * The lift's name, as a program row names it, so its training max is found by name the way a
+   * row's is (`currentMaxLookup`).
+   */
+  lift: string;
+  reps: number;
+}
+
+/** The bounds a complex definition is held to, by the API and the editor (#1495). */
+export const COMPLEX_LIMITS = {
+  MAX_NAME_LENGTH: 100,
+  MIN_COMPONENTS: 2,
+  MAX_COMPONENTS: 10,
+  MAX_REPS: 100,
+} as const;
+
+/**
+ * A barbell complex (#1495): several lifts done back to back with one bar and one weight. A
+ * program row plans one by naming it `complex:<id>`, at a percentage of its lowest component max.
+ * See docs/proposals/2026-11-27-barbell-complexes.md.
+ */
+export interface BarbellComplex {
+  id: string;
+  userId: string;
+  name: string;
+  /** In the order they are done. */
+  components: ComplexComponent[];
+  createdAt: Date;
+}
+
 /**
  * A named lift. Typed as a branded string so new lifts can be added without
  * a code change, while still enabling autocomplete from LIFT_NAMES.

@@ -42,6 +42,8 @@ export interface TimerPlanInput {
    */
   activationMovement: string | undefined;
   plannedSets: PlannedSet[];
+  /** Set when the slot names a complex (#1495): the timer shows its name, not `complex:<id>`. */
+  complex?: { name: string };
 }
 
 /**
@@ -81,7 +83,7 @@ export function toTimerLiftPlans(
   focus: FocusDayPlanResponse | null,
 ): TimerLiftPlan[] {
   const planned = details.map((detail) => ({
-      lift: detail.lift,
+      lift: detail.complex?.name ?? detail.lift,
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
       activation: detail.activationMovement,

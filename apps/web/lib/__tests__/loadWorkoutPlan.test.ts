@@ -9,6 +9,7 @@ jest.mock('@/lib/api', () => ({
   fetchUserSettings: jest.fn(),
   fetchAllLiftMetadata: jest.fn(),
   fetchLiftRecords: jest.fn(),
+  fetchBarbellComplexes: jest.fn(),
 }));
 
 jest.mock('@/lib/preferences', () => ({
@@ -22,6 +23,7 @@ jest.mock('@/lib/userToday', () => ({
 
 import {
   fetchAllLiftMetadata,
+  fetchBarbellComplexes,
   fetchCustomLifts,
   fetchFocusPlan,
   fetchLiftRecords,
@@ -32,8 +34,8 @@ import {
 } from '@/lib/api';
 import { CUSTOM_LIFTS_TIMEOUT_MS } from '@/lib/timerPlan';
 import { loadProgressionPlans } from '@/lib/loadProgressionPlans';
-import { FOCUS_PLAN_TIMEOUT_MS, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
-import { planLift } from '@/lib/workoutPlan';
+import { FOCUS_PLAN_TIMEOUT_MS, loadComplexes, loadFocusPlan, loadWorkoutPlan } from '@/lib/loadWorkoutPlan';
+import { UNKNOWN_COMPLEX, planLift } from '@/lib/workoutPlan';
 import { focusPlan } from './focusPlanFixture';
 
 const mockedWorkout = fetchWorkout as unknown as jest.Mock;
@@ -44,6 +46,7 @@ const mockedFocusPlan = fetchFocusPlan as unknown as jest.Mock;
 const mockedUserSettings = fetchUserSettings as unknown as jest.Mock;
 const mockedLiftMetadata = fetchAllLiftMetadata as unknown as jest.Mock;
 const mockedLiftRecords = fetchLiftRecords as unknown as jest.Mock;
+const mockedComplexes = fetchBarbellComplexes as unknown as jest.Mock;
 
 // Each row names its type, as every built-in preset's does, so a lift plans by its row and nothing
 // reads the progression settings unless a test clears it (#1249).
@@ -449,6 +452,59 @@ describe('loadFocusPlan (#1060)', () => {
     } finally {
       warnSpy.mockRestore();
       jest.useRealTimers();
+    }
+  });
+});
+
+describe('loadComplexes / a complex slot (#1495)', () => {
+  const BEAR = {
+    id: 'c-bear',
+    name: 'Bear',
+    components: [
+      { lift: 'Squat', reps: 5 },
+      { lift: 'Bench Press', reps: 5 },
+    ],
+    createdAt: '2026-11-27T00:00:00.000Z',
+  };
+
+  it('makes no request when no slot names a complex', async () => {
+    await expect(
+      loadComplexes([{ lift: 'Squat' }], 'WorkoutDetailPage'),
+    ).resolves.toEqual([]);
+    expect(mockedComplexes).not.toHaveBeenCalled();
+  });
+
+  it('plans a complex slot from the fetched complexes', async () => {
+    seedWorkout(['complex:c-bear']);
+    mockedMaxes.mockResolvedValue([
+      { lift: 'Squat', weight: 300 },
+      { lift: 'Bench Press', weight: 200 },
+    ]);
+    mockedComplexes.mockResolvedValue([BEAR]);
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+
+    expect(mockedComplexes).toHaveBeenCalledTimes(1);
+    expect(plan?.liftDetails[0]?.complex).toMatchObject({ name: 'Bear', limitingLift: 'Bench Press' });
+    expect(plan?.liftDetails[0]?.tm).toBe(200);
+  });
+
+  it('logs a failed read and leaves the complex slot unplanned as unknown', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      seedWorkout(['complex:c-bear']);
+      mockedComplexes.mockRejectedValue(new Error('boom'));
+
+      const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[WorkoutDetailPage] complexes fetch failed, leaving complex slots unplanned',
+        expect.any(Error),
+      );
+      expect(plan?.liftDetails[0]?.complex?.name).toBe(UNKNOWN_COMPLEX);
+      expect(plan?.liftDetails[0]?.plannedSets).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
     }
   });
 });

@@ -8,6 +8,7 @@
 import { MacrocycleDashboard, LiftRecord, LiftingProgramSpec, TrainingMax, TrainingMaxHistoryEntry } from '@lifting-logbook/core';
 import { BodyWeightEntry, DEFAULT_FOCUS_BUDGET } from '@lifting-logbook/types';
 import { AuthUser, IAuthProvider } from './auth';
+import { IBarbellComplexRepository } from './IBarbellComplexRepository';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { IRepositoryFactory, RepositoryBundle } from './factory';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
@@ -276,6 +277,14 @@ const _liftModificationRepo: ILiftModificationRepository = {
   deleteAllMaxes: () => Promise.resolve(),
 };
 
+const _barbellComplexRepo: IBarbellComplexRepository = {
+  list: () => Promise.resolve([]),
+  create: (input) =>
+    Promise.resolve({ id: '', userId: '', name: input.name, components: input.components, createdAt: new Date() }),
+  update: (id) => Promise.reject(new Error(id)),
+  delete: () => Promise.resolve(),
+};
+
 const _focusRepo: IFocusRepository = {
   listBlocks: () => Promise.resolve([]),
   getBlock: () => Promise.resolve(null),
@@ -336,6 +345,7 @@ const _importBatchRepo: IImportBatchRepository = {
 };
 
 const _repositoryBundle: RepositoryBundle = {
+  barbellComplex: _barbellComplexRepo,
   bodyWeight: _bodyWeightRepo,
   customLift: _customLiftRepo,
   focus: _focusRepo,

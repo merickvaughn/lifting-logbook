@@ -467,6 +467,21 @@
   font-style: italic;
 }
 
+.complexes {
+  padding: var(--space-4);
+}
+
+.complexName {
+  font-size: var(--font-size-base);
+  margin: 0 0 var(--space-2);
+}
+
+.complexNote {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-2);
+}
+
 .finishBtn {
   min-height: 44px;
   padding: 0 var(--space-5);

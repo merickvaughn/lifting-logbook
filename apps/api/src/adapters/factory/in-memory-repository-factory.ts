@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LiftRecord } from '@lifting-logbook/core';
 import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
+import { InMemoryBarbellComplexRepository } from '../in-memory/barbell-complex.adapter';
 import { InMemoryBodyWeightRepository } from '../in-memory/body-weight.adapter';
 import { InMemoryCustomLiftRepository } from '../in-memory/custom-lift.adapter';
 import { InMemoryFocusRepository } from '../in-memory/focus.adapter';
@@ -57,6 +58,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const bundle: RepositoryBundle = {
         dataSnapshot: new InMemoryDataSnapshotRepository(),
         trainingData,
+        barbellComplex: new InMemoryBarbellComplexRepository(user.id),
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),

@@ -1,9 +1,17 @@
 import 'server-only';
 
+import { complexIdOf } from '@lifting-logbook/core';
 import type { TimerLiftPlan } from '@lifting-logbook/core';
 import { FOCUS_PLACEMENTS, FOCUS_PROGRESSION_TYPES } from '@lifting-logbook/types';
-import type { FocusDayPlanResponse, WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
-import { fetchCustomLifts, fetchFocusPlan, fetchProgramSpec, fetchTrainingMaxes, fetchWorkout } from '@/lib/api';
+import type { BarbellComplexResponse, FocusDayPlanResponse, WeightUnit, WorkoutResponse } from '@lifting-logbook/types';
+import {
+  fetchBarbellComplexes,
+  fetchCustomLifts,
+  fetchFocusPlan,
+  fetchProgramSpec,
+  fetchTrainingMaxes,
+  fetchWorkout,
+} from '@/lib/api';
 import { getPreferredUnit } from '@/lib/preferences';
 import { getUserToday } from '@/lib/userToday';
 import { CUSTOM_LIFTS_TIMEOUT_MS, toTimerLiftPlans } from '@/lib/timerPlan';
@@ -139,6 +147,22 @@ export async function loadFocusPlan(
 }
 
 /**
+ * The lifter's complexes, read only when one of `slots` names one (#1495), so a page with none
+ * costs no request. A failed read leaves each complex slot unplanned, named as unknown.
+ */
+export async function loadComplexes(
+  slots: readonly { lift: string }[],
+  caller: FocusPlanCaller | 'MacrocycleDashboardPage',
+): Promise<BarbellComplexResponse[]> {
+  if (!slots.some((l) => complexIdOf(l.lift) !== undefined)) return [];
+  // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
+  return fetchBarbellComplexes().catch((err: unknown) => {
+    console.error(`[${caller}] complexes fetch failed, leaving complex slots unplanned`, err);
+    return [];
+  });
+}
+
+/**
  * Loads a workout and its plan, or `null` when the workout does not exist.
  *
  * `notFound()` / `redirect()` are the page's call, not this loader's — keeping
@@ -211,7 +235,7 @@ export async function loadWorkoutPlan(
     caller,
     boundedCustomLifts,
   );
-  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions);
+  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions, await loadComplexes(workout.lifts, caller));
 
   return {
     workout,

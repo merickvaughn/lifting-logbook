@@ -8,6 +8,7 @@ import { plannedRowIds } from '@/lib/focusWorkout';
 import type { PlannedSet, WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import type { TimerRowState } from '@/components/timer/WorkoutTimerProvider';
+import { ComplexMissingMaxes, ComplexSummary } from '@/components/complex/ComplexPlanView';
 import styles from './detail.module.css';
 
 /**
@@ -65,6 +66,8 @@ interface Props {
   macrocycleNum: number;
   workoutNum: number;
   unit: WeightUnit;
+  /** The active program; with it, a complex held back by a missing max offers to set it (#1495). */
+  program?: string;
   /** What to render, in order. Defaults to every planned lift in plan order. */
   rows?: LiftListRow[];
   reorder?: LiftListReorder;
@@ -133,13 +136,16 @@ function PlannedPanel({
   timerIndex,
   unit,
   timer,
+  program,
 }: {
   detail: LiftDetail;
   timerIndex: number | undefined;
   unit: WeightUnit;
   timer: TimerRowState | null;
+  program: string | undefined;
 }) {
-  const { lift, activationMovement: movement, plannedSets } = detail;
+  const { activationMovement: movement, plannedSets, complex } = detail;
+  const lift = complex?.name ?? detail.lift;
   const setRow = (s: PlannedSet) => (
     <SetRow
       key={s.setLabel}
@@ -161,6 +167,8 @@ function PlannedPanel({
 
   return (
     <>
+      {complex && <ComplexSummary complex={complex} tm={detail.tm} unit={unit} />}
+
       {activationMovement !== undefined && (
         /*
           Read-only: an activation is not a set, so it gets no ▶ — the
@@ -190,8 +198,14 @@ function PlannedPanel({
         </div>
       )}
 
-      {plannedSets.length === 0 && (
+      {complex === undefined && plannedSets.length === 0 && (
         <p className={styles.noSets}>No sets — set a training max to see planned weights.</p>
+      )}
+
+      {complex !== undefined && complex.missing.length > 0 && (
+        program !== undefined ?
+          <ComplexMissingMaxes complex={complex} program={program} />
+        : <p className={styles.noSets}>No sets — set a training max for {complex.missing.join(', ')}.</p>
       )}
     </>
   );
@@ -224,6 +238,7 @@ export default function CollapsibleLiftList({
   macrocycleNum,
   workoutNum,
   unit,
+  program,
   rows,
   reorder,
 }: Props) {
@@ -296,13 +311,18 @@ export default function CollapsibleLiftList({
         let label: ReactNode;
         let summary: string;
         let panel: ReactNode;
+        // A complex has no lift history of its own to link to.
+        let historyLink = true;
         if (row.kind === 'planned') {
           const detail = liftDetails[row.liftIndex];
           if (detail === undefined) return null;
-          lift = detail.lift;
+          lift = detail.complex?.name ?? detail.lift;
+          historyLink = detail.complex === undefined;
           label = detail.tm > 0 ? <span className={styles.liftTM}>TM: {formatWeight(detail.tm, 'lbs', unit)}</span> : null;
           summary = `${detail.warmUpCount > 0 ? `${detail.warmUpCount} warm-up • ` : ''}${detail.workCount} working`;
-          panel = <PlannedPanel detail={detail} timerIndex={timerIndexOf(row)} unit={unit} timer={timer} />;
+          panel = (
+            <PlannedPanel detail={detail} timerIndex={timerIndexOf(row)} unit={unit} timer={timer} program={program} />
+          );
         } else {
           lift = row.lift;
           label =
@@ -380,12 +400,14 @@ export default function CollapsibleLiftList({
                 <span className={styles.liftSummary}>{summary}</span>
               </button>
 
-              <Link
-                href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/${encodeURIComponent(lift)}`}
-                className={styles.liftHistoryBtn}
-              >
-                📊 History
-              </Link>
+              {historyLink && (
+                <Link
+                  href={`/macrocycle/${macrocycleNum}/workout/${workoutNum}/detail/${encodeURIComponent(lift)}`}
+                  className={styles.liftHistoryBtn}
+                >
+                  📊 History
+                </Link>
+              )}
 
               {reorder && (
                 <span className={styles.moveBtns}>
