@@ -196,6 +196,21 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   timer plan with. A weight the lifter typed stays. With no own max yet, or when the maxes didn't
   load, it plans from the lift's max and says why. Focus lifts and lifts with no spec row don't re-plan.
 
+### Complexes are sets of their component lifts
+
+A **barbell complex** is several lifts done back to back with one bar and one weight, for a number
+of rounds. Each component's set is stored as a set of that lift, so per-lift history and volume see
+it, with `lift_record.complex` naming the complex and `lift_record.complexRound` its round, from 1
+([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494); see the
+[proposal](proposals/2026-11-27-barbell-complexes.md)). Both are null for an ordinary set and
+neither is part of the natural key or id.
+
+- The complex's weight is limited by its weakest lift, so a complex set never moves or estimates a
+  training max: `movesLiftMax` leaves it out, as it does a later occurrence (see
+  [Progression](#progression)). It isn't a lift's last session either.
+- Lift-record import reads optional `Complex` and `Round` columns from any file, and the export
+  writes them. `LiftRecordResponse` and `SetResponse` carry `complex` and `complexRound` when set.
+
 ### Two name registries, one bridge
 
 | Registry | Count | Purpose |
@@ -482,6 +497,10 @@ row is skipped as `no-program-spec`, as before #1211.
 A computed *reduction* is never auto-applied — it is returned as a `MaxReductionFlag`
 for explicit review.
 
+A set done in a complex (`complex` set) moves no max, under any modification, and isn't part of
+the session a `linear` or `double` lift is judged on
+([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494)).
+
 Modifications decide which max a set moves, through the same gates:
 
 1. Any `none` modification on: no max moves, and the set isn't a test week's attempt. A
@@ -583,6 +602,8 @@ classDiagram
         +int reps
         +string notes
         +string[] modifications
+        +string? complex
+        +int? complexRound
     }
     class LiftModification {
         <<persisted>>

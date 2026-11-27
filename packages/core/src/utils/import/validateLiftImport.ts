@@ -143,6 +143,8 @@ export function validateLiftImport(
       if (outOfDateRange) rowErrors.push(outOfDateRange);
     }
     rowErrors.push(...exportColumnErrors(r, row));
+    if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1))
+      rowErrors.push({ row, field: 'complexRound', code: 'COMPLEX_ROUND_INVALID', message: 'Round must be a whole number from 1' });
 
     // String(r.lift ?? ''), not a bare `as unknown as string` cast: r.lift is
     // genuinely `undefined` whenever the uploaded table has no column mapped

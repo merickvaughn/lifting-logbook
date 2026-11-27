@@ -319,7 +319,8 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
     const fixture = (modificationId: string) => {
       const line = (cells: Array<string | number>) => cells.join(',');
       const set = (program: string, m: number, w: number, d: number, lift: string, extra: { occ?: number; notes?: string; mods?: string; status?: string } = {}) =>
-        line([program, m, w, day(d), lift, 1, 100, 5, extra.notes ?? '', extra.occ ?? 0, extra.mods ?? '', extra.status ?? '']);
+        // The last two cells are Complex and Round (#1494), empty: none of these sets is in a complex.
+        line([program, m, w, day(d), lift, 1, 100, 5, extra.notes ?? '', extra.occ ?? 0, extra.mods ?? '', extra.status ?? '', '', '']);
       const rptOne = (w: number, d: number, extra: { occ?: number; notes?: string; mods?: string } = {}) =>
         ['Bench Press', 'Barbell Row', 'Overhead Press'].map((lift, i) =>
           set('rpt', 1, w, d, lift, {
@@ -413,7 +414,7 @@ describe('Filtered sets download (#1308, e2e, in-memory adapters)', () => {
 
     it('checks the ids on a commit sent without a breakdown too', async () => {
       const { id } = await modification();
-      const row = ['rpt', 1, 1, day(0), 'Bench Press', 1, 100, 5, '', 0, `${id};00000000-0000-4000-8000-000000000000`, ''];
+      const row = ['rpt', 1, 1, day(0), 'Bench Press', 1, 100, 5, '', 0, `${id};00000000-0000-4000-8000-000000000000`, '', '', ''];
       const csv = [LIFT_RECORD_EXPORT_HEADERS.join(','), row.join(',')].join('\n');
       expect((await upload(csv, 'commit')).statusCode).toBe(200);
       const stored = await (await repos()).liftRecord.getLiftRecords('rpt', 1);

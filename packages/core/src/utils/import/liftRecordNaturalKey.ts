@@ -203,6 +203,19 @@ export function withModifications(modifications: string[] | undefined): { modifi
   return modifications?.length ? { modifications } : {};
 }
 
+/**
+ * `{ complex, complexRound }` for a set done in a complex, else `{}`, so an ordinary set keeps the
+ * shape it had before complexes existed (#1494). A round with no complex is dropped. Takes a
+ * stored row's nulls as absent. Spread it into the object.
+ */
+export function withComplex(
+  complex: string | null | undefined,
+  complexRound: number | null | undefined,
+): { complex?: string; complexRound?: number } {
+  if (!complex) return {};
+  return complexRound == null ? { complex } : { complex, complexRound };
+}
+
 /** Inverse of {@link liftRecordSetSegment}; null when malformed. Occurrence 0 is left absent. */
 function parseSetSegment(segment: string): { setNum: number; occurrence?: number } | null {
   const [set = '', occ, ...extra] = segment.split('~');

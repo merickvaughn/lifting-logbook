@@ -23,7 +23,8 @@
  *   - A weight of `BW (180)` is 180. A cell no rule covers drops that one set and is reported.
  *   - A layout 1 complex becomes, per completed round, one set of each component at the complex
  *     weight, with the component's planned reps, or its group's line of a multi-line Rep Range
- *     merged over blank component rows (`groupReps`). One with no rounds or no reps per component is
+ *     merged over blank component rows (`groupReps`). Each set names the complex and its round in
+ *     the Complex and Round columns, so it moves no training max (#1494). One with no rounds or no reps per component is
  *     skipped and reported. Layout 2 sheets never give reps per component, so its complexes are
  *     always skipped and reported.
  *   - Anything a tab can't be read as (a title that isn't a real date, no layout, nothing read) is
@@ -53,9 +54,10 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { fileURLToPath } from 'url';
 import { join, resolve } from 'path';
 
-// LIFT_RECORD_HEADER_MAP's keys in packages/core/src/constants/schema.ts; a .mjs can't import
-// the TypeScript constant.
-export const CSV_HEADERS = ['Program', 'Macrocycle #', 'Workout #', 'Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Notes'];
+// LIFT_RECORD_HEADER_MAP's keys in packages/core/src/constants/schema.ts, then the optional
+// Complex and Round columns import reads from any file (#1494); a .mjs can't import the
+// TypeScript constants.
+export const CSV_HEADERS = ['Program', 'Macrocycle #', 'Workout #', 'Date', 'Lift', 'Set #', 'Weight', 'Reps', 'Notes', 'Complex', 'Round'];
 // MAX_IMPORT_ROWS in apps/api/src/programs/import-file.util.ts.
 const MAX_ROWS_PER_FILE = 5000;
 // The reps of warm-ups 1–5 in layouts 1 and 2: the headers read "50% x 10" … "110% x 1".
@@ -167,7 +169,10 @@ function newSession(title, date) {
           continue;
         }
         for (const s of [...l.warmups, ...l.sets]) {
-          result.records.push({ program: l.program, date: formatDate(l.date), lift: l.name, weight: s.weight, reps: s.reps, notes: s.notes });
+          result.records.push({
+            program: l.program, date: formatDate(l.date), lift: l.name, weight: s.weight, reps: s.reps, notes: s.notes,
+            complex: s.complex, complexRound: s.complexRound,
+          });
         }
       }
       return result;
@@ -215,7 +220,7 @@ function addComplex(session, name, weight, rounds, components, whyNoReps) {
   }
   for (const c of components) {
     const lift = session.lift(c.name);
-    for (let i = 0; i < rounds; i++) lift.sets.push({ weight, reps: c.reps, notes: name });
+    for (let i = 0; i < rounds; i++) lift.sets.push({ weight, reps: c.reps, complex: name, complexRound: i + 1 });
   }
 }
 
@@ -558,7 +563,7 @@ function csvField(value) {
 export function toCsv(records) {
   const lines = [CSV_HEADERS.join(',')];
   for (const r of records) {
-    lines.push([r.program ?? '', '', '', r.date, r.lift, r.setNum, r.weight, r.reps, r.notes ?? ''].map(csvField).join(','));
+    lines.push([r.program ?? '', '', '', r.date, r.lift, r.setNum, r.weight, r.reps, r.notes ?? '', r.complex ?? '', r.complexRound ?? ''].map(csvField).join(','));
   }
   return lines.join('\n') + '\n';
 }

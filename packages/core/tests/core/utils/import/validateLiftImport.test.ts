@@ -36,6 +36,20 @@ describe("validateLiftImport", () => {
     expect(valid[1]!.lift).toBe("bench-press");
   });
 
+  it("keeps a complex and its round, and flags a round that isn't a whole number from 1 (#1494)", () => {
+    const { valid, errors } = validateLiftImport(
+      [
+        makeRecord({ complex: "Complex 1A", complexRound: 2 }),
+        makeRecord({ setNum: 2, complex: "Complex 1A" }),
+        makeRecord({ setNum: 3, complex: "Complex 1A", complexRound: NaN }),
+        makeRecord({ setNum: 4, complex: "Complex 1A", complexRound: 0 }),
+      ],
+      TEST_SLOT_MAP,
+    );
+    expect(valid.map((r) => [r.complex, r.complexRound])).toEqual([["Complex 1A", 2], ["Complex 1A", undefined]]);
+    expect(errors.map((e) => [e.row, e.code])).toEqual([[3, "COMPLEX_ROUND_INVALID"], [4, "COMPLEX_ROUND_INVALID"]]);
+  });
+
   it("flags an unknown lift abbreviation", () => {
     const records = [makeRecord({ lift: "Cable Curls" as LiftRecord["lift"] })];
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);

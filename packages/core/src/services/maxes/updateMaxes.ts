@@ -136,14 +136,22 @@ function targetOf(
 }
 
 /**
- * Whether a set moves its lift's own training max: it belongs to the lift's first occurrence in
- * its workout (#1027) and {@link targetOf} sends it to the lift's max.
+ * Whether a set can move any max: it belongs to the lift's first occurrence in its workout
+ * (#1027) and wasn't done in a complex, whose weight its weakest lift sets (#1494).
+ */
+function canMoveAMax(record: Pick<LiftRecord, 'occurrence' | 'complex'>): boolean {
+  return !record.occurrence && !record.complex;
+}
+
+/**
+ * Whether a set moves its lift's own training max: {@link canMoveAMax} holds and
+ * {@link targetOf} sends it to the lift's max.
  */
 export function movesLiftMax(
-  record: Pick<LiftRecord, 'modifications' | 'occurrence'>,
+  record: Pick<LiftRecord, 'modifications' | 'occurrence' | 'complex'>,
   modes: ReadonlyMap<string, LiftModificationMaxMode>,
 ): boolean {
-  return !record.occurrence && targetOf(record, modes) === 'lift';
+  return canMoveAMax(record) && targetOf(record, modes) === 'lift';
 }
 
 /** What moves a max for one record: its resolved type and increment, read against its row or its own target. */
@@ -385,7 +393,7 @@ export function updateMaxes(
     options.modificationMaxes.map((m) => [m.modificationId, { ...m }]),
   );
   const ownSets = liftRecords.flatMap((r) => {
-    const target = r.occurrence ? undefined : targetOf(r, options.modificationModes);
+    const target = canMoveAMax(r) ? targetOf(r, options.modificationModes) : undefined;
     return typeof target === 'object' ? [{ record: r, id: target.own }] : [];
   });
   // A session's sets of one own max in one workout, best attempt first. Few sets carry an own

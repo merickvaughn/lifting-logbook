@@ -26,6 +26,11 @@ model LiftRecord {
   // The ids of the lift_modification rows on for this set; empty means unmodified (#1151).
   // Not part of the natural key: it is still set N of this lift.
   modifications String[] @default([])
+  // The barbell complex this set was done in, and its round from 1; null for an ordinary set
+  // (#1494). A complex set never moves or estimates a training max. Not part of the natural key:
+  // a complex's sets of a lift take that lift's next free occurrence in the workout.
+  complex       String?
+  complexRound  Int?
 
   @@unique([userId, program, macrocycleNum, workoutNum, date, lift, occurrence, setNum])
   @@index([userId, program, macrocycleNum])

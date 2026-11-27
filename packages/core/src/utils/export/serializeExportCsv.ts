@@ -29,6 +29,9 @@ export interface LiftRecordExportRow {
    * `Status` cell, as for an inferred status or a non-cycle workout.
    */
   status?: string | null;
+  /** The complex the set was done in, and its round; absent or null for an ordinary set (#1494). */
+  complex?: string | null;
+  complexRound?: number | null;
 }
 
 export interface TrainingMaxExportRow {
@@ -68,14 +71,21 @@ export const LIFT_RECORD_EXPORT_TOKEN = 'Occurrence';
 
 /**
  * Decision 22 of docs/proposals/2026-11-06-import-macrocycle-assignment.md: the lift-record
- * headers plus three optional columns. A file with `Occurrence` is treated as an export, so
+ * headers plus three optional columns, and `Complex` and `Round` (#1494). A file with `Occurrence`
+ * is treated as an export, so
  * this column is always written, 0 included.
  */
+/** The complex a set was done in, and its round (#1494). Import reads both from any file. */
+export const LIFT_RECORD_COMPLEX_HEADER = 'Complex';
+export const LIFT_RECORD_ROUND_HEADER = 'Round';
+
 export const LIFT_RECORD_EXPORT_HEADERS: readonly string[] = [
   ...Object.keys(LIFT_RECORD_HEADER_MAP),
   LIFT_RECORD_EXPORT_TOKEN,
   'Modifications',
   'Status',
+  LIFT_RECORD_COMPLEX_HEADER,
+  LIFT_RECORD_ROUND_HEADER,
 ];
 
 /** Joins a set's modification ids in the `Modifications` column. Ids are uuids, so never contain it. */
@@ -126,6 +136,8 @@ export function serializeLiftRecords(records: readonly LiftRecordExportRow[]): s
       r.occurrence,
       r.modifications.join(LIFT_RECORD_MODIFICATION_SEPARATOR),
       r.status ?? '',
+      escapeCsvFormula(r.complex ?? ''),
+      r.complex ? (r.complexRound ?? '') : '',
     ]),
   ]);
 }
