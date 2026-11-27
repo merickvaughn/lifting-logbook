@@ -32,19 +32,23 @@ export const UNDICI_INSTRUMENTATION_CONFIG = {
 export const DEPLOYMENT_ENVIRONMENT_ATTR = 'deployment.environment.name';
 
 /**
- * Resolve the deployment environment from NODE_ENV. The API container's NODE_ENV
- * is set per environment (`production` / `staging`) by the Helm values and the
- * Cloud Run service spec; locally it is unset, so we fall back to `development`.
- * Pure and exported so the resource attribute is unit-testable without starting
- * the SDK (#487 AC: "assertion that the resource attribute is set").
+ * Resolve the deployment environment from DEPLOYMENT_ENVIRONMENT, which the deploy
+ * sets on the api and web Cloud Run services (#1448). It falls back to NODE_ENV,
+ * which the Helm values and the Cloud Run service spec also set per environment
+ * (`production` / `staging`) on the api; locally both are unset, so we fall back
+ * to `development`. Pure and exported so the resource attribute is unit-testable
+ * without starting the SDK (#487 AC: "assertion that the resource attribute is set").
  *
- * This is the canonical copy. apps/web/instrumentation.ts mirrors this logic
- * inline (separate workspace); keep the two in sync — see the note there.
+ * apps/web/lib/deployment-environment.ts reads the same variable (separate
+ * workspace) so the two services report the same environment, but never
+ * NODE_ENV, which `next build` pins to `production`. Keep the trim and fallback
+ * semantics the same in both.
  */
 export function resolveDeploymentEnvironment(
-  nodeEnv: string | undefined = process.env.NODE_ENV,
+  value: string | undefined = process.env.DEPLOYMENT_ENVIRONMENT?.trim() ||
+    process.env.NODE_ENV,
 ): string {
-  return nodeEnv && nodeEnv.trim() !== '' ? nodeEnv.trim() : 'development';
+  return value && value.trim() !== '' ? value.trim() : 'development';
 }
 
 /**

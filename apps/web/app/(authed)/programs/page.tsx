@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { fetchCustomPrograms, fetchUserSettings } from '@/lib/api';
+import { fetchBarbellComplexes, fetchCustomPrograms, fetchUserSettings } from '@/lib/api';
 import type { UserSettingsResponse } from '@lifting-logbook/types';
 import ProgramsTabs from './ProgramsTabs';
 import styles from './programs.module.css';
@@ -13,9 +13,16 @@ const DEFAULT_SETTINGS: UserSettingsResponse = {
 };
 
 export default async function ProgramsPage() {
-  const [settings, customPrograms] = await Promise.all([
+  const [settings, customPrograms, complexes] = await Promise.all([
     fetchUserSettings().catch(() => DEFAULT_SETTINGS),
     fetchCustomPrograms().catch(() => []),
+    // A failed read is null, not empty: the editor then offers lifts only, and names a row that
+    // plans a complex as one it couldn't load rather than as deleted.
+    // fallback-covered-by: apps/web/app/(authed)/programs/page.test.tsx
+    fetchBarbellComplexes().catch((err: unknown) => {
+      console.error('[ProgramsPage] complexes fetch failed, the editor offers lifts only', err);
+      return null;
+    }),
   ]);
 
   return (
@@ -30,6 +37,7 @@ export default async function ProgramsPage() {
         workoutSchedule={settings.workoutSchedule ?? null}
         defaultWeightIncrement={settings.defaultWeightIncrement}
         customPrograms={customPrograms}
+        complexes={complexes}
       />
     </main>
   );

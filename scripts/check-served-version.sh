@@ -17,6 +17,9 @@
 # a pin, and scripts/check-staging-deployed-image.py checks the run's own images (#1208).
 #
 # Usage: bash scripts/check-served-version.sh <base-url> <expected-sha> [bearer-token]
+# When CHECK_SERVED_VERSION_ENVIRONMENT is set, the answer that reports the expected commit must
+# also report that `environment`, or the check fails at once (#1448). deploy.yml sets it to the
+# same value for the web and api probes of one deployment, so the two services must agree.
 # CHECK_SERVED_VERSION_ATTEMPTS (default 12) and CHECK_SERVED_VERSION_RETRY_DELAY (seconds,
 # default 10) bound the wait to about 2 minutes. The delay setting exists for
 # scripts/test_check_served_version.py.
@@ -31,6 +34,7 @@ fi
 BASE_URL="${1%/}"
 EXPECTED="$2"
 TOKEN="${3:-}"
+EXPECTED_ENV="${CHECK_SERVED_VERSION_ENVIRONMENT:-}"
 ATTEMPTS="${CHECK_SERVED_VERSION_ATTEMPTS:-12}"
 DELAY="${CHECK_SERVED_VERSION_RETRY_DELAY:-10}"
 AUTH=()
@@ -48,6 +52,14 @@ for i in $(seq 1 "$ATTEMPTS"); do
   SERVED=$(printf '%s' "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gitSha',''))" 2>/dev/null || true)
   if [ "$SERVED" = "$EXPECTED" ]; then
     echo "$BASE_URL/version reports gitSha=$SERVED, the commit this run deployed."
+    if [ -n "$EXPECTED_ENV" ]; then
+      SERVED_ENV=$(printf '%s' "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('environment',''))" 2>/dev/null || true)
+      if [ "$SERVED_ENV" != "$EXPECTED_ENV" ]; then
+        echo "::error title=Served environment mismatch::$BASE_URL/version reports environment='${SERVED_ENV:-<none>}', expected $EXPECTED_ENV. Check the service's DEPLOYMENT_ENVIRONMENT (#1448)."
+        exit 1
+      fi
+      echo "$BASE_URL/version reports environment=$SERVED_ENV."
+    fi
     exit 0
   fi
   [ "$i" -lt "$ATTEMPTS" ] || break

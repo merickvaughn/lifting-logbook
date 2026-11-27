@@ -65,6 +65,7 @@ const KEPT = [
   'StrengthGoal',
   'LiftMetadata',
   'CustomLift',
+  'BarbellComplex',
   'LiftModification',
   'MissingMaxDismissal',
   'UserSettings',
@@ -108,7 +109,11 @@ const PAYLOAD_COLUMNS: Record<string, string[]> = {
   FocusDayState: ['id', 'macrocycleNum', 'program', 'state', 'updatedAt', 'userId', 'workoutNum'],
   ImportBatch: ['createdAt', 'destination', 'groupId', 'id', 'macrocycles', 'preImage', 'program', 'userId'],
   LiftModificationMax: ['dateUpdated', 'id', 'modificationId', 'program', 'userId', 'weight'],
+  // `complex` and `complexRound` are nullable (#1494), so a snapshot taken before them restores
+  // its sets as ordinary ones.
   LiftRecord: [
+    'complex',
+    'complexRound',
     'date',
     'id',
     'lift',
@@ -284,6 +289,9 @@ async function seedUser(prisma: PrismaClient, userId: string): Promise<void> {
   await prisma.liftMetadata.create({ data: { userId, lift: 'Squat', muscleGroups: ['legs'], substitutions: [] } });
   await prisma.customLift.create({
     data: { userId, name: 'Belt Squat', classification: 'accessory', patterns: [], jointActions: [] },
+  });
+  await prisma.barbellComplex.create({
+    data: { userId, name: 'Bear', components: [{ lift: 'Squat', reps: 5 }, { lift: 'Bench Press', reps: 5 }] },
   });
   await prisma.missingMaxDismissal.create({ data: { userId, program, liftId: 'romanian-deadlift' } });
   await prisma.userSettings.create({ data: { userId, activeProgram: program } });

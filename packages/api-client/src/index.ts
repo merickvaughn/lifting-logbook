@@ -1,7 +1,9 @@
 import type {
   GoogleSheetLinkView,
   GoogleSheetUnlinkResult,
+  BarbellComplexResponse,
   BodyWeightResponse,
+  CreateBarbellComplexRequest,
   CreateCustomLiftRequest,
   CreateFocusBlockRequest,
   CreateCustomProgramRequest,
@@ -62,6 +64,7 @@ import type {
   TrainingDataCounts,
   TrainingMaxHistoryResponse,
   TrainingMaxResponse,
+  UpdateBarbellComplexRequest,
   UpdateCustomProgramRequest,
   UpdateFocusBlockRequest,
   UpdateFocusSettingsRequest,
@@ -1166,6 +1169,37 @@ export function createApiClient(config: ApiClientConfig) {
         cache: 'no-store',
       });
     },
+
+    // -- Barbell complexes (#1495) -------------------------------------------
+    fetchBarbellComplexes(): Promise<BarbellComplexResponse[]> {
+      return request('/lifts/complexes', { cache: 'no-store' });
+    },
+    // A 409 means the lifter already has a complex of that name.
+    createBarbellComplex(
+      body: CreateBarbellComplexRequest,
+    ): Promise<{ ok: true; data: BarbellComplexResponse } | { ok: false; conflictMessage: string }> {
+      return requestOrConflictWithReason('/lifts/complexes', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    updateBarbellComplex(
+      id: string,
+      body: UpdateBarbellComplexRequest,
+    ): Promise<{ ok: true; data: BarbellComplexResponse } | { ok: false; conflictMessage: string }> {
+      return requestOrConflictWithReason(`/lifts/complexes/${enc(id)}`, {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      });
+    },
+    // Idempotent: a complex already gone is the end state asked for.
+    deleteBarbellComplex(id: string): Promise<void> {
+      return requestVoidIdempotent(`/lifts/complexes/${enc(id)}`, { method: 'DELETE', cache: 'no-store' });
+    },
     // A modification's own max is per program, like a lift's (#1153).
     fetchModificationMaxes(program: string): Promise<ModificationMaxResponse[]> {
       return request(`/programs/${enc(program)}/modification-maxes`, { cache: 'no-store' });
@@ -1346,9 +1380,12 @@ export function createApiClient(config: ApiClientConfig) {
     fetchCustomPrograms(): Promise<CustomProgramSummaryResponse[]> {
       return request('/programs/custom', { cache: 'no-store' });
     },
-    /** The programs holding the user's sets, the non-cycle one aside (#1454). */
-    fetchRecordedPrograms(): Promise<string[]> {
-      return request('/users/me/recorded-programs', { cache: 'no-store' });
+    /**
+     * The programs holding the user's sets, the non-cycle one aside (#1454). With `macrocycles`,
+     * also those holding their macrocycles, which History shows (#1304).
+     */
+    fetchRecordedPrograms(options: { macrocycles?: boolean } = {}): Promise<string[]> {
+      return request(`/users/me/recorded-programs${options.macrocycles ? '?macrocycles=true' : ''}`, { cache: 'no-store' });
     },
     fetchCustomProgram(id: string): Promise<CustomProgramResponse> {
       return request(`/programs/custom/${enc(id)}`, { cache: 'no-store' });

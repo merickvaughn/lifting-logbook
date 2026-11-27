@@ -6,11 +6,13 @@ import {
   fetchTrainingMaxes,
 } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { loadComplexes } from '@/lib/loadWorkoutPlan';
 import { getPreferredUnit } from '@/lib/preferences';
 import { getUserToday } from '@/lib/userToday';
 import {
   buildWorkoutDays,
   computePlannedSets,
+  planComplex,
   workoutDateResolver,
   type WeekRow,
   type WorkoutCell,
@@ -62,6 +64,8 @@ export default async function MacrocycleDashboardPage({
   const completedWorkoutNums = new Set(dashboard.completedWorkoutNums ?? []);
 
   const maxFor = currentMaxLookup(maxes);
+  const weightFor = (lift: string) => maxFor(lift)?.weight;
+  const complexes = await loadComplexes(specs, 'MacrocycleDashboardPage');
 
   const weekNums = [...new Set(workoutDays.map((w) => w.week))];
 
@@ -84,10 +88,12 @@ export default async function MacrocycleDashboardPage({
           workoutNum: w.workoutNum,
           date: effectiveDate,
           status,
-          lifts: w.lifts.map((spec) => ({
-            name: spec.lift,
-            sets: computePlannedSets(spec, maxFor(spec.lift)?.weight ?? 0),
-          })),
+          lifts: w.lifts.map((spec) => {
+            // A row naming a complex plans from its weakest lift (#1495).
+            const complex = planComplex(spec.lift, spec, weightFor, complexes);
+            if (complex) return { name: complex.complex.name, sets: complex.plannedSets };
+            return { name: spec.lift, sets: computePlannedSets(spec, weightFor(spec.lift) ?? 0) };
+          }),
         };
       }),
   }));

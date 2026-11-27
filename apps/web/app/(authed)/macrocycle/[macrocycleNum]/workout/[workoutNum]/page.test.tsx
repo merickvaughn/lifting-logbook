@@ -18,6 +18,7 @@ jest.mock('@/lib/api', () => ({
   // follows its row, then the catalog's default (#1211).
   fetchCustomLifts: jest.fn().mockResolvedValue([]),
   fetchAllLiftMetadata: jest.fn().mockResolvedValue([]),
+  fetchBarbellComplexes: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('@/lib/active-program', () => ({
@@ -50,13 +51,16 @@ jest.mock('./WorkoutLogger', () => ({
     isReadOnly,
     macrocycleId,
     ownMaxes,
+    complexes,
   }: {
     lifts: LiftData[];
     isReadOnly: boolean;
     macrocycleId?: string;
     ownMaxes: Record<string, number> | null;
+    complexes?: unknown[];
   }) => (
     <div
+      data-complexes={JSON.stringify(complexes ?? [])}
       data-lifts={JSON.stringify(lifts)}
       data-readonly={String(isReadOnly)}
       data-macrocycle-id={macrocycleId ?? ''}
@@ -77,6 +81,7 @@ import {
   fetchModificationMaxes,
   fetchAllLiftMetadata,
   fetchCustomLifts,
+  fetchBarbellComplexes,
 } from '@/lib/api';
 import { getUserSettings } from '@/lib/active-program';
 import { getUserToday } from '@/lib/userToday';
@@ -154,6 +159,56 @@ async function renderPage(): Promise<{
   const readOnly = html.match(/data-readonly="([^"]*)"/)?.[1] === 'true';
   return { lifts: attr('data-lifts'), readOnly, ownMaxes: attr('data-own-maxes') };
 }
+
+describe('WorkoutLoggingPage — a complex slot (#1495)', () => {
+  it('keeps the complex out of the lifts to log and hands it to the logger to show, planned', async () => {
+    seedWorkout([
+      { lift: 'Squat', planned: true, sets: [] },
+      { lift: 'complex:c-bear', planned: true, sets: [] },
+    ]);
+    mockedMaxes.mockResolvedValue([
+      { lift: 'Squat', weight: 200 },
+      { lift: 'Deadlift', weight: 300 },
+      { lift: 'Front Squat', weight: 150 },
+    ]);
+    jest.mocked(fetchBarbellComplexes).mockResolvedValue([
+      {
+        id: 'c-bear',
+        name: 'Bear',
+        components: [
+          { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+          { lift: 'Front Squat', reps: 1, name: 'Front Squat' },
+        ],
+        createdAt: '2026-11-27T00:00:00.000Z',
+      },
+    ]);
+
+    const element = (await WorkoutLoggingPage({
+      params: Promise.resolve({ macrocycleNum: '1', workoutNum: '1' }),
+    })) as ReactElement;
+    const html = renderToStaticMarkup(element);
+    const attr = (name: string): unknown =>
+      JSON.parse((html.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? 'null').replace(/&quot;/g, '"'));
+
+    expect((attr('data-lifts') as LiftData[]).map((l) => l.lift)).toEqual(['Squat']);
+    expect(attr('data-complexes')).toEqual([
+      {
+        complex: {
+          found: true,
+          name: 'Bear',
+          components: [
+            { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+            { lift: 'Front Squat', reps: 1, name: 'Front Squat' },
+          ],
+          limitingLift: 'Front Squat',
+          missing: [],
+        },
+        tm: 150,
+        workWeights: [150],
+      },
+    ]);
+  });
+});
 
 describe('WorkoutLoggingPage — two records with one set number (#1135)', () => {
   it('shows both, so the record updateMaxes also reads can be seen and edited', async () => {

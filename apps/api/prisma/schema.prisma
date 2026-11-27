@@ -26,6 +26,12 @@ model LiftRecord {
   // The ids of the lift_modification rows on for this set; empty means unmodified (#1151).
   // Not part of the natural key: it is still set N of this lift.
   modifications String[] @default([])
+  // The barbell complex this set was done in, and its round from 1; null for an ordinary set
+  // (#1494). A complex set never moves or estimates a training max. Not part of the natural key:
+  // a complex set is numbered like any other set of its lift, and an import gives one that shares
+  // a set number with the lift's own set the next free occurrence.
+  complex       String?
+  complexRound  Int?
 
   @@unique([userId, program, macrocycleNum, workoutNum, date, lift, occurrence, setNum])
   @@index([userId, program, macrocycleNum])
@@ -285,6 +291,22 @@ model LiftModification {
 
   @@unique([userId, lift, name])
   @@map("lift_modification")
+}
+
+// A barbell complex (#1495): several lifts done back to back with one bar and one weight. A program
+// row plans one as `complex:<id>`. Logged sets carry the complex's name, not this id, so a delete
+// removes the row outright.
+model BarbellComplex {
+  id         String   @id @default(uuid())
+  userId     String
+  name       String
+  // `[{ lift, reps }]` in the order they are done. `lift` is the lift's name, as a program row
+  // names it, so its training max is found by name.
+  components Json
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, name])
+  @@map("barbell_complex")
 }
 
 // A modification's own training max (#1153), scoped to a program the way training_max is. A side

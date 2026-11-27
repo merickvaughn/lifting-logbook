@@ -31,4 +31,15 @@ describe('userPrograms', () => {
       { id: '5-3-1', name: '5-3-1', isTemplate: true },
     ]);
   });
+
+  // #1465: deleting a custom program leaves its sets stored under its id, so they must stay listed.
+  it('lists a recorded custom program that was deleted, under a name that says so', () => {
+    const deleted = '7d1e2f30-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
+
+    expect(userPrograms([custom], 'rpt', [custom.id, deleted, 'rpt'])).toEqual([
+      { id: 'rpt', name: 'Reverse Pyramid Training (Lyle/Eric Helms)', isTemplate: true },
+      custom,
+      { id: deleted, name: 'Deleted program (7d1e2f30)' },
+    ]);
+  });
 });

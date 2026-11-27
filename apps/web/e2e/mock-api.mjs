@@ -90,8 +90,8 @@ const LIFT_RECORDS = [
 // "are all rows resolved" check derive from this list, so growing it doesn't
 // require a matching hand-edit at the commit branch too.
 const AMBIGUOUS_LIFT_ROWS = [
-  { rowIndex: 1, originalLift: 'Wide-Grip CBL Curls' },
-  { rowIndex: 2, originalLift: 'Wide-Grip CBL Curls' },
+  { rowIndex: 1, originalLift: 'Drag Curls' },
+  { rowIndex: 2, originalLift: 'Drag Curls' },
 ];
 
 // The Assign step (#1256). A file with no program, macrocycle or workout columns, which the
@@ -238,6 +238,8 @@ const GOOGLE_SHEET_LINKED = {
 function createInitialState() {
   return {
     noCurrentMacrocycle: false,
+    // POST /programs/:p/switch changes it, as on the API, so History can be read after a switch (#1304).
+    activeProgram: '5-3-1',
     // What Clear data would remove, and the backups it leaves (#1310).
     trainingDataCounts: { ...NO_TRAINING_DATA, liftRecords: 42, macrocycles: 2, trainingMaxes: 4 },
     snapshots: [],
@@ -290,6 +292,10 @@ function createInitialState() {
     trainingMaxImport: null,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
+    // /lifts/complexes (#1495) — the user's barbell complexes, as stored (components without names).
+    barbellComplexes: [],
+    // Never reused, like focusSeq, so a complex created after a delete gets a fresh id.
+    complexSeq: 0,
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
     liftModifications: [],
     // /programs/:p/modification-maxes (#1153) — own maxes. One list serves every program.
@@ -1050,6 +1056,64 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // /lifts/complexes (#1495) — list, create, edit and delete barbell complexes; 409 on a taken
+  // name. The mock doesn't check that each component names a lift.
+  // -------------------------------------------------------------------------
+  // As the API answers: each component with the name to show, a custom lift's for its id.
+  const complexResponse = (c) => ({
+    ...c,
+    components: c.components.map((x) => ({
+      ...x,
+      name: state.customLifts.find((l) => l.id === x.lift)?.name ?? x.lift,
+    })),
+  });
+  if (method === 'GET' && url.pathname === '/lifts/complexes') {
+    json(res, state.barbellComplexes.map(complexResponse));
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/lifts/complexes') {
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (state.barbellComplexes.some((c) => c.name === body.name)) {
+      json(res, { statusCode: 409, message: `You already have a complex named "${body.name}"` }, 409);
+      return;
+    }
+    state.complexSeq += 1;
+    const created = {
+      id: `complex-${state.complexSeq}`,
+      name: body.name,
+      components: body.components,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    state.barbellComplexes.push(created);
+    json(res, complexResponse(created), 201);
+    return;
+  }
+  const complexMatch = url.pathname.match(/^\/lifts\/complexes\/([^/]+)$/);
+  if (complexMatch && (method === 'PATCH' || method === 'DELETE')) {
+    const id = decodeURIComponent(complexMatch[1]);
+    const existing = state.barbellComplexes.find((c) => c.id === id);
+    if (!existing) {
+      json(res, { statusCode: 404, message: 'Complex not found' }, 404);
+      return;
+    }
+    if (method === 'DELETE') {
+      state.barbellComplexes = state.barbellComplexes.filter((c) => c.id !== id);
+      noContent(res);
+      return;
+    }
+    const body = await readBody(req);
+    if (rejectIfInvalidBody(res, body)) return;
+    if (body.name !== undefined && state.barbellComplexes.some((c) => c.id !== id && c.name === body.name)) {
+      json(res, { statusCode: 409, message: `You already have a complex named "${body.name}"` }, 409);
+      return;
+    }
+    Object.assign(existing, body);
+    json(res, complexResponse(existing));
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // GET /lifts/modifications?lift= — a lift's modifications, which the logger reads (#1152).
   // The mock doesn't resolve lifts, so every lift lists every modification.
   // -------------------------------------------------------------------------
@@ -1499,7 +1563,7 @@ const server = createServer(async (req, res) => {
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/settings') {
     json(res, {
-      activeProgram: '5-3-1',
+      activeProgram: state.activeProgram,
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
@@ -1528,7 +1592,7 @@ const server = createServer(async (req, res) => {
       };
     }
     json(res, {
-      activeProgram: '5-3-1',
+      activeProgram: state.activeProgram,
       workoutSchedule: state.workoutSchedule,
       defaultWeightIncrement: state.defaultWeightIncrement,
       unit: state.unit,
@@ -1538,11 +1602,16 @@ const server = createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------------------
-  // GET /users/me/recorded-programs (#1454). The pickers already list the mock's active and custom
-  // programs, so it reports no others.
+  // GET /users/me/recorded-programs (#1454, #1304): the programs holding sets. Both hold macrocycles
+  // too, so ?macrocycles=true changes nothing here. The fixtures are 5-3-1's, and an Assign commit
+  // adds its program. The mock's custom ids aren't
+  // UUIDs, so it leaves them out, as the pickers would never read a real custom id as a template.
   // -------------------------------------------------------------------------
   if (method === 'GET' && url.pathname === '/users/me/recorded-programs') {
-    json(res, []);
+    const programs = new Set(['5-3-1']);
+    if (state.assignedMacrocycles.length > 0) programs.add(state.assignedProgram);
+    for (const p of state.customPrograms) programs.delete(p.id);
+    json(res, [...programs].sort());
     return;
   }
 
@@ -1955,7 +2024,8 @@ const server = createServer(async (req, res) => {
 
     // POST /programs/:p/switch
     if (method === 'POST' && rest[0] === 'switch') {
-      json(res, { activeProgram: parts[1], macrocycleNum: 1 });
+      state.activeProgram = decodeURIComponent(parts[1]);
+      json(res, { activeProgram: state.activeProgram, macrocycleNum: 1 });
       return;
     }
 

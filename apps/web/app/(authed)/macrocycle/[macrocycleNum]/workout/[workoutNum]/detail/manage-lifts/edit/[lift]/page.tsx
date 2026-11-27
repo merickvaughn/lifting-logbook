@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { buildMuscleTargetResolver, defaultMuscleTargetsFor, isSameLift } from '@lifting-logbook/core';
+import { buildMuscleTargetResolver, complexIdOf, defaultMuscleTargetsFor, isSameLift } from '@lifting-logbook/core';
 import type { LiftMetadataResponse } from '@lifting-logbook/types';
 import { fetchAllLiftMetadata, fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
@@ -33,7 +33,8 @@ export default async function EditLiftPage({
   // saving carries its values forward, and the API then retires it.
   const program = await getActiveProgram();
   const workout = await fetchWorkout(program, workoutNum);
-  if (!workout || !workout.lifts.some((planned) => isSameLift(planned.lift, lift))) {
+  // A complex slot (#1495) has no lift metadata of its own.
+  if (complexIdOf(lift) !== undefined || !workout || !workout.lifts.some((planned) => isSameLift(planned.lift, lift))) {
     notFound();
   }
   const moved = movedWorkoutPath(

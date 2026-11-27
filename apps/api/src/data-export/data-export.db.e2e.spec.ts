@@ -72,7 +72,16 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
 // not the user's data. A Clear data snapshot (#1309) holds rows the lifter cleared, and its sets
 // download from the snapshot itself.
 // A pending Google link attempt (#1432) holds only a state hash and a PKCE verifier.
-const NOT_EXPORTED = ['DataSnapshot', 'GoogleOauthRequest', 'ImportBatch', 'ImportSuggestionUsage', 'SupplementSuggestionUsage'];
+// Barbell complex definitions (#1495) are the lifter's own, but the export doesn't carry them yet:
+// a follow-up to #1495 adds them, and moves this entry to LOGBOOK_KEYS.
+const NOT_EXPORTED = [
+  'BarbellComplex',
+  'DataSnapshot',
+  'GoogleOauthRequest',
+  'ImportBatch',
+  'ImportSuggestionUsage',
+  'SupplementSuggestionUsage',
+];
 
 const APP_ROLE_URL = process.env.LIFTING_TC_DATABASE_URL;
 const OWNER_DATABASE_URL = process.env.LIFTING_TC_OWNER_DATABASE_URL;

@@ -1,5 +1,5 @@
 import type { LiftingProgramSpecResponse, LiftRecordResponse, WeightUnit } from '@lifting-logbook/types';
-import type { ProgressionPlan } from '@/lib/workoutPlan';
+import type { ComplexPlan, ProgressionPlan } from '@/lib/workoutPlan';
 
 export interface WarmUpSetData {
   /** Number of reps for this warm-up set. */
@@ -102,4 +102,16 @@ export interface WorkoutLoggerProps {
    * the read failed: an `own` toggle then plans from the lift's max and says why.
    */
   ownMaxes: Readonly<Record<string, number>> | null;
+  /**
+   * The workout's complex slots (#1495), shown read-only: logging a complex is #1496. They are
+   * kept out of `lifts`, so nothing is logged under a `complex:<id>` key.
+   */
+  complexes?: ComplexSlot[];
+}
+
+/** A complex slot as the logger shows it: what it is and its planned working weights, in lbs. */
+export interface ComplexSlot {
+  complex: ComplexPlan;
+  tm: number;
+  workWeights: number[];
 }

@@ -152,6 +152,10 @@ export const {
   updateLiftModification,
   fetchModificationMaxes,
   putModificationMax,
+  // The complexes settings page edits the lifter's complexes (#1495).
+  createBarbellComplex,
+  updateBarbellComplex,
+  deleteBarbellComplex,
   // Reads too: focus block status depends on the user's calendar day (`?today=`), which
   // only the browser knows (ADR-039 §5), so the focus setup page (#1057) and the calendar
   // page (#1059) load them client-side.

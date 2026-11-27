@@ -27,11 +27,11 @@ describe('Recorded programs HTTP (e2e, in-memory adapters)', () => {
     await app.close();
   });
 
-  const get = (user?: string) =>
+  const get = (user?: string, query = '') =>
     app
       .getHttpAdapter()
       .getInstance()
-      .inject({ method: 'GET', url: '/users/me/recorded-programs', headers: user ? { authorization: `Bearer ${user}` } : {} });
+      .inject({ method: 'GET', url: `/users/me/recorded-programs${query}`, headers: user ? { authorization: `Bearer ${user}` } : {} });
 
   const set = (program: string): LiftRecord => ({
     program,
@@ -67,6 +67,38 @@ describe('Recorded programs HTTP (e2e, in-memory adapters)', () => {
     const res = await get('recorded-importer');
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual(['531', 'rpt']);
+  });
+
+  // #1304: an imported macrocycle with no sets still holds history History must reach. The sets
+  // filter doesn't ask for macrocycles, so a program holding no sets stays out of it (#1355).
+  it('lists a template holding only an imported macrocycle when asked for macrocycles, though the user is on another program', async () => {
+    const repos = await app
+      .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+      .forUser({ id: 'recorded-macrocycle-only', email: 'recorded-macrocycle-only@example.com', provider: 'dev' });
+    await repos.userSettings.upsertSettings({ activeProgram: 'rpt' });
+    await repos.macrocycle.create({
+      program: '5-3-1',
+      macrocycleNum: 1,
+      startDate: new Date('2024-01-01T00:00:00.000Z'),
+      endDate: new Date('2024-01-26T00:00:00.000Z'),
+      status: 'completed',
+      origin: 'imported',
+    });
+    await repos.macrocycle.create({
+      program: NON_CYCLE_PROGRAM,
+      macrocycleNum: 1,
+      startDate: new Date('2024-02-01T00:00:00.000Z'),
+      status: 'completed',
+      origin: 'imported',
+    });
+
+    const res = await get('recorded-macrocycle-only', '?macrocycles=true');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual(['5-3-1']);
+
+    const setsOnly = await get('recorded-macrocycle-only');
+    expect(setsOnly.statusCode).toBe(200);
+    expect(setsOnly.json()).toEqual([]);
   });
 
   it("doesn't list another user's programs", async () => {

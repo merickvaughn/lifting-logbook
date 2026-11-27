@@ -223,8 +223,9 @@ test('history page tabs render lift history and TM timeline', async ({ page }) =
 
   // Switch to TM Timeline
   await page.getByRole('tab', { name: 'TM Timeline' }).click();
-  // TM timeline groups entries by lift under an <h2> heading
-  await expect(page.getByRole('heading', { name: 'bench-press' })).toBeVisible();
+  // TM timeline groups entries by lift under an <h2> heading, named from the catalog even when
+  // the entries are stored by id (#1500)
+  await expect(page.getByRole('heading', { name: 'Bench Press' })).toBeVisible();
 });
 
 // #1197: the past-macrocycles list shows an imported macrocycle with its status and dates.

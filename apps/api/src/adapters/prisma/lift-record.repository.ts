@@ -4,9 +4,11 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   LiftRecord,
   SetSlot,
+  complexColumns,
   liftSpellings,
   parseLiftRecordId,
   parseLiftRecordNaturalKey,
+  withComplex,
   withModifications,
   withOccurrence,
 } from '@lifting-logbook/core';
@@ -70,6 +72,8 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
       macrocycleNum,
       workoutNum: { not: workoutNum },
       occurrence: 0,
+      // A complex's sets are planned by the complex, not by the lift's last session (#1494).
+      complex: null,
       date: { lte: through },
     };
     // The lifts' sessions first, one row per stored spelling, workout and date: grouped in SQL,
@@ -131,6 +135,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
         weight: true,
         reps: true,
         modifications: true,
+        complex: true,
       },
     });
     return rows.map((r) => rowToLiftRecord({ ...r, notes: '' }));
@@ -151,6 +156,7 @@ export class PrismaLiftRecordRepository implements ILiftRecordRepository {
         reps: r.reps,
         notes: r.notes,
         modifications: r.modifications ?? [],
+        ...complexColumns(r),
       })),
       skipDuplicates: true,
     });
@@ -323,6 +329,8 @@ export function rowToLiftRecord(row: {
   reps: number;
   notes: string;
   modifications?: string[];
+  complex?: string | null;
+  complexRound?: number | null;
 }): LiftRecord {
   return {
     program: row.program,
@@ -338,5 +346,6 @@ export function rowToLiftRecord(row: {
     reps: row.reps,
     notes: row.notes,
     ...withModifications(row.modifications),
+    ...withComplex(row.complex, row.complexRound),
   };
 }

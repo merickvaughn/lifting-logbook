@@ -75,6 +75,35 @@ describe('HistoryTabs across stored spellings', () => {
     expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
   });
 
+  // #1500: import stores built-in lifts by catalog id, so some lifts have no named rows at all.
+  it('lists every lift by its name, and one lift stored both ways once, filtering to all of its sets', async () => {
+    const user = userEvent.setup();
+    render(
+      <HistoryTabs
+        records={[
+          record('a', 'barbell-row', 135),
+          record('b', 'Back Squat', 300),
+          record('c', 'bench-press', 210),
+          record('d', 'Bench Press', 200),
+        ]}
+        tmEntries={[]}
+        macrocycles={[]}
+        unit="lbs"
+      />,
+    );
+
+    expect(liftOptions()).toEqual(['All Lifts', 'Back Squat', 'Barbell Row', 'Bench Press']);
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /lift/i }), 'Barbell Row');
+    expect(screen.getByText(/135 lbs × 5/)).toBeInTheDocument();
+    expect(screen.queryByText(/300 lbs × 5/)).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /lift/i }), 'Bench Press');
+    expect(screen.getByText(/200 lbs × 5/)).toBeInTheDocument();
+    expect(screen.getByText(/210 lbs × 5/)).toBeInTheDocument();
+    expect(screen.queryByText(/135 lbs × 5/)).not.toBeInTheDocument();
+  });
+
   it('keeps two names for one lift as two options', () => {
     render(
       <HistoryTabs

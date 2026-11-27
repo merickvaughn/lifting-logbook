@@ -7,6 +7,7 @@ import {
   fileMacrocycleNumError,
   liftDateRangeError,
   LiftImportOptions,
+  liftRecordIntegerErrors,
 } from './validateLiftImport';
 
 /**
@@ -73,6 +74,8 @@ export function validateLiftImportSoft(
       numericErrors.push({ row: rowIndex, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       numericErrors.push({ row: rowIndex, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
+    // As the strict validator does, so Review flags a row the commit would refuse (#1160).
+    numericErrors.push(...liftRecordIntegerErrors(r, rowIndex));
     if (!r.date || isNaN(r.date.getTime()))
       numericErrors.push({ row: rowIndex, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
     else {

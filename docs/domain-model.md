@@ -196,6 +196,45 @@ different lift ([#1133](https://github.com/merickvaughn/lifting-logbook/issues/1
   timer plan with. A weight the lifter typed stays. With no own max yet, or when the maxes didn't
   load, it plans from the lift's max and says why. Focus lifts and lifts with no spec row don't re-plan.
 
+### Complexes are sets of their component lifts
+
+A **barbell complex** is several lifts done back to back with one bar and one weight, for a number
+of rounds. Each component's set is stored as a set of that lift, so per-lift history and volume see
+it, with `lift_record.complex` naming the complex and `lift_record.complexRound` its round, from 1
+([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494); see the
+[proposal](proposals/2026-11-27-barbell-complexes.md)). Both are null for an ordinary set and
+neither is part of the natural key or id.
+
+- The complex's weight is limited by its weakest lift, so a complex set never moves or estimates a
+  training max: `movesLiftMax` leaves it out, as it does a later occurrence (see
+  [Progression](#progression)). It isn't a lift's last session either: neither the workout's
+  (`getLastSessions`) nor a `double` focus block's (`recordLastSessions`) counts it, and the
+  import's set-order guess leaves it out.
+- Lift-record import reads optional `Complex` and `Round` columns from any file, and the export
+  writes them. Import compares a complex set only with stored sets of the same complex, and gives
+  the lift's own sets their occurrence first, so a complex set sharing a set number takes the next
+  one. `LiftRecordResponse` and `SetResponse` carry `complex` and `complexRound` when set.
+
+**Definitions and planning** ([#1495](https://github.com/merickvaughn/lifting-logbook/issues/1495)):
+
+- A complex is defined once per lifter, as a `barbell_complex` row: a name, unique per lifter, and
+  2 to 8 components in order (`COMPLEX_LIMITS`), each a lift and its reps per round. A catalog lift
+  is stored by name and a custom lift by its id, where its training max lives
+  ([#1291](https://github.com/merickvaughn/lifting-logbook/issues/1291)), so a rename doesn't
+  break it. The API answers each component with a `name` to show, `Deleted lift` once its custom
+  lift is gone. A complex can't take a lift's name, and a custom lift can't start with `complex:`.
+- A program row plans a complex by naming it in `lift` as `complex:<id>` (`complexLift`,
+  `complexIdOf` in `packages/core`). The rest of the row (sets, reps, percentages, increment) means
+  what it does for a lift.
+- **Weakest-link rule.** The row's percentages are of the lowest training max among the complex's
+  lifts (`complexMax`), rounded as any planned set is. That lift is shown as limiting. A complex has
+  no max or progression of its own, and while any of its lifts has no max it plans nothing and asks
+  for the missing ones.
+- **Delete.** Deleting a complex leaves the rows that name it. They plan nothing and read as a
+  deleted complex (`Unknown complex` where a workout is planned) until the row is changed. A
+  complex slot is shown on a workout but not logged there yet
+  ([#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496)).
+
 ### Two name registries, one bridge
 
 | Registry | Count | Purpose |
@@ -293,7 +332,7 @@ logged set, and each level between them is reassembled per request.
 | **Mesocycle** (Block) | `mesocycleWeeks` arithmetic + `phaseStyle: 'repeating' \| 'mesocycle'` | **No entity.** A mesocycle boundary is `ceil(week / mesocycleWeeks)` |
 | **Week** | `week: number` + `WeekType` | **Derived** by tiling (`expandSpecToLength`) |
 | **Workout** | `(program, macrocycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the macrocycle, from `programWorkoutKeys`, with or without a schedule | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
-| **Lift slot** | spec row keyed `(week, offset, lift, order)` | `custom_program_spec` row |
+| **Lift slot** | spec row keyed `(week, offset, lift, order)`; `lift` can also be `complex:<id>`, a [complex](#complexes-are-sets-of-their-component-lifts) | `custom_program_spec` row |
 | **Set** | `PlannedSet` (prescribed) / `LiftRecord` (logged) | One `lift_record` row per completed set |
 
 `offset` is the day-within-week slot; `order` is the position within that day.
@@ -482,6 +521,10 @@ row is skipped as `no-program-spec`, as before #1211.
 A computed *reduction* is never auto-applied — it is returned as a `MaxReductionFlag`
 for explicit review.
 
+A set done in a complex (`complex` set) moves no max, under any modification, and isn't part of
+the session a `linear` or `double` lift is judged on
+([#1494](https://github.com/merickvaughn/lifting-logbook/issues/1494)).
+
 Modifications decide which max a set moves, through the same gates:
 
 1. Any `none` modification on: no max moves, and the set isn't a test week's attempt. A
@@ -583,6 +626,8 @@ classDiagram
         +int reps
         +string notes
         +string[] modifications
+        +string? complex
+        +int? complexRound
     }
     class LiftModification {
         <<persisted>>

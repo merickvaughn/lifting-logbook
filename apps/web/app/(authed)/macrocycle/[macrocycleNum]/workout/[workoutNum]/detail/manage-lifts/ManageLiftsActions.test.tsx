@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ManageLiftsActions from './ManageLiftsActions';
 import { upsertLiftOverride } from '@/lib/client-api';
@@ -45,6 +45,37 @@ describe('ManageLiftsActions — a lift planned twice in a day (#1027)', () => {
     expect(screen.getAllByRole('button', { name: '…' })).toHaveLength(1);
     finish();
     await waitFor(() => expect(screen.queryByRole('button', { name: '…' })).not.toBeInTheDocument());
+  });
+});
+
+describe('ManageLiftsActions — a complex slot (#1495)', () => {
+  const withComplex = [
+    { lift: 'Squat', sets: [], planned: true },
+    { lift: 'complex:c-bear', sets: [], planned: true },
+  ];
+
+  it('names the complex, and offers no lift-metadata Edit for it', () => {
+    render(
+      <ManageLiftsActions
+        program="my-program"
+        macrocycleNum={1}
+        workoutNum={1}
+        lifts={withComplex}
+        complexes={[{ id: 'c-bear', name: 'Bear' }]}
+      />,
+    );
+    const [squat, bear] = screen.getAllByRole('listitem');
+    expect(bear).toHaveTextContent('Bear');
+    expect(screen.queryByText(/complex:/)).not.toBeInTheDocument();
+    expect(within(squat as HTMLElement).getByRole('link', { name: 'Edit' })).toBeInTheDocument();
+    expect(within(bear as HTMLElement).queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(within(bear as HTMLElement).getByRole('link', { name: 'Replace' })).toBeInTheDocument();
+  });
+
+  it('calls a complex it wasn’t given unknown, not by its id', () => {
+    render(<ManageLiftsActions program="my-program" macrocycleNum={1} workoutNum={1} lifts={withComplex} />);
+    expect(screen.getByText('Unknown complex')).toBeInTheDocument();
+    expect(screen.queryByText(/complex:/)).not.toBeInTheDocument();
   });
 });
 

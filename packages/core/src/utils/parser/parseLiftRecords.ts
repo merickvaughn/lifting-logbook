@@ -4,8 +4,10 @@ import {
 } from "@src/core/constants";
 import { LiftRecord, SpreadsheetCell } from "@src/core/models";
 import {
+  LIFT_RECORD_COMPLEX_HEADER,
   LIFT_RECORD_EXPORT_TOKEN,
   LIFT_RECORD_MODIFICATION_SEPARATOR,
+  LIFT_RECORD_ROUND_HEADER,
   unescapeCsvFormula,
 } from "../export/serializeExportCsv";
 import { isLiftRecordExport } from "../import/liftHistoryRows";
@@ -26,6 +28,9 @@ export type AssignBlankField = "macrocycleNum" | "workoutNum" | "date";
  * of its own, so neither is read from one. Both headers match as `isLiftRecordExport` does,
  * trimmed and in any case. Its `Modifications` cell is read into `modifications` the same way
  * (#1308): the ids the export joined, which the importer checks against the account.
+ *
+ * In any file, optional `Complex` and `Round` columns are read into `complex` and `complexRound`
+ * (#1494), matched trimmed and in any case. A blank `Complex` cell leaves both absent.
  *
  * In any exported file, `Program`, `Lift` and `Notes` lose the apostrophe the export put in front
  * of a formula character (decision 22, `unescapeCsvFormula`).
@@ -69,6 +74,9 @@ export function parseLiftRecords(
   const occurrenceHeader = exportHeader(LIFT_RECORD_EXPORT_TOKEN);
   const statusHeader = exportHeader(STATUS_HEADER);
   const modificationsHeader = exportHeader(MODIFICATIONS_HEADER);
+  const anyHeader = (name: string) => headers.find((h) => h.trim().toLowerCase() === name.toLowerCase());
+  const complexHeader = anyHeader(LIFT_RECORD_COMPLEX_HEADER);
+  const roundHeader = anyHeader(LIFT_RECORD_ROUND_HEADER);
   return rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
     const blankFields: AssignBlankField[] = [];
@@ -121,6 +129,14 @@ export function parseLiftRecords(
       .map((id) => id.trim())
       .filter((id) => id !== "");
     if (modifications.length > 0) result.modifications = modifications;
+    // Any file, not only an export, can say a set was done in a complex (#1494). A round is read
+    // only beside a complex; one that isn't a number reads as NaN, which validation rejects.
+    const complex = cell(complexHeader);
+    if (complex !== "") {
+      result.complex = isExport ? unescapeCsvFormula(complex) : complex;
+      const round = cell(roundHeader);
+      if (round !== "") result.complexRound = Number(round);
+    }
     return result as unknown as ParsedLiftRecord;
   });
 }

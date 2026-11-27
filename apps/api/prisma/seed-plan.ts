@@ -261,6 +261,7 @@ export async function resetSeedUser(tx: Prisma.TransactionClient): Promise<void>
   await tx.workoutLiftOverride.deleteMany({ where });
   await tx.liftMetadata.deleteMany({ where });
   await tx.customLift.deleteMany({ where });
+  await tx.barbellComplex.deleteMany({ where });
   await tx.liftModificationMax.deleteMany({ where });
   await tx.liftModification.deleteMany({ where });
   await tx.userSettings.deleteMany({ where });

@@ -73,6 +73,21 @@ above. How lifts are classified is in [domain-model.md §2](domain-model.md#2-th
 
 ---
 
+## Complex
+
+**Complex** — a run of lifts done back to back with one bar and one weight, such as a Bear. Its
+weight comes from the lowest training max among its lifts.
+
+- Some coaches also call a single lift done for several rep schemes in a row a complex; here it
+  always means several lifts with one bar.
+
+In code a complex is a `barbell_complex` row, and a lift slot plans one by naming it
+`complex:<id>`. The weakest-link rule and what deleting one does are in
+[domain-model.md](domain-model.md#complexes-are-sets-of-their-component-lifts). The in-app glossary
+has the same entry.
+
+---
+
 ## Rep max
 
 **Rep max (RM)** — the heaviest weight you can manage for a given number of reps of a lift, so a

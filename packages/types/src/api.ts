@@ -1,4 +1,4 @@
-import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
+import { BodyWeightEntry, ComplexComponent, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
 import { DefaultProgressionSetting, LiftProgressionType } from './progression';
 
 // ---------------------------------------------------------------------------
@@ -147,6 +147,10 @@ export interface SetResponse {
   notes: string;
   /** The modifications on for this set, present only when there are any. */
   modifications?: LiftModificationRef[];
+  /** The barbell complex this set was done in, present only for a complex set (#1494). */
+  complex?: string;
+  /** Which round of {@link complex}, from 1, when known. */
+  complexRound?: number;
 }
 
 /** A single lift's sets within a workout. */
@@ -253,6 +257,10 @@ export interface LiftRecordResponse {
   notes: string;
   /** The modifications on for this set, present only when there are any. */
   modifications?: LiftModificationRef[];
+  /** The barbell complex this set was done in, present only for a complex set (#1494). */
+  complex?: string;
+  /** Which round of {@link complex}, from 1, when known. */
+  complexRound?: number;
 }
 
 /** Request body for logging a new lift record. */
@@ -764,6 +772,7 @@ export type ImportErrorCode =
   | 'ROW_LIMIT_EXCEEDED'
   | 'OCCURRENCE_INVALID'
   | 'STATUS_INVALID'
+  | 'COMPLEX_ROUND_INVALID'
   | 'UNEXPECTED_ERROR';
 
 /** A single validation error from a CSV import attempt. */
@@ -1104,7 +1113,9 @@ export interface ImportCommitResponse extends ImportWriteResult {
 
 /**
  * Response for `POST /programs/:program/import?mode=dry-run`: the counts a commit with
- * the same inputs would return. Nothing is written (#1123).
+ * the same inputs would return. Nothing is written (#1123). It refuses what that commit would
+ * refuse, with the same status and body: a row error, or a program-spec import to a built-in
+ * program (400) or one the user doesn't own (404) (#1160).
  */
 export interface ImportDryRunResponse extends ImportWriteResult {
   destination: ImportKind;
@@ -1757,6 +1768,38 @@ export interface UpdateLiftModificationRequest {
   name?: string;
   description?: string;
   maxMode?: LiftModificationMaxMode;
+}
+
+// ---------------------------------------------------------------------------
+// Barbell complexes (#1495)
+// ---------------------------------------------------------------------------
+
+/** Serialized complex definition as returned by the API. `userId` is intentionally omitted. */
+export interface BarbellComplexResponse {
+  id: string; // uuid — the REST key, and what a program row names as `complex:<id>`
+  name: string;
+  components: ComplexComponentResponse[];
+  createdAt: string; // ISO 8601 date string
+}
+
+/**
+ * A complex's component as the API returns it: `lift` as stored (a custom lift's id), and `name`,
+ * the lift's current name to show. A custom lift deleted since has the name `Deleted lift`.
+ */
+export interface ComplexComponentResponse extends ComplexComponent {
+  name: string;
+}
+
+/** Request body for POST /lifts/complexes. Each component's lift must be a lift. */
+export interface CreateBarbellComplexRequest {
+  name: string;
+  components: ComplexComponent[];
+}
+
+/** Request body for PATCH /lifts/complexes/:id. Components, when given, replace the list. */
+export interface UpdateBarbellComplexRequest {
+  name?: string;
+  components?: ComplexComponent[];
 }
 
 /**

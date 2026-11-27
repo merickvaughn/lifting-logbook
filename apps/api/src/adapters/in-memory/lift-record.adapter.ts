@@ -118,6 +118,7 @@ export class InMemoryLiftRecordRepository implements ILiftRecordRepository, Numb
         r.macrocycleNum === macrocycleNum &&
         r.workoutNum !== workoutNum &&
         !r.occurrence &&
+        !r.complex &&
         wanted.has(r.lift) &&
         r.date.getTime() <= through.getTime(),
     );

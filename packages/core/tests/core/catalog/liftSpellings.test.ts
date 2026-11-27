@@ -60,8 +60,13 @@ describe('storedIdListing', () => {
     expect(storedIdListing(['Bench Press', 'bench-press'])('Bench Press')).toBe('Bench Press');
   });
 
-  it('leaves an id row as it is when no spelling is listed', () => {
-    expect(storedIdListing(['bench-press'])('bench-press')).toBe('bench-press');
+  it('lists an id row by its catalog name when no spelling is listed (#1500)', () => {
+    expect(storedIdListing(['bench-press'])('bench-press')).toBe('Bench Press');
+    expect(storedIdListing(['barbell-row', 'Back Squat'])('barbell-row')).toBe('Barbell Row');
+  });
+
+  it('leaves a name the catalog does not know as it is', () => {
+    expect(storedIdListing(['my-custom-lift'])('my-custom-lift')).toBe('my-custom-lift');
   });
 
   it('keeps two names apart', () => {

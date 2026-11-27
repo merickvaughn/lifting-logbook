@@ -26,6 +26,11 @@ describe('toTimerLiftPlans', () => {
     expect(plan?.sets).toEqual([{ type: 'work', setLabel: 'Set 1', spec: '5 × 150 lbs' }]);
   });
 
+  it('names a complex slot by the complex, not by its complex:<id> key (#1495)', () => {
+    const [plan] = toTimerLiftPlans([detail('complex:c-bear', { complex: { name: 'Bear' } })], 'lbs', [], null);
+    expect(plan?.lift).toBe('Bear');
+  });
+
   it('keeps a lift with no planned sets as an empty plan, so positions stay aligned', () => {
     // Position is a lift occurrence's identity for the timer (issue #980): a
     // dropped entry would shift every later lift's `liftIndex` away from the

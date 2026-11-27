@@ -73,6 +73,7 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     await owner.focusBlock.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.focusDayState.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftModification.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
+    await owner.barbellComplex.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.liftMetadata.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.missingMaxDismissal.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
     await owner.importSuggestionUsage.deleteMany({ where: { userId: { in: [USER_ALICE, USER_BOB] } } });
@@ -161,6 +162,11 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     // Seed both users' lift modifications (#1151).
     await owner.liftModification.createMany({
       data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, lift: 'bench-press', name: 'Paused' })),
+    });
+
+    // Seed both users' barbell complexes (#1495).
+    await owner.barbellComplex.createMany({
+      data: [USER_ALICE, USER_BOB].map((userId) => ({ userId, name: 'Bear', components: [{ lift: 'Squat', reps: 5 }] })),
     });
 
     // Seed both users' own progression on one lift (#1210).
@@ -344,6 +350,27 @@ describeOrSkip('Row-Level Security (e2e, lifting_app role)', () => {
     expect(deleted.count).toBe(1);
     const bobRow = await owner.liftModification.findFirstOrThrow({ where: { userId: USER_BOB } });
     expect(bobRow.description).toBe('');
+  });
+
+  it('isolates barbell_complex reads by GUC on an unscoped query, and fails closed (#1495)', async () => {
+    const rows = await asUser(appDb, USER_ALICE, (tx) => tx.barbellComplex.findMany());
+    expect(rows.map((row) => row.userId)).toEqual([USER_ALICE]);
+    expect(await asUser(appDb, null, (tx) => tx.barbellComplex.count())).toBe(0);
+  });
+
+  it("cannot write another user's barbell_complex rows (#1495)", async () => {
+    await expect(
+      asUser(appDb, USER_ALICE, (tx) =>
+        tx.barbellComplex.create({ data: { userId: USER_BOB, name: 'Snatch complex', components: [] } }),
+      ),
+    ).rejects.toThrow();
+    // An unscoped update or delete reaches only Alice's own row.
+    const updated = await asUser(appDb, USER_ALICE, (tx) => tx.barbellComplex.updateMany({ data: { name: 'Alice was here' } }));
+    expect(updated.count).toBe(1);
+    const deleted = await asUser(appDb, USER_ALICE, (tx) => tx.barbellComplex.deleteMany());
+    expect(deleted.count).toBe(1);
+    const bobRow = await owner.barbellComplex.findFirstOrThrow({ where: { userId: USER_BOB } });
+    expect(bobRow.name).toBe('Bear');
   });
 
   it("cannot read or write another user's lift_modification_max rows, and fails closed (#1153)", async () => {

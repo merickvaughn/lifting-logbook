@@ -26,7 +26,6 @@ import {
   buildSkippedDetail,
   liftRecordLabel,
   liftRecordNaturalKey,
-  parseCsvText,
   parseLiftRecordId,
   parseLiftRecords,
   toUTCMidnight,
@@ -46,7 +45,7 @@ import { MAX_WORKOUT_NUM } from './lift-record.limits';
 import { assertNonCycleSet } from './non-cycle.util';
 import { AllowsNonCycleProgram } from './reserved-program.guard';
 import { UpdateLiftRecordDto } from './update-lift-record.dto';
-import { MAX_IMPORT_ROWS, readUploadedCsv } from './import-file.util';
+import { MAX_IMPORT_ROWS, parseUploadedCsv, readUploadedCsv } from './import-file.util';
 import { toLiftRecordResponse } from './mappers';
 import {
   assertMacrocycleWritable,
@@ -251,7 +250,7 @@ export class LiftRecordsController {
     @CurrentUser() user: AuthUser,
   ): Promise<ImportLiftRecordsResponse> {
     const csvText = await readUploadedCsv(req);
-    const table = parseCsvText(csvText);
+    const table = parseUploadedCsv(csvText);
     const parsed = parseLiftRecords(table);
 
     if (parsed.length > MAX_IMPORT_ROWS) {

@@ -51,7 +51,6 @@ import {
   StrengthGoalEntry,
   classifyImport,
   fuzzyColumnMapper,
-  parseCsvText,
   parseGoogleSheetUrl,
   stringifyCsv,
   applyColumnOverrides,
@@ -83,14 +82,14 @@ import { AuthUser } from '../ports/auth';
 import { RepositoryBundle, IRepositoryFactory } from '../ports/factory';
 import { keepSetModifications } from '../lifts/lift-modification.util';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
-import { BatchMacrocycles, createdNumberedKeys, preImageKeyNumber } from '../ports/IImportBatchRepository';
+import { BatchMacrocycles, signedPreImageKeyNumber } from '../ports/IImportBatchRepository';
 import { MacrocycleRow } from '../ports/IMacrocycleRepository';
 import { StoredSnapshot } from '../ports/IDataSnapshotRepository';
 import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context';
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_REPLACE_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
-import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, parseUploadedCsv, readImportForm } from './import-file.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
 import {
@@ -196,7 +195,7 @@ export class ImportController {
   ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse | ImportAssignResponse> {
     const { csvText, fields } = await readImportForm(req);
     const assignEnabled = importAssignEnabled();
-    let table = parseCsvText(csvText);
+    let table = parseUploadedCsv(csvText);
 
     const override = destinationParam && (Object.keys(IMPORT_HANDLERS) as ImportKind[]).includes(
       destinationParam as ImportKind,
@@ -337,7 +336,7 @@ export class ImportController {
     // Suggestions are part of the Assign step, which doesn't exist with the flag off.
     if (!importAssignEnabled()) throw new NotFoundException();
     const { csvText, fields } = await readImportForm(req);
-    let table = parseCsvText(csvText);
+    let table = parseUploadedCsv(csvText);
     const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
     if (columnOverrides) table = applyColumnOverrides(table, columnOverrides, 'lift-records');
     const choices = {
@@ -648,16 +647,19 @@ export class ImportController {
         const { nonCycleKeys, otherKeys } = splitNonCycleKeys(Object.keys(part.preImage));
         const kept = new Set(otherKeys);
         const entries = Object.entries(part.preImage).filter(([k]) => kept.has(k));
+        // Numbers are read with a sign, since stored history can hold negative ones (#1235).
         await undoTrainingMaxes(
-          entries.filter(([k]) => preImageKeyNumber(k) === null),
+          entries.filter(([k]) => signedPreImageKeyNumber(k) === null),
           part.program,
         );
         // Collect all created keys and delete in a single query to avoid N+1 round-trips
-        const created = createdNumberedKeys(part.preImage);
+        const created = entries
+          .filter(([k, entry]) => signedPreImageKeyNumber(k) !== null && entry.kind === 'created')
+          .map(([k]) => k);
         let { setKeys: createdKeys } = splitLegacyRowKeys(created);
         // Read by number before anything is renumbered.
         const rows = await repos.macrocycle.list(part.program);
-        const nums = touchedMacrocycleNums(created.flatMap((k) => preImageKeyNumber(k) ?? []), part.macrocycles, rows);
+        const nums = touchedMacrocycleNums(created.flatMap((k) => signedPreImageKeyNumber(k) ?? []), part.macrocycles, rows);
         // Only `imported` macrocycles are read again: a `live` or `legacy` row keeps what it holds.
         const ids = new Set(rows.filter((m) => m.origin === 'imported' && nums.has(m.macrocycleNum)).map((m) => m.id));
         // The statuses the batch chose are released before anything is read again.
@@ -1444,6 +1446,8 @@ export class ImportController {
     { rows, splitMaxes }: CommitRows,
     repos: RepositoryBundle,
   ): Promise<ImportDryRunResponse> {
+    // The commit refuses a built-in or unowned program only when it writes; refuse it here too (#1160).
+    if (destination === 'program-spec') await repos.liftingProgramSpec.assertWritable(program);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Handler signatures are generic across four types; type narrowing from destination covers safety
     const preview = await IMPORT_HANDLERS[destination].preview(rows as any, program, repos);
     let split: ImportDryRunResponse['split'];
@@ -1557,7 +1561,7 @@ export class ImportController {
 /**
  * The numbers of `rows`, its program's macrocycles, that a lift-records batch touched: those it
  * created or extended, and `createdNums`, the numbers of its created sets and `legacy` rows
- * ({@link createdNumberedKeys}), which is all a batch from before #1255 records.
+ * ({@link signedPreImageKeyNumber}), which is all a batch from before #1255 records.
  */
 function touchedMacrocycleNums(
   createdNums: readonly number[],

@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app lib components",
+    "lint": "eslint app lib components e2e",
     "test": "jest --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test:e2e": "playwright test",

@@ -167,6 +167,22 @@ progression types. That includes reads that never plan, such as the manage-lifts
 dedicated endpoint the web calls only for `double` lifts, which would keep a serial round trip and
 a transaction on those renders.
 
+## Amendment: the backfill matched no rows (#1236, 2026-11-27)
+
+Point 5's backfill changed nothing on staging or production. The migrate job's role owns
+`custom_program_spec` but isn't a superuser or `BYPASSRLS`, and the table's FORCE ROW LEVEL
+SECURITY binds its owner, so with no user set the `UPDATE` matched no row and succeeded. The db e2e
+suite ran it as a superuser, which row-level security never filters, so it passed. Custom programs
+saved before #1210 therefore followed the lift's value, not `amrap_gated`.
+
+`20261127000000_backfill_custom_spec_progression_without_forced_rls` repeats it with FORCE turned
+off on `custom_program` and `custom_program_spec` and back on, in one transaction [7]. It tags only
+rows of programs created before `20261111000001` started, read from `_prisma_migrations`, because a
+later row may be null on purpose. A lifter who cleared a row of an older program since then, to
+follow the lift, gets `amrap_gated` back: nothing stored separates that from a missed row, and the
+editor showed both blank. The test now runs both migrations as a role without superuser or
+`BYPASSRLS` that is a member of the tables' owner.
+
 ## References
 
 1. PostgreSQL 16 documentation, [§5.8 Row Security Policies](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) — policies apply per row, so new columns on `lift_metadata`, `user_settings` and `custom_program_spec` inherit them.
@@ -175,3 +191,4 @@ a transaction on those renders.
 4. Prisma documentation, [Customizing migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/customizing-migrations) — a hand-written data migration alongside the generated schema change.
 5. class-validator, [Validation decorators](https://github.com/typestack/class-validator#validation-decorators) and [Custom validation classes](https://github.com/typestack/class-validator#custom-validation-classes) — `@IsIn`, `@IsOptional` (which skips `null` as well as `undefined`), and the `IsAtMostSibling` cross-field constraint.
 6. Prisma documentation, [Aggregation, grouping, and summarizing → Group by](https://www.prisma.io/docs/orm/prisma-client/queries/aggregation-grouping-summarizing#group-by) — `groupBy` runs as SQL `GROUP BY`, so the amendment's first query returns one row per session, not per set.
+7. PostgreSQL 16 documentation, [`ALTER TABLE` → `FORCE` / `NO FORCE ROW LEVEL SECURITY`](https://www.postgresql.org/docs/16/sql-altertable.html) — with FORCE off, row-level security doesn't apply to the table's owner.

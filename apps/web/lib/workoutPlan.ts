@@ -5,6 +5,8 @@ import {
   WARMUP_BASE_REPS,
   activationExercise,
   baseSpecMesocycleWeeks,
+  complexIdOf,
+  complexMax,
   currentMaxLookup,
   mesocycleWeekForProgramWeek,
   noScheduleWorkoutDateUTC,
@@ -14,6 +16,8 @@ import {
 } from '@lifting-logbook/core';
 import type { ResolvedProgression } from '@lifting-logbook/core';
 import type {
+  BarbellComplexResponse,
+  ComplexComponentResponse,
   MacrocycleDashboardResponse,
   LiftingProgramSpecResponse,
   TrainingMaxResponse,
@@ -244,6 +248,77 @@ export function liftSets(planned: readonly PlannedSet[]): {
   };
 }
 
+/** What a slot naming a complex plans (#1495), beside its sets. */
+export interface ComplexPlan {
+  /** False for a complex that wasn't found: deleted, or the complexes couldn't be read. */
+  found: boolean;
+  /** The complex's name, or {@link UNKNOWN_COMPLEX} when it wasn't found. */
+  name: string;
+  /** In order, each with its reps per round and the name to show. */
+  components: ComplexComponentResponse[];
+  /** The name of the component whose max the weight comes from; absent while unplanned. */
+  limitingLift?: string;
+  /**
+   * Components with no training max, each as stored (where a max is saved) and by name. The complex
+   * plans nothing until each has one.
+   */
+  missing: { lift: string; name: string }[];
+}
+
+/** Shown for a row whose complex was deleted, or couldn't be read. */
+export const UNKNOWN_COMPLEX = 'Unknown complex';
+
+/**
+ * The name to show for a slot's `lift`: the lift itself, or for `complex:<id>` the complex's name,
+ * or {@link UNKNOWN_COMPLEX} when it isn't in `complexes`. For pages that list slots without
+ * planning them.
+ */
+export function liftDisplayName(lift: string, complexes: readonly Pick<BarbellComplexResponse, 'id' | 'name'>[]): string {
+  const id = complexIdOf(lift);
+  if (id === undefined) return lift;
+  return complexes.find((c) => c.id === id)?.name ?? UNKNOWN_COMPLEX;
+}
+
+/** The name a plan shows for a slot: the complex's, for a slot that names one. */
+export function slotName(detail: { lift: string; complex?: Pick<ComplexPlan, 'name'> }): string {
+  return detail.complex?.name ?? detail.lift;
+}
+
+/**
+ * A slot that names a complex (`complex:<id>`), planned by the weakest-link rule (#1495): its row's
+ * percentages of its lowest component max, rounded as any planned set is ({@link computePlannedSets}).
+ * The complex has no progression and no max of its own. A component with no max, or a complex not
+ * in `complexes`, plans nothing. `undefined` for a slot that names a lift.
+ *
+ * A component's max is found under the lift as stored (a custom lift's id, #1291) or, failing that,
+ * under its name.
+ */
+export function planComplex(
+  lift: string,
+  spec: LiftingProgramSpecResponse | undefined,
+  maxFor: (lift: string) => number | undefined,
+  complexes: readonly BarbellComplexResponse[],
+): { complex: ComplexPlan; tm: number; plannedSets: PlannedSet[] } | undefined {
+  const id = complexIdOf(lift);
+  if (id === undefined) return undefined;
+  const found = complexes.find((c) => c.id === id);
+  if (!found) {
+    return { complex: { found: false, name: UNKNOWN_COMPLEX, components: [], missing: [] }, tm: 0, plannedSets: [] };
+  }
+  const nameOf = (key: string) => found.components.find((c) => c.lift === key)?.name ?? key;
+  const complex = { found: true, name: found.name, components: found.components };
+  const max = complexMax(found.components, (key) => maxFor(key) ?? maxFor(nameOf(key)));
+  if ('missing' in max) {
+    const missing = max.missing.map((key) => ({ lift: key, name: nameOf(key) }));
+    return { complex: { ...complex, missing }, tm: 0, plannedSets: [] };
+  }
+  return {
+    complex: { ...complex, limitingLift: nameOf(max.limitingLift), missing: [] },
+    tm: max.weight,
+    plannedSets: spec ? computePlannedSets(spec, max.weight) : [],
+  };
+}
+
 export interface MacrocycleProgress {
   completedWorkouts: number;
   totalWorkouts: number;
@@ -302,6 +377,8 @@ export interface WorkoutLiftDetail {
   warmUpCount: number;
   workCount: number;
   plannedSets: PlannedSet[];
+  /** Set when the slot names a complex (#1495); `tm` is then its limiting component's max. */
+  complex?: ComplexPlan;
 }
 
 /**
@@ -348,18 +425,33 @@ export function liftSpecsForWorkout(
  * from its own training max — a replacement's, not its slot's. `progressions`,
  * index-aligned with `workout.lifts` like the result, plans each lift by its
  * progression type as the logger does (#1249); without one a lift plans by its row.
+ * A slot naming a complex plans by {@link planComplex}, from `complexes`.
  */
 export function buildLiftDetails(
   workout: Pick<WorkoutResponse, 'week' | 'offset' | 'lifts'>,
   specs: readonly LiftingProgramSpecResponse[],
   maxes: readonly Pick<TrainingMaxResponse, 'lift' | 'weight' | 'dateUpdated'>[],
   progressions: readonly (ProgressionPlan | undefined)[] = [],
+  complexes: readonly BarbellComplexResponse[] = [],
 ): WorkoutLiftDetail[] {
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   return workout.lifts.map((wl, i) => {
-    const tm = maxFor(wl.lift)?.weight ?? 0;
     const spec = liftSpecs[i];
+    const complexPlan = planComplex(wl.lift, spec, (lift) => maxFor(lift)?.weight, complexes);
+    if (complexPlan) {
+      const { plannedSets } = complexPlan;
+      return {
+        lift: wl.lift,
+        tm: complexPlan.tm,
+        activationMovement: activationExercise(spec?.activation),
+        warmUpCount: plannedSets.filter((s) => s.type === 'warmup').length,
+        workCount: plannedSets.filter((s) => s.type === 'work').length,
+        plannedSets,
+        complex: complexPlan.complex,
+      };
+    }
+    const tm = maxFor(wl.lift)?.weight ?? 0;
     // A slot has no start-on modifications yet, so the timer and this page plan from the lift's
     // max, as the logger does before a toggle.
     const plannedSets = planLift(spec, tm, { progression: progressions[i] });

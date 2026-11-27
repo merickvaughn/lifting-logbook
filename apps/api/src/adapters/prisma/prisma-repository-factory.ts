@@ -5,6 +5,7 @@ import { AuthUser } from '../../ports/auth';
 import { IRepositoryFactory, RepositoryBundle } from '../../ports/factory';
 import { PrismaService } from './prisma.service';
 import { RLS_TX_CLIENT } from './rls-context';
+import { PrismaBarbellComplexRepository } from './barbell-complex.repository';
 import { PrismaBodyWeightRepository } from './body-weight.repository';
 import { PrismaCustomLiftRepository } from './custom-lift.repository';
 import { PrismaDataSnapshotRepository } from './data-snapshot.repository';
@@ -61,6 +62,7 @@ export class PrismaRepositoryFactory implements IRepositoryFactory {
   async forUser(user: AuthUser): Promise<RepositoryBundle> {
     const db = this.client();
     return {
+      barbellComplex: new PrismaBarbellComplexRepository(db, user.id),
       bodyWeight: new PrismaBodyWeightRepository(db, user.id),
       customLift: new PrismaCustomLiftRepository(db, user.id),
       dataSnapshot: new PrismaDataSnapshotRepository(db, user.id),

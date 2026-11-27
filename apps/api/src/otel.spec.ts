@@ -49,13 +49,40 @@ describe('resolveDeploymentEnvironment', () => {
 
   it('reads process.env.NODE_ENV by default, falling back to "development" when unset', () => {
     const original = process.env.NODE_ENV;
+    const originalDeployment = process.env.DEPLOYMENT_ENVIRONMENT;
     try {
+      delete process.env.DEPLOYMENT_ENVIRONMENT;
       process.env.NODE_ENV = 'production';
       expect(resolveDeploymentEnvironment()).toBe('production');
       process.env.NODE_ENV = '';
       expect(resolveDeploymentEnvironment()).toBe('development');
     } finally {
       process.env.NODE_ENV = original;
+      if (originalDeployment === undefined) {
+        delete process.env.DEPLOYMENT_ENVIRONMENT;
+      } else {
+        process.env.DEPLOYMENT_ENVIRONMENT = originalDeployment;
+      }
+    }
+  });
+
+  // #1448: the variable apps/web reads too, so web and api agree per deployment.
+  it('prefers process.env.DEPLOYMENT_ENVIRONMENT over NODE_ENV, ignoring a blank one', () => {
+    const original = process.env.NODE_ENV;
+    const originalDeployment = process.env.DEPLOYMENT_ENVIRONMENT;
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.DEPLOYMENT_ENVIRONMENT = ' staging ';
+      expect(resolveDeploymentEnvironment()).toBe('staging');
+      process.env.DEPLOYMENT_ENVIRONMENT = '  ';
+      expect(resolveDeploymentEnvironment()).toBe('production');
+    } finally {
+      process.env.NODE_ENV = original;
+      if (originalDeployment === undefined) {
+        delete process.env.DEPLOYMENT_ENVIRONMENT;
+      } else {
+        process.env.DEPLOYMENT_ENVIRONMENT = originalDeployment;
+      }
     }
   });
 });

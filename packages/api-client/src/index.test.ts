@@ -98,6 +98,12 @@ describe('createApiClient', () => {
       expect((init as { cache?: string }).cache).toBe('no-store');
     });
 
+    it('asks for the programs holding macrocycles too when told to (#1304)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(['5-3-1']), { status: 200 }));
+      await expect(makeClient().fetchRecordedPrograms({ macrocycles: true })).resolves.toEqual(['5-3-1']);
+      expect(lastCall()[0]).toBe('http://api.test/users/me/recorded-programs?macrocycles=true');
+    });
+
     it('forwards the Next.js revalidate directive for cacheable reads', async () => {
       mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
       const client = makeClient();
@@ -351,6 +357,52 @@ describe('createApiClient', () => {
       expect(url).toBe('http://api.test/programs/rpt/modification-maxes/m1');
       expect(init.method).toBe('PUT');
       expect(init.body).toBe(JSON.stringify({ weight: 65 }));
+    });
+  });
+
+  describe('barbell complexes (#1495)', () => {
+    const components = [
+      { lift: 'Deadlift', reps: 5 },
+      { lift: 'Front Squat', reps: 5 },
+    ];
+
+    it('lists the complexes', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+      await expect(makeClient().fetchBarbellComplexes()).resolves.toEqual([]);
+      expect(lastCall()[0]).toBe('http://api.test/lifts/complexes');
+    });
+
+    it('POSTs a complex, and returns the message on a 409', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: "'Bear' already exists" }), { status: 409 }));
+      await expect(makeClient().createBarbellComplex({ name: 'Bear', components })).resolves.toEqual({
+        ok: false,
+        conflictMessage: "'Bear' already exists",
+      });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/lifts/complexes');
+      expect(init.method).toBe('POST');
+      expect(init.body).toBe(JSON.stringify({ name: 'Bear', components }));
+    });
+
+    it('PATCHes a complex by its encoded id', async () => {
+      const complex = { id: 'c 1', name: 'Bear', components, createdAt: '2026-11-27T00:00:00.000Z' };
+      mockFetch.mockResolvedValue(new Response(JSON.stringify(complex), { status: 200 }));
+      await expect(makeClient().updateBarbellComplex('c 1', { components })).resolves.toEqual({ ok: true, data: complex });
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/lifts/complexes/c%201');
+      expect(init.method).toBe('PATCH');
+      expect(init.body).toBe(JSON.stringify({ components }));
+    });
+
+    it('DELETEs a complex, treating a 404 as already gone and throwing on another error', async () => {
+      mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
+      await expect(makeClient().deleteBarbellComplex('c1')).resolves.toBeUndefined();
+      const [url, init] = lastCall();
+      expect(url).toBe('http://api.test/lifts/complexes/c1');
+      expect(init.method).toBe('DELETE');
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
+      await expect(makeClient().deleteBarbellComplex('c1')).rejects.toThrow();
     });
   });
 

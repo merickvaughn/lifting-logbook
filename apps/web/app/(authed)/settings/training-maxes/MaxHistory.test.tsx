@@ -38,6 +38,12 @@ describe('MaxHistory across stored spellings', () => {
     expect(screen.queryByRole('button', { name: /Mark as PR for Deadlift/ })).not.toBeInTheDocument();
   });
 
+  // #1500: import stores built-in lifts by catalog id, so a lift can have no named entries.
+  it('lists a lift stored only by its id under its name', () => {
+    renderHistory([entry('a', 'bench-press', 210), entry('b', 'Deadlift', 300)]);
+    expect(options()).toEqual(['All Lifts', 'Bench Press', 'Deadlift']);
+  });
+
   it('keeps two names for one lift as two options', () => {
     renderHistory([entry('a', 'C. Lat Raise', 20), entry('b', 'Lateral Raise', 40)]);
     expect(options()).toEqual(['All Lifts', 'C. Lat Raise', 'Lateral Raise']);

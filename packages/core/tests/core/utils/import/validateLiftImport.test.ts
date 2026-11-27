@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport, validateLiftImportSoft } from "@src/core";
+import { IMPORT_LIFT_ALIASES, LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport, validateLiftImportSoft } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -34,6 +34,48 @@ describe("validateLiftImport", () => {
     expect(valid).toHaveLength(2);
     expect(valid[0]!.lift).toBe("back-squat");
     expect(valid[1]!.lift).toBe("bench-press");
+  });
+
+  it("keeps a complex and its round, and flags a round that isn't a whole number from 1 (#1494)", () => {
+    const { valid, errors } = validateLiftImport(
+      [
+        makeRecord({ complex: "Complex 1A", complexRound: 2 }),
+        makeRecord({ setNum: 2, complex: "Complex 1A" }),
+        makeRecord({ setNum: 3, complex: "Complex 1A", complexRound: NaN }),
+        makeRecord({ setNum: 4, complex: "Complex 1A", complexRound: 0 }),
+      ],
+      TEST_SLOT_MAP,
+    );
+    expect(valid.map((r) => [r.complex, r.complexRound])).toEqual([["Complex 1A", 2], ["Complex 1A", undefined]]);
+    expect(errors.map((e) => [e.row, e.code])).toEqual([[3, "COMPLEX_ROUND_INVALID"], [4, "COMPLEX_ROUND_INVALID"]]);
+  });
+
+  // Workout #, Set # and Reps are integers in the database, so a fraction must fail the row in
+  // the dry run and the preview as it would the commit, not reach the query (#1160).
+  describe.each([
+    ["workoutNum", "WORKOUT_NUM_INVALID"],
+    ["setNum", "SET_NUM_INVALID"],
+    ["reps", "REPS_INVALID"],
+  ] as const)("a fractional %s (#1160)", (field, code) => {
+    const records = () => [makeRecord(), makeRecord({ setNum: 2, [field]: 5.5 })];
+    const expected = [{ row: 2, field, code, message: expect.stringMatching(/whole number/) }];
+
+    it("is a row error from the strict validator", () => {
+      const { valid, errors } = validateLiftImport(records(), TEST_SLOT_MAP);
+      expect(valid).toHaveLength(1);
+      expect(errors).toEqual(expected);
+    });
+
+    it("makes the row incomplete in the soft validator", () => {
+      const { validRows, incomplete } = validateLiftImportSoft(records(), TEST_SLOT_MAP);
+      expect(validRows).toHaveLength(1);
+      expect(incomplete).toEqual([{ record: expect.anything(), rowIndex: 2, errors: expected }]);
+    });
+  });
+
+  it("flags a whole number too large for its column (#1160)", () => {
+    const { errors } = validateLiftImport([makeRecord({ reps: 2 ** 31 })], TEST_SLOT_MAP);
+    expect(errors).toMatchObject([{ row: 1, field: "reps", code: "REPS_INVALID" }]);
   });
 
   it("flags an unknown lift abbreviation", () => {
@@ -277,6 +319,17 @@ describe("validateLiftImport", () => {
       }
       const { valid } = validateLiftImport([makeRecord({ lift: "Calf Raises" as LiftRecord["lift"] })], importMap);
       expect(valid[0]!.lift).toBe("Calf Raises");
+    });
+
+    // #1499: the 2026 sheet's rows are recognized as Wide-Grip Cable Curl, so Review shows
+    // them as that lift with nothing to remap, and they never fall back to Cable Curl.
+    it("recognizes Wide-Grip CBL Curls as Wide-Grip Cable Curl", () => {
+      expect(IMPORT_LIFT_ALIASES).toContain("Wide-Grip CBL Curls");
+      const records = [makeRecord({ lift: "Wide-Grip CBL Curls" as LiftRecord["lift"] })];
+      const { valid, errors } = validateLiftImport(records, importMap);
+      expect(errors).toEqual([]);
+      expect(valid[0]!.lift).toBe("Wide-Grip CBL Curls");
+      expect(builtInLiftFor(valid[0]!.lift)?.id).toBe("wide-grip-cable-curl");
     });
 
     it("stores a catalog lift outside the slot map under the name a program uses", () => {

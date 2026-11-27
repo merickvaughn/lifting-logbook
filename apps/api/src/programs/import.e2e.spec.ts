@@ -599,6 +599,33 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    // The dry run reports what the commit would do, so it refuses what the commit refuses (#1160).
+    it('rejects a program-spec dry run to a built-in program as the commit does (#1160)', async () => {
+      const dryRun = await importCsv('5-3-1', SPEC_CSV, '?mode=dry-run&destination=program-spec');
+      const commit = await importCsv('5-3-1', SPEC_CSV, '?mode=commit&destination=program-spec');
+      expect(commit.statusCode).toBe(400);
+      expect(dryRun.statusCode).toBe(400);
+      expect(dryRun.json()).toEqual(commit.json());
+    });
+
+    describe('a fractional value in an integer column (#1160)', () => {
+      const LIFT_HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
+      const SPEC_HEADER = 'Week,Offset,Lift,Increment,Order,Sets,Reps,AMRAP?,Warm-Up %,WT Decrement %,Activation';
+      it.each([
+        ['lift-records', 'reps', 'import-frac-reps', [LIFT_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Bench P.,2,180,5.5,']],
+        ['lift-records', 'setNum', 'import-frac-set', [LIFT_HEADER, '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,', '5-3-1,1,1,2026-01-01,Bench P.,1.5,180,5,']],
+        ['program-spec', 'sets', UUID_PROGRAM, [SPEC_HEADER, '1,0,Bench P.,2.5,1,3,8,TRUE,.6,0.05,Band Flye', '1,0,Squat,5,2,2.5,8,TRUE,.6,0.05,']],
+      ] as const)('%s %s fails row 2 in the dry run and the commit', async (destination, field, program, lines) => {
+        const csv = lines.join('\n');
+        const dryRun = await importCsv(program, csv, `?mode=dry-run&destination=${destination}`);
+        const commit = await importCsv(program, csv, `?mode=commit&destination=${destination}`);
+        expect(dryRun.statusCode).toBe(400);
+        expect(commit.statusCode).toBe(400);
+        expect(dryRun.json().errors).toEqual([expect.objectContaining({ row: 2, field })]);
+        expect(dryRun.json()).toEqual(commit.json());
+      });
+    });
+
     it('rejects a commit with no destination', async () => {
       const res = await importCsv('import-lr', LIFT_CSV, '?mode=commit');
       expect(res.statusCode).toBe(400);
@@ -1612,6 +1639,38 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(undoRes).toMatchObject({ restored: 4, skipped: 0, flagged: [] });
       expect(await readMaxes()).toEqual({ 'bench-press': 182.5 });
     });
+
+    // #1235: a number stored before #1224 checked its range, or put back by
+    // macrocycle_renumber_reverse(), can be negative. Undo read such keys as training maxes,
+    // left the set in place and deleted the batch.
+    it('undoes a set and a legacy row on a negative macrocycle number', async () => {
+      const program = 'p1235-undo-negative';
+      const repos = await app
+        .get<IRepositoryFactory>(REPOSITORY_FACTORY)
+        .forUser({ id: userId, email: 'dev@example.com', provider: 'dev' });
+      const date = new Date('2026-03-02T00:00:00.000Z');
+      await repos.macrocycle.create({ program, macrocycleNum: -2, startDate: date, status: 'completed', origin: 'legacy' });
+      await repos.liftRecord.appendLiftRecords(program, [
+        { program, macrocycleNum: -2, workoutNum: 1, date, lift: 'Bench Press', setNum: 1, weight: 200, reps: 5, notes: '' },
+      ]);
+      const batchId = 'batch-1235';
+      await repos.importBatch.save({
+        id: batchId,
+        userId,
+        program,
+        destination: 'lift-records',
+        createdAt: date,
+        preImage: {
+          '-2:1:20260302:Bench Press:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } },
+          'macrocycle-row:-2': { kind: 'created', wrote: { macrocycleNum: -2 } },
+        },
+      });
+
+      const undoRes = (await undoImport(program, batchId)).json();
+      expect(undoRes).toMatchObject({ restored: 1, skipped: 0, flagged: [] });
+      expect(await repos.liftRecord.getAllLiftRecords(program)).toEqual([]);
+      expect(await repos.macrocycle.list(program)).toEqual([]);
+    });
   });
 
   // A commit must work however many rows were remapped or excluded (#1121). In the
@@ -1798,6 +1857,72 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
 
       const retry = await importCsv(program, LIFT_CSV, COMMIT);
       expect(retry.json().created).toBe(1);
+    });
+  });
+
+  // csv-parse's error for a short row used to reach the client as a 500 (#1497).
+  describe('a file whose rows have different numbers of cells', () => {
+    const RAGGED_CSV = [
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+      '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+      '5-3-1,1,1,2026-01-01,Bench P.,2,180',
+    ].join('\n');
+    const MESSAGE =
+      'Line 3 has 7 cells, but the first row has 9. Every row of the file needs the same number of cells.';
+
+    it.each(['?mode=preview', '?mode=commit&destination=lift-records', '?mode=dry-run&destination=lift-records'])(
+      'is a 400 naming the line from import%s',
+      async (query) => {
+        const res = await importCsv('p1497-ragged', RAGGED_CSV, query);
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toBe(MESSAGE);
+      },
+    );
+
+    it('is a 400 naming the line from import/suggestions', async () => {
+      const prior = process.env.IMPORT_ASSIGN_ENABLED;
+      process.env.IMPORT_ASSIGN_ENABLED = 'true';
+      try {
+        const res = await importCsv('p1497-ragged', RAGGED_CSV, '/suggestions');
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toBe(MESSAGE);
+      } finally {
+        if (prior === undefined) delete process.env.IMPORT_ASSIGN_ENABLED;
+        else process.env.IMPORT_ASSIGN_ENABLED = prior;
+      }
+    });
+
+    it('is a 400 naming the line from lift-records/import, and writes nothing', async () => {
+      const boundary = '----RaggedBoundary';
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/programs/5-3-1/lift-records/import',
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          RAGGED_CSV,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toBe(MESSAGE);
+
+      const records = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: '/programs/5-3-1/lift-records',
+        headers: AUTH,
+      });
+      expect(records.json()).toEqual([]);
+    });
+
+    it('still imports the same file once the short row is filled in', async () => {
+      const fixed = RAGGED_CSV.replace(/,180$/, ',180,5,');
+      const res = await importCsv('p1497-fixed', fixed, '?mode=commit&destination=lift-records');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(2);
     });
   });
 

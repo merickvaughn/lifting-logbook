@@ -24,6 +24,7 @@ import { modificationSuffix } from '@/lib/liftModifications';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, writeFailureMessage } from '@/lib/macrocycleUrl';
 import { liftSets, planLift } from '@/lib/workoutPlan';
+import { ComplexSummary } from '@/components/complex/ComplexPlanView';
 import MissingMaxDialog from './MissingMaxDialog';
 import styles from './WorkoutLogger.module.css';
 import type { LiftData, LoggedSet, WorkingSetData, WorkoutLoggerProps } from './types';
@@ -924,6 +925,7 @@ export default function WorkoutLogger({
   initialBodyWeight,
   unit,
   ownMaxes,
+  complexes = [],
 }: WorkoutLoggerProps) {
   const router = useRouter();
 
@@ -1366,6 +1368,30 @@ export default function WorkoutLogger({
           onEditStart={handleEditStart}
           onEditSave={handleEditSave}
         />
+      )}
+
+      {complexes.length > 0 && (
+        <section className={styles.complexes} aria-labelledby="workout-complexes-heading">
+          {/* A peer of each lift's <h2>, with each complex under it. */}
+          <h2 id="workout-complexes-heading" className={styles.complexesHeading}>
+            Complexes
+          </h2>
+          {complexes.map(({ complex, tm, workWeights }, i) => (
+            <div key={i}>
+              <h3 className={styles.complexName}>{complex.name}</h3>
+              <ComplexSummary complex={complex} tm={tm} unit={unit} />
+              {workWeights.length > 0 && (
+                <p className={styles.complexNote}>
+                  Working sets at {workWeights.map((w) => formatWeight(w, 'lbs', unit)).join(', ')}
+                </p>
+              )}
+              {complex.missing.length > 0 && (
+                <p className={styles.complexNote}>Needs a training max for {complex.missing.map((m) => m.name).join(', ')}.</p>
+              )}
+              <p className={styles.complexNote}>Complexes can’t be logged here yet.</p>
+            </div>
+          ))}
+        </section>
       )}
 
       {/* Bottom strip */}

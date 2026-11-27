@@ -35,6 +35,13 @@ type SpecRow = {
   repsLow: number | null;
 };
 
+/** The 400 for a built-in program: its spec is immutable seed data. */
+function assertCustomProgram(program: string): void {
+  if (!UUID_PATTERN.test(program)) {
+    throw new BadRequestException('Program spec import requires a custom program');
+  }
+}
+
 function toSpec(s: SpecRow): LiftingProgramSpec {
   return {
     week: s.week as 1 | 2 | 3,
@@ -81,6 +88,20 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
     return rows.map((s) => toSpec(s));
   }
 
+  async assertWritable(program: string): Promise<void> {
+    assertCustomProgram(program);
+    await this.assertOwned(this.prisma, program);
+  }
+
+  /** The 404 for a custom program this user doesn't own. */
+  private async assertOwned(client: Pick<PrismaClient, 'customProgram'>, program: string): Promise<void> {
+    const owner = await client.customProgram.findFirst({
+      where: { id: program, userId: this.userId },
+      select: { id: true },
+    });
+    if (!owner) throw new NotFoundException(`Custom program ${program} not found`);
+  }
+
   /**
    * Idempotently writes spec rows for a custom program (see interface docs).
    * Built-in templates are immutable seed data and are rejected.
@@ -99,18 +120,13 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
     program: string,
     rows: LiftingProgramSpec[],
   ): Promise<SaveProgramSpecResult> {
-    if (!UUID_PATTERN.test(program)) {
-      throw new BadRequestException('Program spec import requires a custom program');
-    }
+    // Before the transaction, so a built-in program never opens one.
+    assertCustomProgram(program);
 
     return runInteractive(
       this.prisma,
       async (tx) => {
-        const owner = await tx.customProgram.findFirst({
-          where: { id: program, userId: this.userId },
-          select: { id: true },
-        });
-        if (!owner) throw new NotFoundException(`Custom program ${program} not found`);
+        await this.assertOwned(tx, program);
 
         // One up-front read instead of a per-row findFirst (#532): the natural-key
         // unique index (#488) makes the upsert race-safe, so the find-then-write per

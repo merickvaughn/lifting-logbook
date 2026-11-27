@@ -48,6 +48,12 @@ describe('recordLastSessions', () => {
     expect(recordLastSessions(b, session(TODAY, 25, [12]), '2026-10-21')?.[0]).toMatchObject({ lastDate: TODAY });
   });
 
+  it('ignores sets done in a complex, so a later complex day is not the session (#1494)', () => {
+    const complexDay = session('2026-10-15', 10, [6, 6]).map((r) => ({ ...r, complex: 'Complex 1A' }));
+    const [lateral] = recordLastSessions(b, [...session('2026-10-12', 25, [12, 12, 12]), ...complexDay], TODAY) ?? [];
+    expect(lateral).toMatchObject({ weight: 25, lastReps: [12, 12, 12], lastDate: '2026-10-12' });
+  });
+
   it('ignores sets before the block started and lifts not in the pool', () => {
     expect(recordLastSessions(b, [...session('2026-09-30', 25, [12]), ...session('2026-10-05', 25, [12], 'Squat')], TODAY)).toBeNull();
   });

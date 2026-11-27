@@ -197,6 +197,11 @@ jobs:
       - name: Check deploy.yml's staging smoke test runs under the staging lock
         run: python scripts/test_staging_smoke_under_lock.py -v
 
+      # Every Cloud Run deploy sets DEPLOYMENT_ENVIRONMENT, and deploy.yml's /version probes
+      # require web and api to report it (#1448). Needs PyYAML.
+      - name: Check web and api report the same deployment environment
+        run: python scripts/test_deployment_environment_wiring.py -v
+
       # staging.yml's pre-test check: passes on this run's image by tag or digest, fails naming both
       # images when another run's deploy replaced it.
       - name: Unit test the staging deployed-image check (scripts/check-staging-deployed-image.py)

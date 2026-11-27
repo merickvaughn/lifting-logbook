@@ -69,6 +69,20 @@ export class LiftModificationConflictError extends Error {
   }
 }
 
+export class BarbellComplexNotFoundError extends Error {
+  constructor(public readonly id: string) {
+    super(`Complex '${id}' not found`);
+    this.name = 'BarbellComplexNotFoundError';
+  }
+}
+
+export class BarbellComplexConflictError extends Error {
+  constructor(public readonly complexName: string) {
+    super(`A complex named '${complexName}' already exists`);
+    this.name = 'BarbellComplexConflictError';
+  }
+}
+
 export class FocusBlockNotFoundError extends Error {
   constructor(public readonly id: string) {
     super(`Focus block '${id}' not found`);

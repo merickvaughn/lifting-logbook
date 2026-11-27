@@ -487,6 +487,15 @@ describe('segmentLiftHistory', () => {
       expect(result.stretches[0]?.status).toBe('abandoned');
     });
 
+    it('reads set order from a lift\'s own sets, not the complex sets after them (#1494)', () => {
+      const rows = withSets(run(FIVE_THREE_ONE_DAYS, 0, 8), 'ascending').flatMap((row) =>
+        row.setNum === 3
+          ? [row, ...[70, 60].map((weight, i) => ({ ...row, id: `${row.id}:c${i}`, setNum: 4 + i, weight, complex: 'Complex 1A' }))]
+          : [row],
+      );
+      expect(segment(rows).stretches[0]?.program).toBe('5-3-1');
+    });
+
     it('does not split a run at one session whose sets run the other way', () => {
       const first = withSets(run(RPT_DAYS, 0, 4), 'descending');
       const odd = withSets(session(lastDay(first) + 2, ['Squat', 'Bench Press']), 'ascending');

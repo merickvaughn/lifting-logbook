@@ -158,4 +158,34 @@ describe("classifyLiftRecordRows", () => {
     const [extra] = classifyLiftRecordRows([set({ weight: 90 }), set({ weight: 80 })], (r) => r, [set()]).slice(1);
     expect(extra).toMatchObject({ kind: "create", occurrence: 1, key: "1:1:20260101:back-squat:1~1" });
   });
+
+  describe("sets done in a complex (issue #1494)", () => {
+    const inComplex = (over: Partial<LiftRecord> = {}) => set({ weight: 60, reps: 3, complex: "Complex 1A", ...over });
+
+    it("gives a lift's own sets their occurrence even when the file lists its complex first", () => {
+      const file = [inComplex(), inComplex({ setNum: 2 }), set(), set({ setNum: 2 }), set({ setNum: 3 })];
+      expect(classify(file)).toEqual([
+        { kind: "create", occurrence: 1 },
+        { kind: "create", occurrence: 1 },
+        { kind: "create", occurrence: 0 },
+        { kind: "create", occurrence: 0 },
+        { kind: "create", occurrence: 0 },
+      ]);
+    });
+
+    it("pairs a complex set only with a stored set of the same complex", () => {
+      expect(classify([inComplex()], [set()])).toEqual([{ kind: "create", occurrence: 1 }]);
+      expect(classify([set()], [inComplex()])).toEqual([{ kind: "create", occurrence: 1 }]);
+      expect(classify([inComplex()], [inComplex({ complex: "Complex 1B" })])).toEqual([{ kind: "create", occurrence: 1 }]);
+      expect(classify([inComplex()], [inComplex()])).toEqual([{ kind: "skip", occurrence: 0 }]);
+    });
+
+    it("keeps a complex set and an identical own set of the lift in one workout", () => {
+      const file = [set({ weight: 60, reps: 3 }), inComplex()];
+      expect(classify(file)).toEqual([
+        { kind: "create", occurrence: 0 },
+        { kind: "create", occurrence: 1 },
+      ]);
+    });
+  });
 });
