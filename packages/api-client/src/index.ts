@@ -1346,9 +1346,12 @@ export function createApiClient(config: ApiClientConfig) {
     fetchCustomPrograms(): Promise<CustomProgramSummaryResponse[]> {
       return request('/programs/custom', { cache: 'no-store' });
     },
-    /** The programs holding the user's sets, the non-cycle one aside (#1454). */
-    fetchRecordedPrograms(): Promise<string[]> {
-      return request('/users/me/recorded-programs', { cache: 'no-store' });
+    /**
+     * The programs holding the user's sets, the non-cycle one aside (#1454). With `macrocycles`,
+     * also those holding their macrocycles, which History shows (#1304).
+     */
+    fetchRecordedPrograms(options: { macrocycles?: boolean } = {}): Promise<string[]> {
+      return request(`/users/me/recorded-programs${options.macrocycles ? '?macrocycles=true' : ''}`, { cache: 'no-store' });
     },
     fetchCustomProgram(id: string): Promise<CustomProgramResponse> {
       return request(`/programs/custom/${enc(id)}`, { cache: 'no-store' });

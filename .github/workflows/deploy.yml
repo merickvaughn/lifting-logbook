@@ -560,6 +560,7 @@ jobs:
             SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
             SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_STAGING_PROJECT_ID }}.iam.gserviceaccount.com
             SHEET_MIRROR_API_URL=${{ steps.tf-outputs.outputs.cloud_run_api_url }}
+            DEPLOYMENT_ENVIRONMENT=staging
           ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-stg-google-oauth-client-secret
 
       # web sidecar via the shared composite action (see the api step above). web_sa
@@ -584,6 +585,9 @@ jobs:
           # after staging Tempo validation confirmed legit beacons tag same-origin (#809 PR2).
           client_error_guard: "true"
           client_error_drop_cross_origin: "true"
+          # What /version and web telemetry report as the environment (#1448). NODE_ENV can't
+          # say: next build pins it to production. The api step sets the same variable.
+          ingress_env: DEPLOYMENT_ENVIRONMENT=staging
 
       # ── OTel Collector (observability — #474) ──────────────────────────────
       # Deployed LAST in the job, after the Cloud Run app deploys above, so an
@@ -700,10 +704,15 @@ jobs:
       # Which build answered (#1042, #1052). /livez and /sign-in pass against any revision; /version
       # reports the GIT_SHA baked into the image, github.sha for every deploy.yml build. This job
       # still holds the staging lock, so no other run has deployed since the steps above.
+      # CHECK_SERVED_VERSION_ENVIRONMENT: web and api must both report staging (#1448).
       - name: Smoke test Cloud Run staging — /version (served web build)
+        env:
+          CHECK_SERVED_VERSION_ENVIRONMENT: staging
         run: bash scripts/check-served-version.sh "${{ steps.tf-outputs.outputs.cloud_run_web_url }}" "${{ github.sha }}"
 
       - name: Smoke test Cloud Run staging (API auth check) + /version (served API build)
+        env:
+          CHECK_SERVED_VERSION_ENVIRONMENT: staging
         run: |
           API_URL="${{ steps.tf-outputs.outputs.cloud_run_api_url }}"
           API_URL="${API_URL%/}"
@@ -1174,6 +1183,7 @@ jobs:
             SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
             SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_PROD_PROJECT_ID }}.iam.gserviceaccount.com
             SHEET_MIRROR_API_URL=${{ steps.tf-prod.outputs.cloud_run_api_url }}
+            DEPLOYMENT_ENVIRONMENT=production
           ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-prod-google-oauth-client-secret
 
       # ── Production DB-backed smoke test (#460) ─────────────────────────────
@@ -1188,7 +1198,10 @@ jobs:
       # rather than days later. NOTE: this does not auto-roll-back the revision;
       # roll back manually on failure (docs/deploy.md) — automated rollback is a
       # tracked follow-up.
+      # CHECK_SERVED_VERSION_ENVIRONMENT: web and api must both report production (#1448).
       - name: Smoke test Cloud Run production — /readyz (DB-backed) + /version (served API build)
+        env:
+          CHECK_SERVED_VERSION_ENVIRONMENT: production
         run: |
           API_URL="${{ steps.tf-prod.outputs.cloud_run_api_url }}"
           API_URL="${API_URL%/}"
@@ -1241,6 +1254,9 @@ jobs:
           client_error_drop_cross_origin: "true"
           # Lifters use the custom domain, whose Origin is not the run.app URL (#1438).
           client_error_extra_origins: "https://liftinglogbook.com"
+          # What /version and web telemetry report as the environment (#1448). NODE_ENV can't
+          # say: next build pins it to production. The api step sets the same variable.
+          ingress_env: DEPLOYMENT_ENVIRONMENT=production
 
       # ── Production web served-surface smoke (#490 item 3 / #382 / #407) ────
       # Verify the *live* prod web surface through the real Cloud Run ingress
@@ -1295,6 +1311,8 @@ jobs:
 
       # Which build answered (#1042) — see the API /readyz + /version step above.
       - name: Smoke test Cloud Run production — /version (served web build)
+        env:
+          CHECK_SERVED_VERSION_ENVIRONMENT: production
         run: bash scripts/check-served-version.sh "${{ steps.tf-prod.outputs.cloud_run_web_url }}" "${{ github.sha }}"
 
       # ── OTel Collector (observability — #474) ──────────────────────────────

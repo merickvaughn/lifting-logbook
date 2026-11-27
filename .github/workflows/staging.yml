@@ -638,6 +638,7 @@ jobs:
             SHEET_MIRROR_QUEUE_LOCATION=${{ env.REGION }}
             SHEET_MIRROR_TASKS_SA_EMAIL=sheet-mirror-tasks@${{ vars.GCP_STAGING_PROJECT_ID }}.iam.gserviceaccount.com
             SHEET_MIRROR_API_URL=${{ needs.terraform-staging.outputs.cloud_run_api_url }}
+            DEPLOYMENT_ENVIRONMENT=staging
           ingress_secret_env: GOOGLE_OAUTH_CLIENT_SECRET=lifting-logbook-stg-google-oauth-client-secret
 
       # Guard against a HOLLOW GREEN (#823). The deploy step above intentionally
@@ -870,6 +871,8 @@ jobs:
           loki_secret: lifting-logbook-stg-otel-loki-auth-header
           otel_mirror_repo: ${{ needs.terraform-staging.outputs.otel_mirror_repo }}
           web_sa: ${{ needs.terraform-staging.outputs.web_workload_sa }}
+          # What /version and web telemetry report as the environment (#1448). Matches deploy.yml.
+          ingress_env: DEPLOYMENT_ENVIRONMENT=staging
 
       # web_url for the integration-test + report-status jobs. `gcloud run services replace`
       # (unlike `gcloud run deploy`) emits no "Service URL:" line, so source the canonical service

@@ -50,6 +50,34 @@ describe("validateLiftImport", () => {
     expect(errors.map((e) => [e.row, e.code])).toEqual([[3, "COMPLEX_ROUND_INVALID"], [4, "COMPLEX_ROUND_INVALID"]]);
   });
 
+  // Workout #, Set # and Reps are integers in the database, so a fraction must fail the row in
+  // the dry run and the preview as it would the commit, not reach the query (#1160).
+  describe.each([
+    ["workoutNum", "WORKOUT_NUM_INVALID"],
+    ["setNum", "SET_NUM_INVALID"],
+    ["reps", "REPS_INVALID"],
+  ] as const)("a fractional %s (#1160)", (field, code) => {
+    const records = () => [makeRecord(), makeRecord({ setNum: 2, [field]: 5.5 })];
+    const expected = [{ row: 2, field, code, message: expect.stringMatching(/whole number/) }];
+
+    it("is a row error from the strict validator", () => {
+      const { valid, errors } = validateLiftImport(records(), TEST_SLOT_MAP);
+      expect(valid).toHaveLength(1);
+      expect(errors).toEqual(expected);
+    });
+
+    it("makes the row incomplete in the soft validator", () => {
+      const { validRows, incomplete } = validateLiftImportSoft(records(), TEST_SLOT_MAP);
+      expect(validRows).toHaveLength(1);
+      expect(incomplete).toEqual([{ record: expect.anything(), rowIndex: 2, errors: expected }]);
+    });
+  });
+
+  it("flags a whole number too large for its column (#1160)", () => {
+    const { errors } = validateLiftImport([makeRecord({ reps: 2 ** 31 })], TEST_SLOT_MAP);
+    expect(errors).toMatchObject([{ row: 1, field: "reps", code: "REPS_INVALID" }]);
+  });
+
   it("flags an unknown lift abbreviation", () => {
     const records = [makeRecord({ lift: "Cable Curls" as LiftRecord["lift"] })];
     const { valid, errors } = validateLiftImport(records, TEST_SLOT_MAP);

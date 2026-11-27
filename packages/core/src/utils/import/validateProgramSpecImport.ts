@@ -1,5 +1,6 @@
 import { ImportError, IMPORT_ERROR_FIELD_LIFT } from '@lifting-logbook/types';
 import { LiftingProgramSpec } from '../../models';
+import { integerColumnError } from './validateLiftImport';
 
 export interface ProgramSpecImportValidationResult {
   valid: LiftingProgramSpec[];
@@ -8,12 +9,21 @@ export interface ProgramSpecImportValidationResult {
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && !isNaN(v);
 
+/** The numeric fields stored in integer columns. `week` is checked against 1 to 3 instead. */
+const INTEGER_FIELDS = [
+  ['offset', 'OFFSET_INVALID', 'Offset'],
+  ['order', 'ORDER_INVALID', 'Order'],
+  ['sets', 'SETS_INVALID', 'Sets'],
+  ['reps', 'REPS_INVALID', 'Reps'],
+] as const satisfies ReadonlyArray<readonly [keyof LiftingProgramSpec, ImportError['code'], string]>;
+
 /**
  * Validates parsed program-spec rows, collecting all errors. Row numbers are
  * 1-based and exclude the CSV header row.
  *
  * Rules: `week` ∈ {1,2,3}; `offset`, `increment`, `order`, `sets`, `reps`,
- * `wtDecrementPct` numeric; `lift` non-empty; `weekType` (when present) ∈
+ * `wtDecrementPct` numeric, and `offset`, `order`, `sets`, `reps` whole numbers an integer
+ * column holds; `lift` non-empty; `weekType` (when present) ∈
  * {training, test, deload}.
  */
 export function validateProgramSpecImport(
@@ -35,6 +45,12 @@ export function validateProgramSpecImport(
     if (!isNum(r.order)) rowErrors.push({ row, field: 'order', code: 'ORDER_INVALID', message: 'Order is not a number' });
     if (!isNum(r.sets)) rowErrors.push({ row, field: 'sets', code: 'SETS_INVALID', message: 'Sets is not a number' });
     if (!isNum(r.reps)) rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
+    // Offset, Order, Sets and Reps are integer columns (#1160). A non-number already failed above.
+    for (const [field, code, label] of INTEGER_FIELDS) {
+      const value = r[field];
+      const error = isNum(value) ? integerColumnError(row, field, code, label, value) : null;
+      if (error) rowErrors.push(error);
+    }
     if (!isNum(r.wtDecrementPct) && r.weightPct !== undefined)
       rowErrors.push({
         row,

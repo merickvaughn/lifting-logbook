@@ -1113,7 +1113,9 @@ export interface ImportCommitResponse extends ImportWriteResult {
 
 /**
  * Response for `POST /programs/:program/import?mode=dry-run`: the counts a commit with
- * the same inputs would return. Nothing is written (#1123).
+ * the same inputs would return. Nothing is written (#1123). It refuses what that commit would
+ * refuse, with the same status and body: a row error, or a program-spec import to a built-in
+ * program (400) or one the user doesn't own (404) (#1160).
  */
 export interface ImportDryRunResponse extends ImportWriteResult {
   destination: ImportKind;

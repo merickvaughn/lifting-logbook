@@ -14,10 +14,10 @@
 # secrets (pre-promote)" step rather than aborting on the first failure).
 #
 # Three things worth knowing before reading the output:
-#   * "environment" in the JSON response is NODE_ENV, not the GCP project. Staging's Cloud
-#     Run services run NODE_ENV=production (the Node convention for "optimized build"), so
-#     staging's /version legitimately reports "environment":"production" — this does not
-#     mean you're looking at prod. See docs/runbooks/checking-deployed-version.md.
+#   * "environment" in the JSON response is DEPLOYMENT_ENVIRONMENT (staging / production),
+#     which the deploy sets on each service (#1448). A service not deployed since then may
+#     still report its old value; web's used to say "production" on staging. See
+#     docs/runbooks/checking-deployed-version.md.
 #   * On staging specifically, the reported SHA can lag the PR's actual head commit when a
 #     run reused a prior image via staging.yml's skip-build optimization (see the "Resolve
 #     image tag" step comment in staging.yml, #671) — this is expected, not a broken deploy.
@@ -203,7 +203,7 @@ report_version() {
 
   echo "    url:         ${url}"
   echo "    gitSha:      ${sha}"
-  echo "    environment: ${nodeenv}  (NODE_ENV — not the GCP project; staging runs NODE_ENV=production by convention)"
+  echo "    environment: ${nodeenv}  (DEPLOYMENT_ENVIRONMENT, set by the deploy)"
   print_commit_context "$sha"
   echo
 }

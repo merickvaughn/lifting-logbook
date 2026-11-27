@@ -14,7 +14,7 @@ Both `apps/api` and `apps/web` expose an unauthenticated-at-the-app-level `GET /
 (#671) reporting the git commit baked into the running container image at build time:
 
 ```json
-{ "gitSha": "<40-char sha, or \"unknown\">", "environment": "<NODE_ENV>" }
+{ "gitSha": "<40-char sha, or \"unknown\">", "environment": "<DEPLOYMENT_ENVIRONMENT>" }
 ```
 
 - [`apps/api/src/health/health.controller.ts`](../../apps/api/src/health/health.controller.ts) — `@Public() @Get('version')`
@@ -24,10 +24,13 @@ Both `apps/api` and `apps/web` expose an unauthenticated-at-the-app-level `GET /
 manual `docker build` without `--build-arg GIT_SHA=...`) — a missing SHA only degrades
 observability, not functionality.
 
-**`environment` is `NODE_ENV`, not the GCP project.** Staging's Cloud Run services run with
-`NODE_ENV=production` (the Node.js convention for "optimized build"), so staging's `/version`
-legitimately reports `"environment":"production"` — this does not mean you are looking at
-prod. Confirm which environment you're checking by the URL/project you queried, not this field.
+**`environment` is `DEPLOYMENT_ENVIRONMENT`: `staging` or `production`.** The deploy sets it on
+each Cloud Run service through the `deploy-cloud-run-otel-sidecar` action's `ingress_env`, and
+`deploy.yml`'s `/version` smoke steps fail unless web and api both report the environment they
+deployed to (`CHECK_SERVED_VERSION_ENVIRONMENT`). Web never reads `NODE_ENV` here: `next build`
+pins it to `production`, which is how staging's web once reported `"environment":"production"`
+(#1448). The api falls back to `NODE_ENV` where the variable is unset; web falls back to
+`development`. A service that hasn't been deployed since #1448 may still show the old value.
 
 **On staging, the reported SHA can lag the PR's actual head commit.** `staging.yml`'s
 "Resolve image tag" step reuses a prior image (via a floating `pr-<N>` tag) when a push's diff

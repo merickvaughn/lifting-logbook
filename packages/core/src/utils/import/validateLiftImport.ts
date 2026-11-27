@@ -25,6 +25,36 @@ export function fileMacrocycleNumError(row: number, macrocycleNum: number): Impo
   };
 }
 
+/** The bounds of a Postgres `integer` column, which Prisma's `Int` maps to. */
+const INT_COLUMN_MIN = -(2 ** 31);
+const INT_COLUMN_MAX = 2 ** 31 - 1;
+
+/**
+ * The row error for a number bound for an integer column that the column can't hold, or null.
+ * NaN is left to the caller's "is not a number" check. Without this a fraction passed the dry
+ * run and failed the whole commit at the write (#1160).
+ */
+export function integerColumnError(
+  row: number,
+  field: string,
+  code: ImportError['code'],
+  label: string,
+  value: number,
+): ImportError | null {
+  if (isNaN(value) || (Number.isInteger(value) && value >= INT_COLUMN_MIN && value <= INT_COLUMN_MAX)) return null;
+  const message = Number.isInteger(value) ? `${label} is too large` : `${label} must be a whole number`;
+  return { row, field, code, message };
+}
+
+/** The row errors for a lift record's Workout #, Set # and Reps that their integer columns can't hold. */
+export function liftRecordIntegerErrors(r: ParsedLiftRecord, row: number): ImportError[] {
+  return [
+    integerColumnError(row, 'workoutNum', 'WORKOUT_NUM_INVALID', 'Workout #', r.workoutNum),
+    integerColumnError(row, 'setNum', 'SET_NUM_INVALID', 'Set #', r.setNum),
+    integerColumnError(row, 'reps', 'REPS_INVALID', 'Reps', r.reps),
+  ].filter((e): e is ImportError => e !== null);
+}
+
 export interface LiftImportValidationResult {
   /** Records that passed all validation checks, with each lift resolved to the value slotMap holds for it. */
   valid: LiftRecord[];
@@ -51,9 +81,6 @@ const EARLIEST_LIFT_DATE_MS = Date.UTC(1970, 0, 2);
 
 /** A UTC `YYYY-MM-DD` label for a date. */
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
-
-/** The largest value a Postgres `INTEGER` column, such as `complexRound`, holds. */
-const MAX_INT32 = 2_147_483_647;
 
 /**
  * The row error for a date on or before 1970-01-01 or after the import date's UTC day, or null.
@@ -97,7 +124,7 @@ export function exportColumnErrors(r: ParsedLiftRecord, row: number): ImportErro
       code: 'STATUS_INVALID',
       message: `Status must be one of ${MACROCYCLE_STATUSES.join(', ')}`,
     });
-  if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1 && r.complexRound <= MAX_INT32))
+  if (r.complexRound !== undefined && !(Number.isInteger(r.complexRound) && r.complexRound >= 1 && r.complexRound <= INT_COLUMN_MAX))
     errors.push({ row, field: 'complexRound', code: 'COMPLEX_ROUND_INVALID', message: 'Round must be a whole number from 1' });
   return errors;
 }
@@ -143,6 +170,7 @@ export function validateLiftImport(
       rowErrors.push({ row, field: 'weight', code: 'WEIGHT_INVALID', message: 'Weight is not a number' });
     if (isNaN(r.reps))
       rowErrors.push({ row, field: 'reps', code: 'REPS_INVALID', message: 'Reps is not a number' });
+    rowErrors.push(...liftRecordIntegerErrors(r, row));
     if (!r.date || isNaN(r.date.getTime()))
       rowErrors.push({ row, field: 'date', code: 'DATE_INVALID', message: 'date is invalid' });
     else {
