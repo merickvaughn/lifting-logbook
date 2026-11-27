@@ -1860,6 +1860,72 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
     });
   });
 
+  // csv-parse's error for a short row used to reach the client as a 500 (#1497).
+  describe('a file whose rows have different numbers of cells', () => {
+    const RAGGED_CSV = [
+      'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes',
+      '5-3-1,1,1,2026-01-01,Bench P.,1,180,5,',
+      '5-3-1,1,1,2026-01-01,Bench P.,2,180',
+    ].join('\n');
+    const MESSAGE =
+      'Line 3 has 7 cells, but the first row has 9. Every row of the file needs the same number of cells.';
+
+    it.each(['?mode=preview', '?mode=commit&destination=lift-records', '?mode=dry-run&destination=lift-records'])(
+      'is a 400 naming the line from import%s',
+      async (query) => {
+        const res = await importCsv('p1497-ragged', RAGGED_CSV, query);
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toBe(MESSAGE);
+      },
+    );
+
+    it('is a 400 naming the line from import/suggestions', async () => {
+      const prior = process.env.IMPORT_ASSIGN_ENABLED;
+      process.env.IMPORT_ASSIGN_ENABLED = 'true';
+      try {
+        const res = await importCsv('p1497-ragged', RAGGED_CSV, '/suggestions');
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toBe(MESSAGE);
+      } finally {
+        if (prior === undefined) delete process.env.IMPORT_ASSIGN_ENABLED;
+        else process.env.IMPORT_ASSIGN_ENABLED = prior;
+      }
+    });
+
+    it('is a 400 naming the line from lift-records/import, and writes nothing', async () => {
+      const boundary = '----RaggedBoundary';
+      const res = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/programs/5-3-1/lift-records/import',
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...AUTH },
+        payload: [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="upload.csv"',
+          'Content-Type: text/csv',
+          '',
+          RAGGED_CSV,
+          `--${boundary}--`,
+        ].join('\r\n'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toBe(MESSAGE);
+
+      const records = await app.getHttpAdapter().getInstance().inject({
+        method: 'GET',
+        url: '/programs/5-3-1/lift-records',
+        headers: AUTH,
+      });
+      expect(records.json()).toEqual([]);
+    });
+
+    it('still imports the same file once the short row is filled in', async () => {
+      const fixed = RAGGED_CSV.replace(/,180$/, ',180,5,');
+      const res = await importCsv('p1497-fixed', fixed, '?mode=commit&destination=lift-records');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().created).toBe(2);
+    });
+  });
+
   describe('dry run (mode=dry-run) matches the commit (#1123)', () => {
     const HEADER = 'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps,Notes';
     const LIFTS = 'destination=lift-records&splitDest=1';

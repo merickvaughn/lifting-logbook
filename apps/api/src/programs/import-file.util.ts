@@ -1,4 +1,5 @@
 import { BadRequestException, HttpException, PayloadTooLargeException } from '@nestjs/common';
+import { CsvParseError, parseCsvText, SpreadsheetCell } from '@lifting-logbook/core';
 import { FastifyRequest } from 'fastify';
 
 /**
@@ -82,6 +83,16 @@ export async function readImportForm(
   }
   if (csvText === null) throw new BadRequestException('No file uploaded');
   return { csvText, fields };
+}
+
+/** Parses an uploaded file's text; text that isn't valid CSV is a 400 naming the line (#1497). */
+export function parseUploadedCsv(csvText: string): SpreadsheetCell[][] {
+  try {
+    return parseCsvText(csvText);
+  } catch (err) {
+    if (err instanceof CsvParseError) throw new BadRequestException(err.message);
+    throw err;
+  }
 }
 
 async function csvTextOf(file: UploadedFile): Promise<string> {

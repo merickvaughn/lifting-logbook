@@ -51,7 +51,6 @@ import {
   StrengthGoalEntry,
   classifyImport,
   fuzzyColumnMapper,
-  parseCsvText,
   parseGoogleSheetUrl,
   stringifyCsv,
   applyColumnOverrides,
@@ -90,7 +89,7 @@ import { RlsTxTimeout, SkipRlsTransaction } from '../adapters/prisma/rls-context
 import { PrismaService } from '../adapters/prisma/prisma.service';
 import { IMPORT_REPLACE_TX_TIMEOUT_MS } from '../adapters/prisma/prisma-tx.util';
 import { ImportSuggestionsService } from '../import-suggestions/import-suggestions.service';
-import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, readImportForm } from './import-file.util';
+import { MAX_IMPORT_FILE_BYTES, MAX_IMPORT_ROWS, parseUploadedCsv, readImportForm } from './import-file.util';
 import { CustomProgramsRepository } from '../custom-programs/custom-programs.repository';
 import { IMPORT_HANDLERS, liftsOf } from './import-handlers';
 import {
@@ -196,7 +195,7 @@ export class ImportController {
   ): Promise<ImportPreviewResponse | ImportCommitResponse | ImportDryRunResponse | ImportAssignResponse> {
     const { csvText, fields } = await readImportForm(req);
     const assignEnabled = importAssignEnabled();
-    let table = parseCsvText(csvText);
+    let table = parseUploadedCsv(csvText);
 
     const override = destinationParam && (Object.keys(IMPORT_HANDLERS) as ImportKind[]).includes(
       destinationParam as ImportKind,
@@ -337,7 +336,7 @@ export class ImportController {
     // Suggestions are part of the Assign step, which doesn't exist with the flag off.
     if (!importAssignEnabled()) throw new NotFoundException();
     const { csvText, fields } = await readImportForm(req);
-    let table = parseCsvText(csvText);
+    let table = parseUploadedCsv(csvText);
     const columnOverrides = parseJsonParam<Record<string, string>>(overridesParam);
     if (columnOverrides) table = applyColumnOverrides(table, columnOverrides, 'lift-records');
     const choices = {
