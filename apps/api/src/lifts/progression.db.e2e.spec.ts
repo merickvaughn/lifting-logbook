@@ -2,8 +2,9 @@
 // Postgres is provisioned by jest.global-setup.js. As in lift-modification.db.e2e.spec.ts:
 //   - `app` boots against the restricted lifting_app role, so every HTTP assertion below runs
 //     through RlsInterceptor and forced row-level security, as production does;
-//   - `owner` is the owner connection, used to seed and clean up across synthetic users, and to
-//     run the backfill migration the way the migrate job does.
+//   - `owner` is the owner connection, used to seed and clean up across synthetic users. It is a
+//     superuser, which row-level security never filters, unlike the migrate job's role, so the
+//     backfill's effect in production is tested as a role like the migrator (#1236), last below.
 // That one user can't read another's values is proven in rls.db.e2e.spec.ts.
 import 'reflect-metadata';
 import { readFileSync } from 'fs';
@@ -296,8 +297,9 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
   });
 
   describe('the backfill migration', () => {
-    // Runs the shipped SQL as the owner, as the migrate job does, inside a transaction that is
-    // always rolled back: the UPDATE reaches every user's rows, so committing it would change
+    // Runs the shipped SQL as the superuser owner, so it checks what the UPDATE does to rows it
+    // can see, not whether the migrator sees them (it doesn't: see the #1236 test below). Inside
+    // a transaction that is always rolled back: the UPDATE reaches every user's rows, so committing it would change
     // rows another suite running against the same database left null on purpose.
     // Prisma runs one statement per call, so the file is split on `;` once its comments go.
     const backfillStatements = (): string[] =>
@@ -378,6 +380,119 @@ describeOrSkip('Progression storage HTTP (e2e, PrismaRepositoryFactory)', () => 
 
       // Rolled back: the seeded rows are as they were.
       expect(await owner.customProgramSpec.count({ where: { programId: program.id, progression: null } })).toBe(3);
+      // Room for the transaction's full timeout, so Jest doesn't abandon it with its locks held.
+    }, DB_E2E_HOOK_TIMEOUT_MS * 2);
+  });
+
+  // #1236: the migrate job's role owns the tables but isn't a superuser or BYPASSRLS, so FORCE ROW
+  // LEVEL SECURITY hid every row from 20261111000001's UPDATE. The suite's owner is a superuser,
+  // which RLS never filters, so both migrations run here as a role like the migrator: no
+  // superuser, no BYPASSRLS, a member of the tables' owner. Everything, the role included, is
+  // created in one transaction that always rolls back. Reads in between reset to the superuser,
+  // which sees every row whatever FORCE is set to.
+  describe('the backfill rerun as an owner that FORCE ROW LEVEL SECURITY binds', () => {
+    const RERUN_SQL = join(
+      __dirname,
+      '../../prisma/migrations/20261127000000_backfill_custom_spec_progression_without_forced_rls/migration.sql',
+    );
+    const PROBE = 'progression_migrator_probe';
+
+    const statementsOf = (file: string): string[] =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        // As above: wait longer than the migrate job would for a row another suite holds.
+        .map((s) => (/^SET LOCAL lock_timeout/i.test(s) ? "SET LOCAL lock_timeout = '20s'" : s));
+
+    it('tags the null rows of programs created before 20261111000001, which matched none of them', async () => {
+      const original = statementsOf(BACKFILL_SQL);
+      const rerun = statementsOf(RERUN_SQL);
+      expect(rerun.filter((s) => /NO FORCE ROW LEVEL SECURITY/.test(s))).toHaveLength(2);
+      expect(rerun.some((s) => s.startsWith('UPDATE'))).toBe(true);
+
+      try {
+        await owner.$transaction(
+          async (tx) => {
+            const [{ tableowner }] = await tx.$queryRaw<{ tableowner: string }[]>`
+              SELECT tableowner FROM pg_tables WHERE schemaname = current_schema() AND tablename = 'custom_program_spec'`;
+            const older = await tx.customProgram.create({
+              data: {
+                userId: USER_BACKFILL,
+                name: 'Saved before the backfill',
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+                specs: {
+                  create: [
+                    { ...SPEC_ROW, lift: 'Bench Press', order: 1 },
+                    { ...SPEC_ROW, lift: 'Squat', order: 2 },
+                    { ...SPEC_ROW, lift: 'Cable Curl', order: 3, progression: 'double', repsLow: 8 },
+                  ],
+                },
+              },
+            });
+            // Created now, after the test database ran 20261111000001: null here follows the lift.
+            const newer = await tx.customProgram.create({
+              data: {
+                userId: USER_BACKFILL,
+                name: 'Saved after the backfill',
+                specs: { create: [{ ...SPEC_ROW, lift: 'Squat', order: 1 }] },
+              },
+            });
+            const progressions = async (programId: string) =>
+              (
+                await tx.customProgramSpec.findMany({ where: { programId }, orderBy: [{ week: 'asc' }, { order: 'asc' }] })
+              ).map((r) => [r.lift, r.progression]);
+
+            await tx.$executeRawUnsafe(`CREATE ROLE "${PROBE}" NOSUPERUSER NOBYPASSRLS NOLOGIN`);
+            await tx.$executeRawUnsafe(`GRANT "${tableowner}" TO "${PROBE}"`);
+            await tx.$executeRawUnsafe(`SET LOCAL ROLE "${PROBE}"`);
+            const [probe] = await tx.$queryRaw<{ rolsuper: boolean; rolbypassrls: boolean }[]>`
+              SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`;
+            expect(probe).toEqual({ rolsuper: false, rolbypassrls: false });
+
+            // The bug: FORCE on, the original UPDATE matches nothing and succeeds.
+            let updated = 0;
+            for (const statement of original) updated = await tx.$executeRawUnsafe(statement);
+            expect(updated).toBe(0);
+            await tx.$executeRawUnsafe('RESET ROLE');
+            expect(await progressions(older.id)).toEqual([
+              ['Bench Press', null],
+              ['Squat', null],
+              ['Cable Curl', 'double'],
+            ]);
+
+            // The fix: FORCE off around the same change, for the owner only.
+            await tx.$executeRawUnsafe(`SET LOCAL ROLE "${PROBE}"`);
+            for (const statement of rerun) await tx.$executeRawUnsafe(statement);
+            await tx.$executeRawUnsafe('RESET ROLE');
+            expect(await progressions(older.id)).toEqual([
+              ['Bench Press', 'amrap_gated'],
+              ['Squat', 'amrap_gated'],
+              ['Cable Curl', 'double'],
+            ]);
+            expect(await progressions(newer.id)).toEqual([['Squat', null]]);
+
+            const forced = await tx.$queryRaw<{ relname: string; relforcerowsecurity: boolean }[]>`
+              SELECT relname, relforcerowsecurity FROM pg_class
+              WHERE relnamespace = current_schema()::regnamespace AND relname IN ('custom_program', 'custom_program_spec')
+              ORDER BY relname`;
+            expect(forced).toEqual([
+              { relname: 'custom_program', relforcerowsecurity: true },
+              { relname: 'custom_program_spec', relforcerowsecurity: true },
+            ]);
+            throw new Rollback();
+          },
+          { timeout: DB_E2E_HOOK_TIMEOUT_MS },
+        );
+      } catch (err) {
+        // A failed assertion surfaces as itself, with its diff.
+        if (err instanceof Rollback) return;
+        throw err;
+      }
+      throw new Error('the rerun transaction committed');
       // Room for the transaction's full timeout, so Jest doesn't abandon it with its locks held.
     }, DB_E2E_HOOK_TIMEOUT_MS * 2);
   });
