@@ -62,6 +62,7 @@ const USER_RENUMBER_UNSTARTED = 'macrocycle-db-renumber-unstarted';
 const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
 const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
 const USER_SPLIT_UNDO = 'macrocycle-db-split-undo';
+const USER_UNDO_NEGATIVE = 'macrocycle-db-undo-negative';
 const USER_HISTORY_ORDER = 'macrocycle-db-history-order';
 const USER_HISTORY_REVERSE = 'macrocycle-db-history-reverse';
 const USER_HISTORY_LATER_IMPORT = 'macrocycle-db-history-later-import';
@@ -74,6 +75,7 @@ const USER_HISTORY_LOCK = 'macrocycle-db-history-lock';
 const USER_HISTORY_NO_WAIT = 'macrocycle-db-history-no-wait';
 const USERS = [
   USER_SPLIT_UNDO,
+  USER_UNDO_NEGATIVE,
   USER_HISTORY_NO_WAIT,
   USER_HISTORY_NEGATIVE,
   USER_HISTORY_UNSTARTED,
@@ -1406,5 +1408,33 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
     expect(undo.json()).toMatchObject({ restored: 3, skipped: 0, flagged: [] });
     expect(await maxes()).toEqual([{ lift: 'bench-press', weight: 182.5, dateUpdated: priorDate.toISOString() }]);
     expect(await owner.liftRecord.count({ where: { userId: user } })).toBe(0);
+  }, DB_E2E_HOOK_TIMEOUT_MS);
+
+  // #1235: a number stored before #1224 checked its range, or put back by
+  // macrocycle_renumber_reverse(), can be negative. Undo read such keys as training maxes.
+  it('undoes a batch whose set and legacy row keys are on a negative macrocycle number', async () => {
+    const user = USER_UNDO_NEGATIVE;
+    await owner.macrocycle.create({
+      data: { userId: user, program: PROGRAM, macrocycleNum: -2, startDate: day('2026-03-02'), status: 'completed', origin: 'legacy' },
+    });
+    await owner.liftRecord.create({
+      data: { userId: user, program: PROGRAM, macrocycleNum: -2, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1, weight: 200, reps: 5 },
+    });
+    const batch = await owner.importBatch.create({
+      data: {
+        userId: user,
+        program: PROGRAM,
+        destination: 'lift-records',
+        preImage: {
+          '-2:1:20260302:Bench Press:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } },
+          'macrocycle-row:-2': { kind: 'created', wrote: { macrocycleNum: -2 } },
+        },
+      },
+    });
+
+    const undo = await injectAs(user, 'POST', `/programs/${PROGRAM}/import/${batch.id}/undo`);
+    expect(undo.json()).toMatchObject({ restored: 1, skipped: 0, flagged: [] });
+    expect(await owner.liftRecord.count({ where: { userId: user } })).toBe(0);
+    expect(await owner.macrocycle.count({ where: { userId: user } })).toBe(0);
   }, DB_E2E_HOOK_TIMEOUT_MS);
 });
