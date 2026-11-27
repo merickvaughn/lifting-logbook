@@ -11,6 +11,10 @@ export type UserProgram = {
 // Custom programs are addressed by UUID and built-in templates by slug, as on the API.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isCustomProgramId(id: string): boolean {
+  return UUID_PATTERN.test(id);
+}
+
 /**
  * The user's custom programs, plus the template they're on if they're on one, with the
  * active program first: what the importer can write to (#1115) and History can show (#1300).
@@ -19,6 +23,10 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  *
  * The template's name falls back to its slug because the catalog doesn't list every
  * slug the API serves ('5-3-1' is a preset, while the catalog's entry is '531').
+ *
+ * A recorded UUID that isn't among `customPrograms` is a custom program that was deleted: deleting
+ * one leaves its sets stored under its id, so it's listed under a name that says so (#1465). A
+ * caller that couldn't read the custom programs must leave their ids out of `recorded`.
  */
 export function userPrograms(
   customPrograms: CustomProgramSummaryResponse[],
@@ -27,8 +35,13 @@ export function userPrograms(
 ): UserProgram[] {
   const programs: UserProgram[] = [...customPrograms];
   const templates = new Set([activeProgram ?? '', ...recorded]);
+  const customIds = new Set(customPrograms.map((p) => p.id));
   for (const id of templates) {
-    if (!id || UUID_PATTERN.test(id)) continue;
+    if (!id || customIds.has(id)) continue;
+    if (isCustomProgramId(id)) {
+      if (recorded.includes(id)) programs.push({ id, name: `Deleted program (${id.slice(0, 8)})` });
+      continue;
+    }
     const name = PROGRAMS.find((p) => p.id === id)?.name ?? id;
     programs.push({ id, name, isTemplate: true });
   }
