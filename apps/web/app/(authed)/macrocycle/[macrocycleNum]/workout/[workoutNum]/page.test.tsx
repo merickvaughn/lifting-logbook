@@ -352,6 +352,20 @@ describe('WorkoutLoggingPage — working sets come from the plan (issue #1080)',
     expect(readOnly).toBe(false);
   });
 
+  it('marks the top set of a descending lift as its AMRAP set, not the last (issue #1086)', async () => {
+    seedWorkout([{ lift: 'Squat', planned: true, sets: [] }], {
+      specOverrides: { ...THREE_SETS, wtDecrementPct: 0.1 },
+    });
+
+    const { lifts } = await renderPage();
+
+    expect(lifts[0]?.workingSets.map((s) => [s.setNum, s.totalLoad, s.amrap])).toEqual([
+      [1, 200, true],
+      [2, 180, false],
+      [3, 160, false],
+    ]);
+  });
+
   it('keeps the planned sets still to do on a partly logged lift', async () => {
     seedWorkout([{ lift: 'Squat', planned: false, sets: [LOGGED_SET] }], { specOverrides: THREE_SETS });
 

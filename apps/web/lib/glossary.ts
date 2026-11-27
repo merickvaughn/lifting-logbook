@@ -147,7 +147,7 @@ export const GLOSSARY = [
         id: 'amrap',
         term: 'AMRAP',
         definition:
-          '"As many reps as possible." The last set of some lifts is taken to technical failure, and the reps you hit drive your training-max changes.',
+          '"As many reps as possible." The top set of some lifts, the heaviest of its working sets, is taken to technical failure, and the reps you hit drive your training-max changes. When the sets share a weight, it is the last set.',
       },
       {
         id: 'personal-record',
