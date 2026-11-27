@@ -1,4 +1,4 @@
-import { LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport, validateLiftImportSoft } from "@src/core";
+import { IMPORT_LIFT_ALIASES, LIFT_CATALOG, PRESET_BASE_SPECS, buildImportSlotMap, builtInLiftFor, parseLiftRecords, validateLiftImport, validateLiftImportSoft } from "@src/core";
 import { LiftRecord } from "@src/core/models";
 
 /** Minimal slot map covering the fixture abbreviations we test against. */
@@ -319,6 +319,17 @@ describe("validateLiftImport", () => {
       }
       const { valid } = validateLiftImport([makeRecord({ lift: "Calf Raises" as LiftRecord["lift"] })], importMap);
       expect(valid[0]!.lift).toBe("Calf Raises");
+    });
+
+    // #1499: the 2026 sheet's rows are recognized as Wide-Grip Cable Curl, so Review shows
+    // them as that lift with nothing to remap, and they never fall back to Cable Curl.
+    it("recognizes Wide-Grip CBL Curls as Wide-Grip Cable Curl", () => {
+      expect(IMPORT_LIFT_ALIASES).toContain("Wide-Grip CBL Curls");
+      const records = [makeRecord({ lift: "Wide-Grip CBL Curls" as LiftRecord["lift"] })];
+      const { valid, errors } = validateLiftImport(records, importMap);
+      expect(errors).toEqual([]);
+      expect(valid[0]!.lift).toBe("Wide-Grip CBL Curls");
+      expect(builtInLiftFor(valid[0]!.lift)?.id).toBe("wide-grip-cable-curl");
     });
 
     it("stores a catalog lift outside the slot map under the name a program uses", () => {

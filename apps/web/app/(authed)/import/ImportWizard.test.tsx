@@ -182,7 +182,7 @@ async function commitLiftRecordsImport(user: ReturnType<typeof userEvent.setup>,
 
 const CUSTOM_LIFT: CustomLiftResponse = {
   id: 'custom-cbl-curls',
-  name: 'Wide-Grip CBL Curls',
+  name: 'Drag Curls',
   classification: 'accessory',
   movementProfile: { patterns: [], jointActions: [], complexity: 'simple' },
   isBodyweightComponent: false,
@@ -222,19 +222,19 @@ const AMBIGUOUS_LIFT_PREVIEW: ImportPreviewResponse = {
     deltas: [
       {
         key: '__ambiguous_1',
-        label: 'Row 1: Wide-Grip CBL Curls',
+        label: 'Row 1: Drag Curls',
         kind: 'create',
         status: 'ambiguous',
         rowIndex: 1,
-        originalLift: 'Wide-Grip CBL Curls',
+        originalLift: 'Drag Curls',
       },
       {
         key: '__ambiguous_2',
-        label: 'Row 2: Wide-Grip CBL Curls',
+        label: 'Row 2: Drag Curls',
         kind: 'create',
         status: 'ambiguous',
         rowIndex: 2,
-        originalLift: 'Wide-Grip CBL Curls',
+        originalLift: 'Drag Curls',
       },
     ],
   },
@@ -244,8 +244,8 @@ const AMBIGUOUS_LIFT_PREVIEW: ImportPreviewResponse = {
 const AMBIGUOUS_LIFT_CSV = new File(
   [
     'Program,Cycle #,Workout #,Date,Lift,Set #,Weight,Reps\n' +
-      '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,1,90,10\n' +
-      '5-3-1,1,1,2026-01-01,Wide-Grip CBL Curls,2,90,8',
+      '5-3-1,1,1,2026-01-01,Drag Curls,1,90,10\n' +
+      '5-3-1,1,1,2026-01-01,Drag Curls,2,90,8',
   ],
   'lifts.csv',
   { type: 'text/csv' },
@@ -1968,8 +1968,8 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
-      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' }));
-      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Wide-Grip CBL Curls' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Drag Curls' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Drag Curls' }));
       expect(screen.queryByText(/needs? a lift/)).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
 
@@ -2088,12 +2088,12 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       await user.click(
-        screen.getAllByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' })[0]!,
+        screen.getAllByRole('button', { name: 'Create "Drag Curls" as a new lift' })[0]!,
       );
       await waitFor(() => expect(screen.queryByText(/No match — create/i)).not.toBeInTheDocument());
 
-      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Wide-Grip CBL Curls');
-      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Wide-Grip CBL Curls');
+      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Drag Curls');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Drag Curls');
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       expect(tileValue('Create')).toBe('2');
@@ -2286,7 +2286,7 @@ describe('ImportWizard', () => {
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
       await screen.findByRole('heading', { name: 'Review' });
       expect(screen.queryByText(/were cleared/)).not.toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 1: Drag Curls' }));
 
       // Undoing and redoing a remap reorders it but changes nothing, so the exclusion stays.
       await user.click(screen.getByRole('button', { name: 'Back' }));
@@ -2295,7 +2295,7 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Next' }));
       await screen.findByRole('heading', { name: 'Review' });
       expect(mockPreview).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole('button', { name: 'Re-include Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Re-include Row 1: Drag Curls' })).toBeInTheDocument();
 
       // A real change reloads the rows and says the exclusion is gone.
       await user.click(screen.getByRole('button', { name: 'Back' }));
@@ -2304,7 +2304,7 @@ describe('ImportWizard', () => {
       await user.click(screen.getByRole('button', { name: 'Next' }));
       await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(3));
       await waitFor(() => expect(screen.getByText(/were cleared/)).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: 'Exclude Row 1: Wide-Grip CBL Curls' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Exclude Row 1: Drag Curls' })).toBeInTheDocument();
     });
 
     it('disables the column selects while the new preview runs', async () => {
@@ -2386,7 +2386,7 @@ describe('ImportWizard', () => {
           updates: 0,
           skips: 0,
           unresolved: 0,
-          deltas: [{ key: 'custom-cbl-curls', label: 'Wide-Grip CBL Curls', kind: 'create', after: '90' }],
+          deltas: [{ key: 'custom-cbl-curls', label: 'Drag Curls', kind: 'create', after: '90' }],
         },
       });
       mockCommit.mockResolvedValue({
@@ -2397,13 +2397,13 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
       await navigateToReview(
         user,
-        new File(['Date Updated,Lift,Weight\n1/1/2026,Wide-Grip CBL Curls,90'], 'tm.csv', { type: 'text/csv' }),
+        new File(['Date Updated,Lift,Weight\n1/1/2026,Drag Curls,90'], 'tm.csv', { type: 'text/csv' }),
       );
 
       const list = screen.getByRole('list', { name: 'Training maxes to import' });
-      expect(within(list).getByText('Wide-Grip CBL Curls')).toBeInTheDocument();
+      expect(within(list).getByText('Drag Curls')).toBeInTheDocument();
       expect(within(list).queryByText('custom-cbl-curls')).not.toBeInTheDocument();
-      expect(screen.getByLabelText('Weight for Wide-Grip CBL Curls')).toHaveValue(90);
+      expect(screen.getByLabelText('Weight for Drag Curls')).toHaveValue(90);
 
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
       await user.click(screen.getByRole('button', { name: 'Commit import' }));
@@ -2862,7 +2862,7 @@ describe('ImportWizard', () => {
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       await user.click(
-        screen.getAllByRole('button', { name: 'Create "Wide-Grip CBL Curls" as a new lift' })[0]!,
+        screen.getAllByRole('button', { name: 'Create "Drag Curls" as a new lift' })[0]!,
       );
 
       await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled());
@@ -2880,11 +2880,11 @@ describe('ImportWizard', () => {
           row: 1,
           field: 'lift',
           code: 'UNRECOGNIZED_LIFT' as const,
-          message: "'Wide-Grip CBL Curls' isn't a recognized lift.",
+          message: "'Drag Curls' isn't a recognized lift.",
         },
       ],
     };
-    const CREATE_CBL_CURLS = 'Create "Wide-Grip CBL Curls" as a new lift';
+    const CREATE_CBL_CURLS = 'Create "Drag Curls" as a new lift';
 
     async function commitFromReview(user: ReturnType<typeof userEvent.setup>) {
       await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
@@ -2928,8 +2928,8 @@ describe('ImportWizard', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: 'Commit import' })).toBeDisabled());
       await user.click(screen.getByRole('button', { name: 'Back' }));
 
-      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Wide-Grip CBL Curls');
-      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Wide-Grip CBL Curls');
+      expect(screen.getByLabelText('Lift name for row 1')).toHaveValue('Drag Curls');
+      expect(screen.getByLabelText('Lift name for row 2')).toHaveValue('Drag Curls');
 
       mockCreateCustomLift.mockResolvedValueOnce({
         ok: true,
@@ -2948,7 +2948,7 @@ describe('ImportWizard', () => {
       await waitFor(() => expect(screen.getByText('Import complete')).toBeInTheDocument());
       expect(mockCommit.mock.lastCall?.[3]?.liftOverrides).toEqual({
         1: 'custom-cbl-curls-2',
-        2: 'Wide-Grip CBL Curls',
+        2: 'Drag Curls',
       });
     });
 
@@ -2970,7 +2970,7 @@ describe('ImportWizard', () => {
       render(<ImportWizard programs={PROGRAMS} customLifts={[CUSTOM_LIFT]} />);
       await navigateToReview(
         user,
-        new File(['Date Updated,Lift,Weight\n1/1/2026,Wide-Grip CBL Curls,90'], 'tm.csv', { type: 'text/csv' }),
+        new File(['Date Updated,Lift,Weight\n1/1/2026,Drag Curls,90'], 'tm.csv', { type: 'text/csv' }),
       );
       expect(screen.getByText(CUSTOM_LIFT.name)).toBeInTheDocument();
 
@@ -3051,7 +3051,7 @@ describe('ImportWizard', () => {
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
       const options = datalistOptionValues(container);
-      expect(options).toContain('Wide-Grip CBL Curls');
+      expect(options).toContain('Drag Curls');
       // A canonical *value* (id) — this alone would still pass against the
       // pre-fix CANONICAL_LIFT_IDS-only implementation, so it is NOT
       // sufficient proof of the fix by itself; the assertion below on a
@@ -3122,12 +3122,12 @@ describe('ImportWizard', () => {
       await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
 
       const prompts = screen.getAllByText(
-        'No match — create "Wide-Grip CBL Curls" as a new lift',
+        'No match — create "Drag Curls" as a new lift',
       );
       expect(prompts).toHaveLength(2); // both ambiguous rows share the same original text
 
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       expect(createButtons[0]).toBeDisabled();
 
@@ -3149,13 +3149,13 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
       await waitFor(() =>
         expect(mockCreateCustomLift).toHaveBeenCalledWith({
-          name: 'Wide-Grip CBL Curls',
+          name: 'Drag Curls',
           classification: 'accessory',
         }),
       );
@@ -3185,7 +3185,7 @@ describe('ImportWizard', () => {
       // colliding lift was renamed/deleted between the 409 and the refetch).
       mockCreateCustomLift.mockResolvedValue({
         ok: false,
-        conflictMessage: "A custom lift named 'Wide-Grip CBL Curls' already exists",
+        conflictMessage: "A custom lift named 'Drag Curls' already exists",
       });
       // A genuinely successful refetch that still finds no matching name —
       // the "confirmed not found" branch, distinct from the refetch-failed
@@ -3201,7 +3201,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -3211,7 +3211,7 @@ describe('ImportWizard', () => {
       // server's actual per-cause message, so this asserts that exact string
       // rather than the old hedge.
       expect(
-        await screen.findByText("A custom lift named 'Wide-Grip CBL Curls' already exists"),
+        await screen.findByText("A custom lift named 'Drag Curls' already exists"),
       ).toBeInTheDocument();
       expect(mockFetchCustomLifts).toHaveBeenCalledTimes(1);
     });
@@ -3229,7 +3229,7 @@ describe('ImportWizard', () => {
       mockCreateCustomLift.mockResolvedValue({
         ok: false,
         conflictMessage:
-          "'Wide-Grip CBL Curls' is a reserved lift name and cannot be used for a custom lift",
+          "'Drag Curls' is a reserved lift name and cannot be used for a custom lift",
       });
       mockFetchCustomLifts.mockResolvedValue([]);
 
@@ -3238,13 +3238,13 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
       expect(
         await screen.findByText(
-          "'Wide-Grip CBL Curls' is a reserved lift name and cannot be used for a custom lift",
+          "'Drag Curls' is a reserved lift name and cannot be used for a custom lift",
         ),
       ).toBeInTheDocument();
       // No "already exists" wording at all: neither CustomLiftConflictError's
@@ -3257,7 +3257,7 @@ describe('ImportWizard', () => {
       mockPreview.mockResolvedValue(AMBIGUOUS_LIFT_PREVIEW);
       mockCreateCustomLift.mockResolvedValue({
         ok: false,
-        conflictMessage: "A custom lift named 'Wide-Grip CBL Curls' already exists",
+        conflictMessage: "A custom lift named 'Drag Curls' already exists",
       });
       const fetchFailure = new Error('API 500 Internal Server Error for /lifts/custom');
       mockFetchCustomLifts.mockRejectedValue(fetchFailure);
@@ -3268,7 +3268,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -3425,7 +3425,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -3465,7 +3465,7 @@ describe('ImportWizard', () => {
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
 
@@ -3582,11 +3582,11 @@ describe('ImportWizard', () => {
 
       // Exclude row 2 before creating from row 1 — both rows share the same
       // original text, so row 2 would otherwise be a valid batch-resolve target.
-      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Wide-Grip CBL Curls' }));
+      await user.click(screen.getByRole('button', { name: 'Exclude Row 2: Drag Curls' }));
 
       await user.click(screen.getAllByRole('button', { name: 'Accessory' })[0]!);
       const createButtons = screen.getAllByRole('button', {
-        name: 'Create "Wide-Grip CBL Curls" as a new lift',
+        name: 'Create "Drag Curls" as a new lift',
       });
       await user.click(createButtons[0]!);
       await waitFor(() => expect(mockCreateCustomLift).toHaveBeenCalledTimes(1));

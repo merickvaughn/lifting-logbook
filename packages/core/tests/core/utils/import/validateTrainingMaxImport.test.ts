@@ -1,4 +1,4 @@
-import { buildImportSlotMap, validateTrainingMaxImport } from "@src/core";
+import { buildImportSlotMap, builtInLiftFor, validateTrainingMaxImport } from "@src/core";
 import { TrainingMax } from "@src/core/models";
 
 const TEST_SLOT_MAP: Readonly<Record<string, string>> = {
@@ -114,5 +114,16 @@ describe("validateTrainingMaxImport", () => {
     );
     expect(errors).toHaveLength(0);
     expect(valid[0]!.lift).toBe("Romanian Deadlift");
+  });
+
+  // #1499: the 2026 sheet's 65 lb row is Wide-Grip Cable Curl's training max, not Cable Curl's.
+  it("imports a Wide-Grip CBL Curls max as Wide-Grip Cable Curl's", () => {
+    const { valid, errors } = validateTrainingMaxImport(
+      [makeMax({ lift: "Wide-Grip CBL Curls" as TrainingMax["lift"], weight: 65 })],
+      buildImportSlotMap([]),
+    );
+    expect(errors).toHaveLength(0);
+    expect(valid[0]).toMatchObject({ lift: "Wide-Grip CBL Curls", weight: 65 });
+    expect(builtInLiftFor(valid[0]!.lift)?.id).toBe("wide-grip-cable-curl");
   });
 });

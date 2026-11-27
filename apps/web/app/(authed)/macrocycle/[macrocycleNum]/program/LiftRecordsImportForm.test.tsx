@@ -45,7 +45,7 @@ describe('LiftRecordsImportForm — error rendering (#911)', () => {
         field: 'lift',
         code: 'UNRECOGNIZED_LIFT',
         message:
-          "'Wide-Grip CBL Curls' isn't a recognized lift. Map it to an existing lift or create a new one before importing.",
+          "'Drag Curls' isn't a recognized lift. Map it to an existing lift or create a new one before importing.",
       },
     ];
     mockImport.mockResolvedValue({ ok: false, errors });
