@@ -10,6 +10,7 @@ import {
   TrainingMaxHistoryEntry,
   buildLiftRecordId,
   complexIdOf,
+  MAX_SET_OCCURRENCE,
   liftIdFor,
   liftOccurrenceKey,
   liftOccurrences,
@@ -456,19 +457,23 @@ export const toWorkoutResponse = (
 
   // A set logged in a complex (#1496) belongs to the planned slot of that complex, not to its
   // lift's own sets: by the complex's name, as sets name it, and with a round, as the logger
-  // writes it. One with no such slot, or no round, stays with its lift. When a day plans one
-  // complex twice, the first slot takes its sets.
-  const complexSlotByName = new Map<string, { lift: string; occurrence: number }>();
+  // writes it. The logger stores the day's n-th complex slot's sets at occurrence
+  // `MAX_SET_OCCURRENCE - n` (`complexSetKey`), so a set goes to that slot when it names that
+  // slot's complex; any other, such as an imported set, goes to the first slot of its complex.
+  // One with no such slot, or no round, stays with its lift.
+  const complexSlots: { name: string | undefined; lift: string; occurrence: number }[] = [];
   if (plannedLifts && complexNames) {
     const slotOccurrences = liftOccurrences(plannedLifts);
     plannedLifts.forEach(({ lift }, i) => {
       const id = complexIdOf(lift);
-      const name = id === undefined ? undefined : complexNames.get(id);
-      if (name !== undefined && !complexSlotByName.has(name)) {
-        complexSlotByName.set(name, { lift, occurrence: slotOccurrences[i] ?? 0 });
-      }
+      if (id !== undefined) complexSlots.push({ name: complexNames.get(id), lift, occurrence: slotOccurrences[i] ?? 0 });
     });
   }
+  const complexSlotOf = (r: LiftRecord) => {
+    if (!r.complex || r.complexRound == null) return undefined;
+    const placed = complexSlots[MAX_SET_OCCURRENCE - (r.occurrence ?? 0)];
+    return placed?.name === r.complex ? placed : complexSlots.find((slot) => slot.name === r.complex);
+  };
 
   // A record stored by catalog id, as import stores it, has lost its spelling, so it
   // joins the lift the plan names, or takes that lift's swap (#1118). Keys here are ids,
@@ -503,7 +508,7 @@ export const toWorkoutResponse = (
       ...modificationRefs(r, modificationNames),
       ...withComplex(r.complex, r.complexRound),
     };
-    const complexSlot = r.complex && r.complexRound != null ? complexSlotByName.get(r.complex) : undefined;
+    const complexSlot = complexSlotOf(r);
     if (complexSlot) {
       addSet(complexSlot.lift, complexSlot.occurrence, { ...set, lift: r.lift });
       continue;

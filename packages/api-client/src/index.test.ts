@@ -402,6 +402,22 @@ describe('createApiClient', () => {
       expect(init.method).toBe('DELETE');
     });
 
+    it('treats a 404 for the set as already deleted, but throws for a missing macrocycle or another error (#1496)', async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'Lift record not found' }), { status: 404 }));
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).resolves.toBeUndefined();
+
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'macrocycle-not-found', message: 'Reload the page.' }), { status: 404 }),
+      );
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).rejects.toMatchObject({
+        status: 404,
+        code: 'macrocycle-not-found',
+      });
+
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ message: 'boom' }), { status: 500 }));
+      await expect(makeClient().deleteLiftRecord('5-3-1', 'r1', 'm1')).rejects.toMatchObject({ status: 500 });
+    });
+
     it('DELETEs a complex, treating a 404 as already gone and throwing on another error', async () => {
       mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
       await expect(makeClient().deleteBarbellComplex('c1')).resolves.toBeUndefined();

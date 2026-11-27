@@ -97,9 +97,12 @@ export class WorkoutsController {
     // Removed lifts' records are dropped here; replaced lifts' are regrouped inside
     // the mapper (`renamedLifts`) rather than renamed on the records, so each set's
     // `id` is still built from the row as stored (issue #978).
-    // A record stored by catalog id goes with its lift too (#1118).
+    // A record stored by catalog id goes with its lift too (#1118). A set logged in a complex
+    // stays: removing the lift from the day removes its own sets, not the complex's (#1496).
     const removedIds = new Set([...removed].map(liftIdFor));
-    const adjustedRecords = records.filter((r) => !removed.has(r.lift) && !removedIds.has(r.lift));
+    const adjustedRecords = records.filter(
+      (r) => (r.complex && r.complexRound != null) || (!removed.has(r.lift) && !removedIds.has(r.lift)),
+    );
 
     // macrocycleDate is absent only on the ProgramNotFoundError fallback ({ macrocycleNum: 1 }),
     // where the spec is empty so the workoutNum guard above already 400'd. When

@@ -17,7 +17,7 @@ test('logs two rounds of a complex, and shows them again on reload', async ({ pa
   const card = page.getByRole('region', { name: 'Bear' });
   await expect(card.getByRole('heading', { level: 3, name: 'Bear' })).toBeVisible();
 
-  await card.getByLabel('Bear weight in lbs').fill('135');
+  await card.getByLabel('Weight (lbs) for Bear').fill('135');
   await card.getByRole('button', { name: 'Add a round of Bear' }).click();
   await card.getByRole('button', { name: 'Add a round of Bear' }).click();
   await card.getByLabel('Bear round 2 squat reps').fill('1');

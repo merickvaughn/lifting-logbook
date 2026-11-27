@@ -104,6 +104,8 @@ const PAIRING_PASSES: readonly Pairs[] = [(s, r) => sameWorkout(s, r) && sameSet
  * - A set done in a complex (#1494) is compared only with sets of the same complex, and a lift's
  *   own set only with its own sets. A lift's own sets take their occurrences first, so a complex
  *   set sharing their set number takes the next one, whatever the file's order.
+ *   A lift's own extra counts up from its own sets' occurrences, not from a stored complex set's,
+ *   which the app logs at the top of the range (#1496), and skips any occurrence one holds.
  *
  * `key` is the row's natural key under the occurrence it's stored with.
  */
@@ -118,6 +120,9 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
   // rows' by set slot and the file's macrocycle and workout, since each file macrocycle lands in a
   // macrocycle of its own.
   const storedTaken = new Map<string, Map<number, Set<number>>>();
+  // The same, without stored complex sets (#1496): a lift's own row moves past its own sets only, as
+  // a complex set logged in the app sits at the top of the range (`complexSetKey`).
+  const storedOwnTaken = new Map<string, Map<number, Set<number>>>();
   const createdTaken = new Map<string, Map<string, Set<number>>>();
   for (const s of stored) {
     const slot = pairingSlotKey(s);
@@ -125,6 +130,10 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
     const byWorkout = storedTaken.get(setSlotKey(s)) ?? new Map<number, Set<number>>();
     storedTaken.set(setSlotKey(s), byWorkout);
     byWorkout.set(s.workoutNum, (byWorkout.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
+    if (s.complex) continue;
+    const ownByWorkout = storedOwnTaken.get(setSlotKey(s)) ?? new Map<number, Set<number>>();
+    storedOwnTaken.set(setSlotKey(s), ownByWorkout);
+    ownByWorkout.set(s.workoutNum, (ownByWorkout.get(s.workoutNum) ?? new Set<number>()).add(s.occurrence ?? 0));
   }
 
   // Exact repeats within the file go first; the rest are grouped by slot, in file order.
@@ -156,6 +165,7 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
     const pool = [...(storedBySlot.get(slot) ?? [])];
     const setSlot = setSlotKey(recordOf(rows[indexes[0] ?? 0] as T));
     const storedInSlot = storedTaken.get(setSlot) ?? new Map<number, Set<number>>();
+    const storedOwnInSlot = storedOwnTaken.get(setSlot) ?? new Map<number, Set<number>>();
     const createdInSlot = createdTaken.get(setSlot) ?? new Map<string, Set<number>>();
     createdTaken.set(setSlot, createdInSlot);
     // Each pass pairs the rows left with the stored rows left, closest match first: same workout
@@ -180,7 +190,13 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
       createdInSlot.set(group, created);
       const taken = new Set([...(storedInSlot.get(r.workoutNum) ?? []), ...created]);
       const own = r.occurrence ?? 0;
-      const occurrence = taken.has(own) ? Math.max(...taken) + 1 : own;
+      // A lift's own row counts up from its own sets, skipping any a complex set holds.
+      const from = r.complex ? taken : new Set([...(storedOwnInSlot.get(r.workoutNum) ?? []), ...created]);
+      let occurrence = own;
+      if (taken.has(own)) {
+        occurrence = Math.max(-1, ...from) + 1;
+        while (taken.has(occurrence)) occurrence += 1;
+      }
       created.add(occurrence);
       occurrences.set(i, occurrence);
     }

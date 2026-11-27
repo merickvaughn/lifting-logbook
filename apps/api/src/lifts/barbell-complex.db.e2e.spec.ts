@@ -223,4 +223,30 @@ describeOrSkip('Barbell complexes HTTP (e2e, PrismaRepositoryFactory, #1495)', (
     const again = await owner('DELETE', `/programs/${id}/lift-records/${encodeURIComponent(logged[3]?.id ?? '')}`);
     expect(again.statusCode).toBe(404);
   });
+
+  it('keeps a complex’s sets of a lift removed from the day under the complex (#1496)', async () => {
+    const bear = await create('Bear');
+    const program = await owner('POST', '/programs/custom', {
+      name: 'Bear day',
+      specs: [
+        { ...SPEC_ROW, lift: 'Deadlift', order: 1 },
+        { ...SPEC_ROW, lift: complexLift(bear.id), order: 2 },
+      ],
+    });
+    const { id } = program.json() as { id: string };
+    await owner('POST', `/programs/${id}/macrocycles/initialize`, {});
+    const set = { program: id, macrocycleNum: 1, workoutNum: 1, date: '2026-11-27', lift: 'Deadlift', weight: 135, reps: 5 };
+    expect((await owner('POST', `/programs/${id}/lift-records`, { ...set, setNum: 1 })).statusCode).toBe(201);
+    const tagged = { ...set, occurrence: MAX_SET_OCCURRENCE, setNum: 1, complex: 'Bear', complexRound: 1 };
+    expect((await owner('POST', `/programs/${id}/lift-records`, tagged)).statusCode).toBe(201);
+
+    const removed = await owner('POST', `/programs/${id}/macrocycles/1/workouts/1/lift-overrides`, { action: 'remove', lift: 'Deadlift' });
+    expect(removed.statusCode).toBe(201);
+
+    // The lift's own set goes with it; the complex's stays on the complex.
+    const { lifts } = (await owner('GET', `/programs/${id}/workouts/1`)).json() as WorkoutResponse;
+    expect(lifts.map((l) => [l.lift, l.sets.map((s) => [s.lift, s.complexRound])])).toEqual([
+      [complexLift(bear.id), [['Deadlift', 1]]],
+    ]);
+  });
 });
