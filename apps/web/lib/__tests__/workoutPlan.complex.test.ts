@@ -6,9 +6,9 @@ const BEAR: BarbellComplexResponse = {
   id: 'c-bear',
   name: 'Bear',
   components: [
-    { lift: 'Power Clean', reps: 5 },
-    { lift: 'Front Squat', reps: 5 },
-    { lift: 'Push Press', reps: 5 },
+    { lift: 'Power Clean', reps: 5, name: 'Power Clean' },
+    { lift: 'Front Squat', reps: 5, name: 'Front Squat' },
+    { lift: 'Push Press', reps: 5, name: 'Push Press' },
   ],
   createdAt: '2026-11-27T00:00:00.000Z',
 };
@@ -40,6 +40,7 @@ describe('buildLiftDetails — a row naming a complex plans from its weakest lif
     expect(seventyPct).toBe(95);
     expect(detail?.tm).toBe(135);
     expect(detail?.complex).toEqual({
+      found: true,
       name: 'Bear',
       components: BEAR.components,
       limitingLift: 'Power Clean',
@@ -52,6 +53,18 @@ describe('buildLiftDetails — a row naming a complex plans from its weakest lif
     ]);
   });
 
+  it('rounds to a 10 lb increment: 70% of 135 is 94.5, planned as 90', () => {
+    const maxes = [max('Power Clean', 135), max('Front Squat', 185), max('Push Press', 155)];
+    const [detail] = buildLiftDetails(workout, [{ ...row, increment: 10 }], maxes, [], [BEAR]);
+    expect(detail?.tm).toBe(135);
+    // Every computed set rounds to the increment, the one at the max too (135 to 140).
+    expect(detail?.plannedSets.map((s) => [s.type, s.weight])).toEqual([
+      ['warmup', 90],
+      ['work', 140],
+      ['work', 90],
+    ]);
+  });
+
   it('finds a component max stored under another spelling of the lift', () => {
     const maxes = [max('Power Clean', 135), max('front-squat', 120), max('Push Press', 155)];
     const [detail] = buildLiftDetails(workout, [row], maxes, [], [BEAR]);
@@ -59,17 +72,51 @@ describe('buildLiftDetails — a row naming a complex plans from its weakest lif
     expect(detail?.tm).toBe(120);
   });
 
+  describe('a custom lift, stored by its id', () => {
+    const hangBear: BarbellComplexResponse = {
+      ...BEAR,
+      components: [
+        { lift: 'custom-hc', reps: 3, name: 'Hang Clean' },
+        { lift: 'Front Squat', reps: 5, name: 'Front Squat' },
+      ],
+    };
+
+    it('plans from the max saved under its id, and names it as limiting', () => {
+      const [detail] = buildLiftDetails(workout, [row], [max('custom-hc', 100), max('Front Squat', 185)], [], [hangBear]);
+      expect(detail?.tm).toBe(100);
+      expect(detail?.complex?.limitingLift).toBe('Hang Clean');
+    });
+
+    it('still finds a max saved under its name', () => {
+      const [detail] = buildLiftDetails(workout, [row], [max('Hang Clean', 110), max('Front Squat', 185)], [], [hangBear]);
+      expect(detail?.tm).toBe(110);
+    });
+
+    it('names it as missing by its id, where Set up saves the max, and shows its name', () => {
+      const [detail] = buildLiftDetails(workout, [row], [max('Front Squat', 185)], [], [hangBear]);
+      expect(detail?.complex?.missing).toEqual([{ lift: 'custom-hc', name: 'Hang Clean' }]);
+    });
+  });
+
   it('leaves the complex unplanned when a component has no training max, naming it', () => {
     const [detail] = buildLiftDetails(workout, [row], [max('Power Clean', 135), max('Push Press', 155)], [], [BEAR]);
-    expect(detail?.complex).toMatchObject({ missing: ['Front Squat'] });
+    expect(detail?.complex).toMatchObject({ found: true, missing: [{ lift: 'Front Squat', name: 'Front Squat' }] });
     expect(detail?.complex?.limitingLift).toBeUndefined();
     expect(detail?.plannedSets).toEqual([]);
     expect(detail?.tm).toBe(0);
   });
 
-  it('plans nothing for a complex it was not given, and names it as unknown', () => {
+  it('plans nothing for a complex it was not given, and marks it not found', () => {
     const [detail] = buildLiftDetails(workout, [row], [max('Power Clean', 135)], [], []);
-    expect(detail?.complex).toEqual({ name: UNKNOWN_COMPLEX, components: [], missing: [] });
+    expect(detail?.complex).toEqual({ found: false, name: UNKNOWN_COMPLEX, components: [], missing: [] });
     expect(detail?.plannedSets).toEqual([]);
+  });
+
+  it('plans a complex the lifter named "Unknown complex" like any other', () => {
+    const named = { ...BEAR, name: UNKNOWN_COMPLEX };
+    const maxes = [max('Power Clean', 135), max('Front Squat', 185), max('Push Press', 155)];
+    const [detail] = buildLiftDetails(workout, [row], maxes, [], [named]);
+    expect(detail?.complex).toMatchObject({ found: true, name: UNKNOWN_COMPLEX, limitingLift: 'Power Clean' });
+    expect(detail?.tm).toBe(135);
   });
 });

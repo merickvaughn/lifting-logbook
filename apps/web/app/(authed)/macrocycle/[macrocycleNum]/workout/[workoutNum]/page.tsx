@@ -117,10 +117,11 @@ export default async function WorkoutLoggingPage({
   const maxFor = currentMaxLookup(maxes);
   const liftSpecs = liftSpecsForWorkout(workout, specs);
   // What each lift plans by besides its row: its progression type and last session (#1211).
-  const progressions = await loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage', () => customLiftsRead);
-
   // A complex slot is shown, not logged, until #1496: it stays out of `lifts`.
-  const complexList = await loadComplexes(workout.lifts, 'WorkoutLoggingPage');
+  const [progressions, complexList] = await Promise.all([
+    loadProgressionPlans(workout, liftSpecs, maxes, 'WorkoutLoggingPage', () => customLiftsRead),
+    loadComplexes(workout.lifts, 'WorkoutLoggingPage'),
+  ]);
   const complexes: ComplexSlot[] = workout.lifts.flatMap((wl, liftIndex) => {
     const planned = planComplex(wl.lift, liftSpecs[liftIndex], (l) => maxFor(l)?.weight, complexList);
     if (planned === undefined) return [];

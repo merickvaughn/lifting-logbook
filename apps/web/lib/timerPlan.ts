@@ -2,6 +2,7 @@ import { formatWeight, liftClassificationFor } from '@lifting-logbook/core';
 import type { ClassifiableLift, TimerLiftPlan } from '@lifting-logbook/core';
 import type { FocusDayPlanResponse, WeightUnit } from '@lifting-logbook/types';
 import { describePrescription, workoutOrder } from './focusWorkout';
+import { slotName } from './workoutPlan';
 import type { PlannedSet } from './workoutPlan';
 
 /**
@@ -83,7 +84,7 @@ export function toTimerLiftPlans(
   focus: FocusDayPlanResponse | null,
 ): TimerLiftPlan[] {
   const planned = details.map((detail) => ({
-      lift: detail.complex?.name ?? detail.lift,
+      lift: slotName(detail),
       classification: liftClassificationFor(detail.lift, customLifts),
       tm: detail.tm > 0 ? `TM: ${formatWeight(detail.tm, 'lbs', unit)}` : undefined,
       activation: detail.activationMovement,

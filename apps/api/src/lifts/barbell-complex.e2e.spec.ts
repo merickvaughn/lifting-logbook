@@ -110,7 +110,12 @@ describe('Barbell complexes HTTP (e2e, in-memory adapters, #1495)', () => {
       ],
     });
     expect(res.statusCode).toBe(201);
-    expect((res.json() as BarbellComplexResponse).components.map((c) => c.lift)).toEqual(['bench-press', 'Hang Snatch Pull']);
+    // A custom lift is stored by its id, where its training max lives (#1291), and shown by name.
+    const customId = (custom.json() as { id: string }).id;
+    expect((res.json() as BarbellComplexResponse).components).toEqual([
+      { lift: 'bench-press', reps: 3, name: 'bench-press' },
+      { lift: customId, reps: 3, name: 'Hang Snatch Pull' },
+    ]);
 
     const unknown = await user('POST', '/lifts/complexes', {
       name: 'Nonsense',
@@ -121,6 +126,57 @@ describe('Barbell complexes HTTP (e2e, in-memory adapters, #1495)', () => {
     });
     expect(unknown.statusCode).toBe(400);
     expect((unknown.json() as { message: string }).message).toBe("'Underwater Basket Weaving' is not a lift");
+  });
+
+  it('keeps a complex editable after its custom lift is renamed or deleted', async () => {
+    const user = as('complex-stale-lift');
+    const custom = (await user('POST', '/lifts/custom', { name: 'Hang Clean', classification: 'compound' })).json() as {
+      id: string;
+    };
+    const created = (
+      await user('POST', '/lifts/complexes', {
+        name: 'Clean complex',
+        components: [
+          { lift: 'Hang Clean', reps: 3 },
+          { lift: 'Front Squat', reps: 3 },
+        ],
+      })
+    ).json() as BarbellComplexResponse;
+
+    await user('PATCH', `/lifts/custom/${custom.id}`, { name: 'Hang Power Clean' });
+    const renamed = (await user('GET', '/lifts/complexes')).json() as BarbellComplexResponse[];
+    expect(renamed[0]?.components[0]).toEqual({ lift: custom.id, reps: 3, name: 'Hang Power Clean' });
+
+    expect((await user('DELETE', `/lifts/custom/${custom.id}`)).statusCode).toBe(204);
+    // The editor sends every component back; the one whose lift is gone is kept as stored.
+    const resent = created.components.map(({ lift, reps }) => ({ lift, reps: reps + 1 }));
+    const saved = await user('PATCH', `/lifts/complexes/${created.id}`, { name: 'Old clean', components: resent });
+    expect(saved.statusCode).toBe(200);
+    expect((saved.json() as BarbellComplexResponse).components).toEqual([
+      { lift: custom.id, reps: 4, name: 'Deleted lift' },
+      { lift: 'Front Squat', reps: 4, name: 'Front Squat' },
+    ]);
+    // A lift that is new to the complex is still checked.
+    const added = await user('PATCH', `/lifts/complexes/${created.id}`, {
+      components: [...resent, { lift: 'Underwater Basket Weaving', reps: 1 }],
+    });
+    expect(added.statusCode).toBe(400);
+  });
+
+  it("refuses a complex named after a lift, which a plan would read as that lift", async () => {
+    const user = as('complex-lift-name');
+    const res = await user('POST', '/lifts/complexes', { name: 'Squat', components: BEAR_COMPONENTS });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { message: string }).message).toBe("'Squat' is a lift's name; give the complex another");
+    const created = await create(user, 'Bear');
+    expect((await user('PATCH', `/lifts/complexes/${created.id}`, { name: 'Front Squat' })).statusCode).toBe(400);
+  });
+
+  it('refuses a custom lift whose name a program row would read as a complex', async () => {
+    const user = as('complex-reserved-prefix');
+    expect((await user('POST', '/lifts/custom', { name: 'complex:EMOM', classification: 'compound' })).statusCode).toBe(409);
+    const lift = (await user('POST', '/lifts/custom', { name: 'EMOM', classification: 'compound' })).json() as { id: string };
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'complex:EMOM' })).statusCode).toBe(409);
   });
 
   describe('validation', () => {

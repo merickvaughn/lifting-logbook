@@ -137,8 +137,8 @@ export interface LiftModification {
 /** One lift of a barbell complex and its reps in each round (#1495). */
 export interface ComplexComponent {
   /**
-   * The lift's name, as a program row names it, so its training max is found by name the way a
-   * row's is (`currentMaxLookup`).
+   * The lift as a program row names it: a catalog lift by its name, a custom lift by its id, so a
+   * rename keeps the component and its training max is found where the lift's own max is stored.
    */
   lift: string;
   reps: number;

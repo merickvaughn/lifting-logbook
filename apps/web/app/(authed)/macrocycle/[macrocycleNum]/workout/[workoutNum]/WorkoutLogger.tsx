@@ -1371,7 +1371,11 @@ export default function WorkoutLogger({
       )}
 
       {complexes.length > 0 && (
-        <section className={styles.complexes} aria-label="Complexes">
+        <section className={styles.complexes} aria-labelledby="workout-complexes-heading">
+          {/* A peer of each lift's <h2>, with each complex under it. */}
+          <h2 id="workout-complexes-heading" className={styles.complexesHeading}>
+            Complexes
+          </h2>
           {complexes.map(({ complex, tm, workWeights }, i) => (
             <div key={i}>
               <h3 className={styles.complexName}>{complex.name}</h3>
@@ -1382,7 +1386,7 @@ export default function WorkoutLogger({
                 </p>
               )}
               {complex.missing.length > 0 && (
-                <p className={styles.complexNote}>Needs a training max for {complex.missing.join(', ')}.</p>
+                <p className={styles.complexNote}>Needs a training max for {complex.missing.map((m) => m.name).join(', ')}.</p>
               )}
               <p className={styles.complexNote}>Complexes can’t be logged here yet.</p>
             </div>

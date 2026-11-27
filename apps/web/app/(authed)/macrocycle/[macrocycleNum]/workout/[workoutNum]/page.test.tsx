@@ -176,8 +176,8 @@ describe('WorkoutLoggingPage — a complex slot (#1495)', () => {
         id: 'c-bear',
         name: 'Bear',
         components: [
-          { lift: 'Deadlift', reps: 1 },
-          { lift: 'Front Squat', reps: 1 },
+          { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+          { lift: 'Front Squat', reps: 1, name: 'Front Squat' },
         ],
         createdAt: '2026-11-27T00:00:00.000Z',
       },
@@ -194,10 +194,11 @@ describe('WorkoutLoggingPage — a complex slot (#1495)', () => {
     expect(attr('data-complexes')).toEqual([
       {
         complex: {
+          found: true,
           name: 'Bear',
           components: [
-            { lift: 'Deadlift', reps: 1 },
-            { lift: 'Front Squat', reps: 1 },
+            { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+            { lift: 'Front Squat', reps: 1, name: 'Front Squat' },
           ],
           limitingLift: 'Front Squat',
           missing: [],

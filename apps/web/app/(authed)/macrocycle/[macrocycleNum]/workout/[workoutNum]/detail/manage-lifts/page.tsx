@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { fetchWorkout } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
+import { loadComplexes } from '@/lib/loadWorkoutPlan';
 import { movedWorkoutPath, withMacrocycleId } from '@/lib/macrocycleUrl';
 import ManageLiftsActions from './ManageLiftsActions';
 import styles from './manage-lifts.module.css';
@@ -31,6 +32,8 @@ export default async function ManageLiftsPage({
     workout.macrocycleNum,
   );
   if (moved) redirect(moved);
+  // A complex slot is listed by the complex's name (#1495).
+  const complexes = await loadComplexes(workout.lifts, 'ManageLiftsPage');
 
   return (
     <main className={styles.container}>
@@ -53,6 +56,7 @@ export default async function ManageLiftsPage({
           macrocycleId={workout.macrocycleId}
           workoutNum={workoutNum}
           lifts={workout.lifts}
+          complexes={complexes}
         />
       </section>
 

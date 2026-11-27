@@ -17,8 +17,8 @@ const BEAR: BarbellComplexResponse = {
   id: 'c-bear',
   name: 'Bear',
   components: [
-    { lift: 'Deadlift', reps: 5 },
-    { lift: 'Front Squat', reps: 5 },
+    { lift: 'Deadlift', reps: 5, name: 'Deadlift' },
+    { lift: 'Front Squat', reps: 5, name: 'Front Squat' },
   ],
   createdAt: '2026-11-27T00:00:00.000Z',
 };
@@ -95,5 +95,44 @@ describe('ProgramEditor — a row can plan a complex (#1495)', () => {
     );
     expect(screen.getByText('Deleted complex', { selector: 'strong' })).toBeInTheDocument();
     expect(screen.queryByText('complex:gone')).not.toBeInTheDocument();
+  });
+
+  it('says a row’s complex couldn’t load, not that it was deleted, when the complexes couldn’t be read', () => {
+    const existing: CustomProgramResponse = {
+      id: 'p1',
+      name: 'Old',
+      description: null,
+      baseTemplate: null,
+      createdAt: '2026-11-27T00:00:00.000Z',
+      specs: [
+        {
+          week: 1,
+          offset: 0,
+          lift: 'complex:c-bear',
+          increment: 5,
+          order: 1,
+          sets: 3,
+          reps: 5,
+          amrap: false,
+          warmUpPct: '',
+          wtDecrementPct: 0,
+          activation: 'none',
+        },
+      ],
+    };
+    render(
+      <ProgramEditor
+        mode="edit"
+        existing={existing}
+        activeProgram={null}
+        defaultWeightIncrement={5}
+        complexes={null}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText('Complex (couldn’t load)', { selector: 'strong' })).toBeInTheDocument();
+    expect(screen.queryByText('Deleted complex')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Complexes' })).not.toBeInTheDocument();
   });
 });

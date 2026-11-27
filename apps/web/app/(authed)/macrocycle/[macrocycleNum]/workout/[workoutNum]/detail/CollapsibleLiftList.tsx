@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { formatWeight } from '@lifting-logbook/core';
 import type { WeightUnit } from '@lifting-logbook/types';
 import { plannedRowIds } from '@/lib/focusWorkout';
-import type { PlannedSet, WorkoutLiftDetail } from '@/lib/workoutPlan';
+import { slotName, type PlannedSet, type WorkoutLiftDetail } from '@/lib/workoutPlan';
 import { useTimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import type { TimerRowState } from '@/components/timer/WorkoutTimerProvider';
 import { ComplexMissingMaxes, ComplexSummary } from '@/components/complex/ComplexPlanView';
@@ -145,7 +145,7 @@ function PlannedPanel({
   program: string | undefined;
 }) {
   const { activationMovement: movement, plannedSets, complex } = detail;
-  const lift = complex?.name ?? detail.lift;
+  const lift = slotName(detail);
   const setRow = (s: PlannedSet) => (
     <SetRow
       key={s.setLabel}
@@ -205,7 +205,7 @@ function PlannedPanel({
       {complex !== undefined && complex.missing.length > 0 && (
         program !== undefined ?
           <ComplexMissingMaxes complex={complex} program={program} />
-        : <p className={styles.noSets}>No sets — set a training max for {complex.missing.join(', ')}.</p>
+        : <p className={styles.noSets}>No sets — set a training max for {complex.missing.map((m) => m.name).join(', ')}.</p>
       )}
     </>
   );
@@ -316,7 +316,7 @@ export default function CollapsibleLiftList({
         if (row.kind === 'planned') {
           const detail = liftDetails[row.liftIndex];
           if (detail === undefined) return null;
-          lift = detail.complex?.name ?? detail.lift;
+          lift = slotName(detail);
           historyLink = detail.complex === undefined;
           label = detail.tm > 0 ? <span className={styles.liftTM}>TM: {formatWeight(detail.tm, 'lbs', unit)}</span> : null;
           summary = `${detail.warmUpCount > 0 ? `${detail.warmUpCount} warm-up • ` : ''}${detail.workCount} working`;

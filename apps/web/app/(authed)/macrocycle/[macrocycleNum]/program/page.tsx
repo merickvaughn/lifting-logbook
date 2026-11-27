@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import { fetchMacrocycleDashboard, fetchProgramSpec } from '@/lib/api';
 import { getActiveProgram } from '@/lib/active-program';
 import GlossaryLink from '@/components/GlossaryLink';
+import { loadComplexes } from '@/lib/loadWorkoutPlan';
 import { deriveProgramSummary, WEEK_TYPE_LABELS } from '@/lib/programPlan';
 import styles from './program.module.css';
 import LiftRecordsImportForm from './LiftRecordsImportForm';
@@ -26,8 +27,10 @@ export default async function MacrocycleProgramPage({
     redirect(`/macrocycle/${dashboard?.macrocycleNum ?? 1}/program`);
   }
 
+  // A row planning a complex is listed by the complex's name (#1495).
+  const complexes = await loadComplexes(specs, 'MacrocycleProgramPage');
   const { durationWeeks, frequency, exercises, warmUpSets, workingSets } =
-    deriveProgramSummary(specs, program);
+    deriveProgramSummary(specs, program, complexes);
 
   return (
     <section className={styles.container}>

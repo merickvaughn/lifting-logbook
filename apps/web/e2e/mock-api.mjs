@@ -292,8 +292,10 @@ function createInitialState() {
     trainingMaxImport: null,
     // GET/POST /lifts/custom (#911) — a user's custom lifts.
     customLifts: [],
-    // /lifts/complexes (#1495) — the user's barbell complexes.
+    // /lifts/complexes (#1495) — the user's barbell complexes, as stored (components without names).
     barbellComplexes: [],
+    // Never reused, like focusSeq, so a complex created after a delete gets a fresh id.
+    complexSeq: 0,
     // GET/POST /lifts/modifications (#1152) — the user's lift modifications, for every lift.
     liftModifications: [],
     // /programs/:p/modification-maxes (#1153) — own maxes. One list serves every program.
@@ -1057,8 +1059,16 @@ const server = createServer(async (req, res) => {
   // /lifts/complexes (#1495) — list, create, edit and delete barbell complexes; 409 on a taken
   // name. The mock doesn't check that each component names a lift.
   // -------------------------------------------------------------------------
+  // As the API answers: each component with the name to show, a custom lift's for its id.
+  const complexResponse = (c) => ({
+    ...c,
+    components: c.components.map((x) => ({
+      ...x,
+      name: state.customLifts.find((l) => l.id === x.lift)?.name ?? x.lift,
+    })),
+  });
   if (method === 'GET' && url.pathname === '/lifts/complexes') {
-    json(res, state.barbellComplexes);
+    json(res, state.barbellComplexes.map(complexResponse));
     return;
   }
   if (method === 'POST' && url.pathname === '/lifts/complexes') {
@@ -1068,14 +1078,15 @@ const server = createServer(async (req, res) => {
       json(res, { statusCode: 409, message: `You already have a complex named "${body.name}"` }, 409);
       return;
     }
+    state.complexSeq += 1;
     const created = {
-      id: `complex-${state.barbellComplexes.length + 1}`,
+      id: `complex-${state.complexSeq}`,
       name: body.name,
       components: body.components,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     state.barbellComplexes.push(created);
-    json(res, created, 201);
+    json(res, complexResponse(created), 201);
     return;
   }
   const complexMatch = url.pathname.match(/^\/lifts\/complexes\/([^/]+)$/);
@@ -1098,7 +1109,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     Object.assign(existing, body);
-    json(res, existing);
+    json(res, complexResponse(existing));
     return;
   }
 

@@ -328,6 +328,19 @@ describe('deriveProgramSummary', () => {
     ]);
   });
 
+  it('lists a row planning a complex by the complex’s name, and one it wasn’t given as unknown (#1495)', () => {
+    const specs = [
+      makeSpec({ lift: 'Squat', week: 1 }),
+      makeSpec({ lift: 'complex:c-bear', week: 1 }),
+      makeSpec({ lift: 'complex:gone', week: 1 }),
+    ];
+    expect(deriveProgramSummary(specs, 'custom', [{ id: 'c-bear', name: 'Bear' }]).exercises).toEqual([
+      'Squat',
+      'Bear',
+      'Unknown complex',
+    ]);
+  });
+
   it('derives warmUpSets from comma-separated warmUpPct on first week-1 spec', () => {
     const specs = [makeSpec({ week: 1, warmUpPct: '0.4,0.5,0.6' })];
     expect(deriveProgramSummary(specs, 'custom').warmUpSets).toBe(3);

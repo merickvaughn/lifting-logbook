@@ -152,7 +152,7 @@ export async function loadFocusPlan(
  */
 export async function loadComplexes(
   slots: readonly { lift: string }[],
-  caller: FocusPlanCaller | 'MacrocycleDashboardPage',
+  caller: FocusPlanCaller | 'MacrocycleDashboardPage' | 'MacrocycleProgramPage' | 'ManageLiftsPage',
 ): Promise<BarbellComplexResponse[]> {
   if (!slots.some((l) => complexIdOf(l.lift) !== undefined)) return [];
   // fallback-covered-by: apps/web/lib/__tests__/loadWorkoutPlan.test.ts
@@ -228,14 +228,11 @@ export async function loadWorkoutPlan(
   // whose row names no type reads the settings, and with them the custom lifts: through the same
   // bounded read the timer classifies with, so the page makes one request and never waits past
   // the budget for it.
-  const progressions = await loadProgressionPlans(
-    workout,
-    liftSpecsForWorkout(workout, specs),
-    maxes,
-    caller,
-    boundedCustomLifts,
-  );
-  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions, await loadComplexes(workout.lifts, caller));
+  const [progressions, complexes] = await Promise.all([
+    loadProgressionPlans(workout, liftSpecsForWorkout(workout, specs), maxes, caller, boundedCustomLifts),
+    loadComplexes(workout.lifts, caller),
+  ]);
+  const liftDetails = buildLiftDetails(workout, specs, maxes, progressions, complexes);
 
   return {
     workout,

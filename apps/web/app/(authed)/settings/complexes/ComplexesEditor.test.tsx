@@ -16,28 +16,30 @@ const BEAR: BarbellComplexResponse = {
   id: 'c-bear',
   name: 'Bear',
   components: [
-    { lift: 'Deadlift', reps: 5 },
-    { lift: 'Front Squat', reps: 5 },
+    { lift: 'Deadlift', reps: 5, name: 'Deadlift' },
+    { lift: 'Front Squat', reps: 5, name: 'Front Squat' },
   ],
   createdAt: '2026-11-27T00:00:00.000Z',
 };
 
+const HANG_CLEAN = { id: 'custom-1', name: 'Hang Clean' };
+
 beforeEach(() => jest.clearAllMocks());
 
 describe('ComplexesEditor (#1495)', () => {
-  it('creates a complex from the lifter’s lifts and lists it', async () => {
+  it('creates a complex from the lifter’s lifts, sending a custom lift by its id, and lists it', async () => {
     const user = userEvent.setup();
     const created: BarbellComplexResponse = {
       id: 'c-new',
       name: 'Morning',
       components: [
-        { lift: 'Hang Clean', reps: 3 },
-        { lift: 'Front Squat', reps: 4 },
+        { lift: 'custom-1', reps: 3, name: 'Hang Clean' },
+        { lift: 'Front Squat', reps: 4, name: 'Front Squat' },
       ],
       createdAt: '2026-11-27T00:00:00.000Z',
     };
     jest.mocked(createBarbellComplex).mockResolvedValue({ ok: true, data: created });
-    render(<ComplexesEditor initialComplexes={[]} customLiftNames={['Hang Clean']} />);
+    render(<ComplexesEditor initialComplexes={[]} customLifts={[HANG_CLEAN]} />);
 
     expect(screen.getByText('No complexes yet.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'New complex' }));
@@ -54,7 +56,7 @@ describe('ComplexesEditor (#1495)', () => {
       expect(createBarbellComplex).toHaveBeenCalledWith({
         name: 'Morning',
         components: [
-          { lift: 'Hang Clean', reps: 3 },
+          { lift: 'custom-1', reps: 3 },
           { lift: 'Front Squat', reps: 4 },
         ],
       }),
@@ -70,10 +72,10 @@ describe('ComplexesEditor (#1495)', () => {
     const saved: BarbellComplexResponse = {
       ...BEAR,
       name: 'Big Bear',
-      components: [...BEAR.components, { lift: 'Push Press', reps: 2 }],
+      components: [...BEAR.components, { lift: 'Push Press', reps: 2, name: 'Push Press' }],
     };
     jest.mocked(updateBarbellComplex).mockResolvedValue({ ok: true, data: saved });
-    render(<ComplexesEditor initialComplexes={[BEAR]} customLiftNames={[]} />);
+    render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Edit Bear' }));
     expect(screen.getByLabelText('Lift 1')).toHaveValue('Deadlift');
@@ -88,17 +90,46 @@ describe('ComplexesEditor (#1495)', () => {
     await waitFor(() =>
       expect(updateBarbellComplex).toHaveBeenCalledWith('c-bear', {
         name: 'Big Bear',
-        components: saved.components,
+        components: saved.components.map(({ lift, reps }) => ({ lift, reps })),
       }),
     );
     expect(await screen.findByText('Big Bear')).toBeInTheDocument();
     expect(screen.queryByText('Bear', { exact: true })).not.toBeInTheDocument();
   });
 
+  it('flags a lift that is no longer a lift, and still sends it as stored', async () => {
+    const user = userEvent.setup();
+    const stale: BarbellComplexResponse = {
+      ...BEAR,
+      components: [
+        { lift: 'custom-gone', reps: 3, name: 'Deleted lift' },
+        { lift: 'Front Squat', reps: 5, name: 'Front Squat' },
+      ],
+    };
+    jest.mocked(updateBarbellComplex).mockResolvedValue({ ok: true, data: { ...stale, name: 'Old bear' } });
+    render(<ComplexesEditor initialComplexes={[stale]} customLifts={[]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Edit Bear' }));
+    expect(screen.getByLabelText('Lift 1')).toHaveDisplayValue('Deleted lift (no longer a lift)');
+    await user.clear(screen.getByLabelText('Complex name'));
+    await user.type(screen.getByLabelText('Complex name'), 'Old bear');
+    await user.click(screen.getByRole('button', { name: 'Save complex' }));
+
+    await waitFor(() =>
+      expect(updateBarbellComplex).toHaveBeenCalledWith('c-bear', {
+        name: 'Old bear',
+        components: [
+          { lift: 'custom-gone', reps: 3 },
+          { lift: 'Front Squat', reps: 5 },
+        ],
+      }),
+    );
+  });
+
   it('deletes a complex once confirmed', async () => {
     const user = userEvent.setup();
     jest.mocked(deleteBarbellComplex).mockResolvedValue(undefined);
-    render(<ComplexesEditor initialComplexes={[BEAR]} customLiftNames={[]} />);
+    render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete Bear' }));
     expect(deleteBarbellComplex).not.toHaveBeenCalled();
@@ -108,12 +139,12 @@ describe('ComplexesEditor (#1495)', () => {
     expect(await screen.findByText('No complexes yet.')).toBeInTheDocument();
   });
 
-  it('shows a name clash from the API and keeps the form open', async () => {
+  it('shows a name clash from the API on the name field and keeps the form open', async () => {
     const user = userEvent.setup();
     jest
       .mocked(createBarbellComplex)
       .mockResolvedValue({ ok: false, conflictMessage: 'You already have a complex named "Bear"' });
-    render(<ComplexesEditor initialComplexes={[BEAR]} customLiftNames={[]} />);
+    render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'New complex' }));
     await user.type(screen.getByLabelText('Complex name'), 'Bear');
@@ -121,19 +152,26 @@ describe('ComplexesEditor (#1495)', () => {
     await user.selectOptions(screen.getByLabelText('Lift 2'), 'Front Squat');
     await user.click(screen.getByRole('button', { name: 'Save complex' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('You already have a complex named "Bear"');
-    expect(screen.getByLabelText('Complex name')).toBeInTheDocument();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('You already have a complex named "Bear"');
+    expect(screen.getByLabelText('Complex name')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Complex name')).toHaveAccessibleDescription('You already have a complex named "Bear"');
+    expect(screen.getByLabelText('Complex name')).toHaveFocus();
   });
 
-  it('refuses a complex with an unchosen lift before sending it', async () => {
+  it('refuses a complex with an unchosen lift before sending it, pointing at that lift', async () => {
     const user = userEvent.setup();
-    render(<ComplexesEditor initialComplexes={[]} customLiftNames={[]} />);
+    render(<ComplexesEditor initialComplexes={[]} customLifts={[]} />);
     await user.click(screen.getByRole('button', { name: 'New complex' }));
     await user.type(screen.getByLabelText('Complex name'), 'Half');
     await user.selectOptions(screen.getByLabelText('Lift 1'), 'Deadlift');
     await user.click(screen.getByRole('button', { name: 'Save complex' }));
 
     expect(screen.getByRole('alert')).toHaveTextContent('Choose lift 2.');
+    expect(screen.getByLabelText('Lift 2')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Lift 2')).toHaveAccessibleDescription('Choose lift 2.');
+    expect(screen.getByLabelText('Lift 2')).toHaveFocus();
+    expect(screen.getByLabelText('Lift 1')).not.toHaveAttribute('aria-invalid');
     expect(createBarbellComplex).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Remove lift 1' })).toBeDisabled();
   });
@@ -142,7 +180,7 @@ describe('ComplexesEditor (#1495)', () => {
     const user = userEvent.setup();
     const err = new Error('network');
     jest.mocked(deleteBarbellComplex).mockRejectedValue(err);
-    render(<ComplexesEditor initialComplexes={[BEAR]} customLiftNames={[]} />);
+    render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete Bear' }));
     await user.click(screen.getByRole('button', { name: 'Yes, delete Bear' }));
@@ -150,5 +188,38 @@ describe('ComplexesEditor (#1495)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t delete the complex. Try again.');
     expect(logClientError).toHaveBeenCalledWith('deleteBarbellComplex', err, { complexId: 'c-bear' });
     expect(screen.getByText('Bear')).toBeInTheDocument();
+  });
+
+  describe('focus', () => {
+    it('moves to the name when the form opens, and back to New complex on cancel and on save', async () => {
+      const user = userEvent.setup();
+      jest.mocked(updateBarbellComplex).mockResolvedValue({ ok: true, data: BEAR });
+      render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
+
+      await user.click(screen.getByRole('button', { name: 'New complex' }));
+      expect(screen.getByLabelText('Complex name')).toHaveFocus();
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.getByRole('button', { name: 'New complex' })).toHaveFocus();
+
+      await user.click(screen.getByRole('button', { name: 'Edit Bear' }));
+      expect(screen.getByLabelText('Complex name')).toHaveFocus();
+      await user.click(screen.getByRole('button', { name: 'Save complex' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'New complex' })).toHaveFocus());
+    });
+
+    it('moves to the confirm button when Delete asks, back to Delete on Keep it, and to New complex once deleted', async () => {
+      const user = userEvent.setup();
+      jest.mocked(deleteBarbellComplex).mockResolvedValue(undefined);
+      render(<ComplexesEditor initialComplexes={[BEAR]} customLifts={[]} />);
+
+      await user.click(screen.getByRole('button', { name: 'Delete Bear' }));
+      expect(screen.getByRole('button', { name: 'Yes, delete Bear' })).toHaveFocus();
+      await user.click(screen.getByRole('button', { name: 'Keep it' }));
+      expect(screen.getByRole('button', { name: 'Delete Bear' })).toHaveFocus();
+
+      await user.click(screen.getByRole('button', { name: 'Delete Bear' }));
+      await user.click(screen.getByRole('button', { name: 'Yes, delete Bear' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'New complex' })).toHaveFocus());
+    });
   });
 });

@@ -9,8 +9,8 @@ jest.mock('@/lib/api', () => ({
 // Echo what the page passes down.
 jest.mock('./ComplexesEditor', () => ({
   __esModule: true,
-  default: ({ customLiftNames }: { customLiftNames: string[] }) => (
-    <div data-custom-lifts={JSON.stringify(customLiftNames)}>complexes-editor</div>
+  default: ({ customLifts }: { customLifts: unknown[] }) => (
+    <div data-custom-lifts={JSON.stringify(customLifts)}>complexes-editor</div>
   ),
 }));
 
@@ -22,10 +22,10 @@ const mockedFetchCustomLifts = fetchCustomLifts as unknown as jest.Mock;
 describe('ComplexesPage (#1495)', () => {
   beforeEach(() => mockedFetchCustomLifts.mockReset());
 
-  it('offers the lifter’s own lifts by name', async () => {
-    mockedFetchCustomLifts.mockResolvedValue([{ id: 'custom-1', name: 'Hang Clean' }]);
+  it('offers the lifter’s own lifts by id and name', async () => {
+    mockedFetchCustomLifts.mockResolvedValue([{ id: 'custom-1', name: 'Hang Clean', classification: 'compound' }]);
     const html = renderToStaticMarkup((await ComplexesPage()) as ReactElement);
-    expect(html).toContain('data-custom-lifts="[&quot;Hang Clean&quot;]"');
+    expect(html).toContain('data-custom-lifts="[{&quot;id&quot;:&quot;custom-1&quot;,&quot;name&quot;:&quot;Hang Clean&quot;}]"');
   });
 
   it('still renders, offering catalog lifts only, when custom lifts can’t be read', async () => {

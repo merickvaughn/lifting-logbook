@@ -13,7 +13,7 @@ type Props = {
   activeProgram: string | null;
   defaultWeightIncrement: number | null;
   customPrograms: CustomProgramSummaryResponse[];
-  complexes: BarbellComplexResponse[];
+  complexes: BarbellComplexResponse[] | null;
   onProgramSaved: (id: string) => void;
 };
 

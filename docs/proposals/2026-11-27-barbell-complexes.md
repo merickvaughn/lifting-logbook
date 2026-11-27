@@ -66,12 +66,12 @@ There is no separate complex max: a complex gets heavier when its weakest lift d
   them: a core round-trip test.
 - [ ] The converter writes `Complex` and `Round` for every expanded complex:
   `node --test scripts/convert-lifting-reference.test.mjs`.
-- [ ] A lifter can create, edit and delete a complex definition (API e2e test and web component
+- [x] A lifter can create, edit and delete a complex definition (API e2e test and web component
   test).
-- [ ] A program can plan a complex, and its planned weight is the lowest component max times the
+- [x] A program can plan a complex, and its planned weight is the lowest component max times the
   row's percentage, rounded to the row's increment: a planning unit test with three components
   whose lowest max decides the weight.
-- [ ] The workout page names the limiting lift, and a complex with a component lacking a max shows
+- [x] The workout page names the limiting lift, and a complex with a component lacking a max shows
   unplanned with the offer to set it (web component test).
 - [ ] The complex logging card records rounds and saves one tagged set per component per round
   (web component test and Playwright e2e).

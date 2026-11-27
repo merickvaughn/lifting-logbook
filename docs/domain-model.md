@@ -215,6 +215,26 @@ neither is part of the natural key or id.
   the lift's own sets their occurrence first, so a complex set sharing a set number takes the next
   one. `LiftRecordResponse` and `SetResponse` carry `complex` and `complexRound` when set.
 
+**Definitions and planning** ([#1495](https://github.com/merickvaughn/lifting-logbook/issues/1495)):
+
+- A complex is defined once per lifter, as a `barbell_complex` row: a name, unique per lifter, and
+  2 to 8 components in order (`COMPLEX_LIMITS`), each a lift and its reps per round. A catalog lift
+  is stored by name and a custom lift by its id, where its training max lives
+  ([#1291](https://github.com/merickvaughn/lifting-logbook/issues/1291)), so a rename doesn't
+  break it. The API answers each component with a `name` to show, `Deleted lift` once its custom
+  lift is gone. A complex can't take a lift's name, and a custom lift can't start with `complex:`.
+- A program row plans a complex by naming it in `lift` as `complex:<id>` (`complexLift`,
+  `complexIdOf` in `packages/core`). The rest of the row (sets, reps, percentages, increment) means
+  what it does for a lift.
+- **Weakest-link rule.** The row's percentages are of the lowest training max among the complex's
+  lifts (`complexMax`), rounded as any planned set is. That lift is shown as limiting. A complex has
+  no max or progression of its own, and while any of its lifts has no max it plans nothing and asks
+  for the missing ones.
+- **Delete.** Deleting a complex leaves the rows that name it. They plan nothing and read as a
+  deleted complex (`Unknown complex` where a workout is planned) until the row is changed. A
+  complex slot is shown on a workout but not logged there yet
+  ([#1496](https://github.com/merickvaughn/lifting-logbook/issues/1496)).
+
 ### Two name registries, one bridge
 
 | Registry | Count | Purpose |
@@ -312,7 +332,7 @@ logged set, and each level between them is reassembled per request.
 | **Mesocycle** (Block) | `mesocycleWeeks` arithmetic + `phaseStyle: 'repeating' \| 'mesocycle'` | **No entity.** A mesocycle boundary is `ceil(week / mesocycleWeeks)` |
 | **Week** | `week: number` + `WeekType` | **Derived** by tiling (`expandSpecToLength`) |
 | **Workout** | `(program, macrocycleNum, workoutNum)`; `workoutNum` is a **global ordinal** over the macrocycle, from `programWorkoutKeys`, with or without a schedule | **Derived.** Typed exactly once, as `TimerWorkoutKey` |
-| **Lift slot** | spec row keyed `(week, offset, lift, order)` | `custom_program_spec` row |
+| **Lift slot** | spec row keyed `(week, offset, lift, order)`; `lift` can also be `complex:<id>`, a [complex](#complexes-are-sets-of-their-component-lifts) | `custom_program_spec` row |
 | **Set** | `PlannedSet` (prescribed) / `LiftRecord` (logged) | One `lift_record` row per completed set |
 
 `offset` is the day-within-week slot; `order` is the position within that day.

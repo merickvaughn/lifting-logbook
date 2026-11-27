@@ -30,8 +30,11 @@ type Props = {
   baseTemplateId?: string;
   activeProgram: string | null;
   defaultWeightIncrement: number | null;
-  /** The lifter's complexes, which a row can plan as `complex:<id>` (#1495). */
-  complexes?: readonly BarbellComplexResponse[];
+  /**
+   * The lifter's complexes, which a row can plan as `complex:<id>` (#1495). Null when they couldn't
+   * be read: none is offered, and a row naming one says so rather than calling it deleted.
+   */
+  complexes?: readonly BarbellComplexResponse[] | null;
   onSaved: (id: string) => void;
   onCancel: () => void;
 };
@@ -92,10 +95,12 @@ export default function ProgramEditor({
 }: Props) {
   const router = useRouter();
   // A row naming a complex shows the complex's name; one deleted since shows as such.
-  const complexNames = new Map(complexes.map((c) => [c.id, c.name]));
+  const complexNames = new Map((complexes ?? []).map((c) => [c.id, c.name]));
   const liftLabel = (lift: string): string => {
     const id = complexIdOf(lift);
-    return id === undefined ? lift : (complexNames.get(id) ?? 'Deleted complex');
+    if (id === undefined) return lift;
+    if (complexes === null) return 'Complex (couldn’t load)';
+    return complexNames.get(id) ?? 'Deleted complex';
   };
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -394,7 +399,7 @@ export default function ProgramEditor({
                   {ALL_LIFTS.map((lift) => (
                     <option key={lift} value={lift}>{lift}</option>
                   ))}
-                  {complexes.length > 0 && (
+                  {complexes !== null && complexes.length > 0 && (
                     <optgroup label="Complexes">
                       {complexes.map((c) => (
                         <option key={c.id} value={complexLift(c.id)}>{c.name}</option>

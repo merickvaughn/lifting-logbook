@@ -170,6 +170,12 @@ describe('EditLiftPage (#1190)', () => {
     expect(mockedMetadata).not.toHaveBeenCalled();
   });
 
+  it('404s a complex slot the workout plans, which has no lift metadata (#1495)', async () => {
+    mockedWorkout.mockResolvedValue(workout('complex:c-bear'));
+    await expect(renderEdit('complex:c-bear')).rejects.toThrow('NOT_FOUND');
+    expect(mockedMetadata).not.toHaveBeenCalled();
+  });
+
   it('404s when the workout does not exist', async () => {
     mockedWorkout.mockResolvedValue(null);
 

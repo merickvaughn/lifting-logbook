@@ -471,6 +471,11 @@
   padding: var(--space-4);
 }
 
+.complexesHeading {
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2);
+}
+
 .complexName {
   font-size: var(--font-size-base);
   margin: 0 0 var(--space-2);

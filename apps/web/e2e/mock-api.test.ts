@@ -346,3 +346,35 @@ describe('mock-api focus blocks (#1059)', () => {
     expect((await fetch(`${BASE}/focus/blocks/nope/summary`)).status).toBe(404);
   });
 });
+
+describe('mock-api barbell complexes (#1495)', () => {
+  beforeEach(async () => {
+    await fetch(`${BASE}/__reset`);
+  });
+
+  const create = async (name: string) => {
+    const res = await jsonRequest(
+      '/lifts/complexes',
+      'POST',
+      JSON.stringify({ name, components: [{ lift: 'Squat', reps: 5 }, { lift: 'Deadlift', reps: 5 }] }),
+    );
+    return (await res.json()) as { id: string; components: { lift: string; name: string }[] };
+  };
+
+  it('never reuses a created id after a delete', async () => {
+    const first = await create('One');
+    const second = await create('Two');
+    await fetch(`${BASE}/lifts/complexes/${first.id}`, { method: 'DELETE' });
+    const third = await create('Three');
+    expect(third.id).not.toBe(second.id);
+    expect(third.id).not.toBe(first.id);
+  });
+
+  it('answers each component with a name to show, as the API does', async () => {
+    const created = await create('Bear');
+    expect(created.components).toEqual([
+      { lift: 'Squat', reps: 5, name: 'Squat' },
+      { lift: 'Deadlift', reps: 5, name: 'Deadlift' },
+    ]);
+  });
+});

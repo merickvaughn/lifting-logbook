@@ -12,5 +12,7 @@ export default async function ComplexesPage() {
       return [];
     }),
   ]);
-  return <ComplexesEditor initialComplexes={complexes} customLiftNames={customLifts.map((l) => l.name)} />;
+  return (
+    <ComplexesEditor initialComplexes={complexes} customLifts={customLifts.map(({ id, name }) => ({ id, name }))} />
+  );
 }

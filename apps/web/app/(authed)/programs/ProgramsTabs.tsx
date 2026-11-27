@@ -13,8 +13,8 @@ type Props = {
   workoutSchedule: UserWorkoutSchedule | null;
   defaultWeightIncrement: number | null;
   customPrograms: CustomProgramSummaryResponse[];
-  /** The lifter's complexes, which a program row can plan (#1495). */
-  complexes: BarbellComplexResponse[];
+  /** The lifter's complexes, which a program row can plan (#1495); null when they couldn't be read. */
+  complexes: BarbellComplexResponse[] | null;
 };
 
 export default function ProgramsTabs({

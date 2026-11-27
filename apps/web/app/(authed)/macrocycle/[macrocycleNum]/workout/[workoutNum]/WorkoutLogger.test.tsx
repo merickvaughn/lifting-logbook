@@ -136,10 +136,11 @@ describe('WorkoutLogger — a complex slot (#1495)', () => {
           complexes: [
             {
               complex: {
+                found: true,
                 name: 'Bear',
                 components: [
-                  { lift: 'Deadlift', reps: 1 },
-                  { lift: 'Front Squat', reps: 2 },
+                  { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+                  { lift: 'Front Squat', reps: 2, name: 'Front Squat' },
                 ],
                 limitingLift: 'Front Squat',
                 missing: [],
@@ -153,7 +154,9 @@ describe('WorkoutLogger — a complex slot (#1495)', () => {
     );
 
     const section = within(screen.getByRole('region', { name: 'Complexes' }));
-    expect(section.getByRole('heading', { name: 'Bear' })).toBeInTheDocument();
+    // The section heads its complexes: an h2, then an h3 for each.
+    expect(section.getByRole('heading', { level: 2, name: 'Complexes' })).toBeInTheDocument();
+    expect(section.getByRole('heading', { level: 3, name: 'Bear' })).toBeInTheDocument();
     expect(section.getByText('Front Squat × 2')).toBeInTheDocument();
     expect(section.getByText('Limited by Front Squat (150 lbs training max)')).toBeInTheDocument();
     expect(section.getByText('Working sets at 150 lbs, 105 lbs')).toBeInTheDocument();

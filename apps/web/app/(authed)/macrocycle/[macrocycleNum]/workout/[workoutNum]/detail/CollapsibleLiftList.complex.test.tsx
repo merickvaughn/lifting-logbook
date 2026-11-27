@@ -20,9 +20,9 @@ const BEAR: BarbellComplexResponse = {
   id: 'c-bear',
   name: 'Bear',
   components: [
-    { lift: 'Power Clean', reps: 2 },
-    { lift: 'Front Squat', reps: 3 },
-    { lift: 'Push Press', reps: 4 },
+    { lift: 'Power Clean', reps: 2, name: 'Power Clean' },
+    { lift: 'Front Squat', reps: 3, name: 'Front Squat' },
+    { lift: 'Push Press', reps: 4, name: 'Push Press' },
   ],
   createdAt: '2026-11-27T00:00:00.000Z',
 };
@@ -94,6 +94,48 @@ describe('CollapsibleLiftList — a complex slot (#1495)', () => {
       }),
     );
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it('offers no Don’t ask again for a lift the complex needs', () => {
+    renderList([max('Power Clean', 135), max('Push Press', 155)]);
+    expect(screen.getByLabelText('Front Squat training max')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ask again/i })).not.toBeInTheDocument();
+  });
+
+  it('shows a custom lift by name, and saves its max under its id', async () => {
+    const user = userEvent.setup();
+    jest.mocked(updateTrainingMaxes).mockResolvedValue(undefined as never);
+    const hangBear: BarbellComplexResponse = {
+      ...BEAR,
+      components: [
+        { lift: 'custom-hc', reps: 3, name: 'Hang Clean' },
+        { lift: 'Front Squat', reps: 3, name: 'Front Squat' },
+      ],
+    };
+    const liftDetails = buildLiftDetails(workout, [row], [max('Front Squat', 185)], [], [hangBear]);
+    render(<CollapsibleLiftList liftDetails={liftDetails} macrocycleNum={1} workoutNum={1} unit="lbs" program="5-3-1" />);
+
+    expect(screen.queryByText(/custom-hc/)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Hang Clean training max'), '100');
+    await user.click(screen.getByRole('button', { name: 'Set up' }));
+    await waitFor(() =>
+      expect(updateTrainingMaxes).toHaveBeenCalledWith('5-3-1', {
+        maxes: [{ lift: 'custom-hc', weight: 100, unit: 'lbs' }],
+      }),
+    );
+  });
+
+  it('shows the lifts of a complex the lifter named "Unknown complex"', () => {
+    const liftDetails = buildLiftDetails(
+      workout,
+      [row],
+      [max('Power Clean', 135), max('Front Squat', 185), max('Push Press', 155)],
+      [],
+      [{ ...BEAR, name: 'Unknown complex' }],
+    );
+    render(<CollapsibleLiftList liftDetails={liftDetails} macrocycleNum={1} workoutNum={1} unit="lbs" />);
+    expect(screen.getByRole('list', { name: 'Unknown complex lifts' })).toBeInTheDocument();
+    expect(screen.queryByText(/This complex was deleted/)).not.toBeInTheDocument();
   });
 
   it('says a deleted complex plans nothing', () => {

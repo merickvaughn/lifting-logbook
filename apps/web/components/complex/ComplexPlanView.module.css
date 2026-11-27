@@ -4,6 +4,12 @@
   font-size: var(--font-size-sm);
 }
 
+.missing {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .note {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);

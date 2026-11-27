@@ -461,8 +461,8 @@ describe('loadComplexes / a complex slot (#1495)', () => {
     id: 'c-bear',
     name: 'Bear',
     components: [
-      { lift: 'Squat', reps: 5 },
-      { lift: 'Bench Press', reps: 5 },
+      { lift: 'Squat', reps: 5, name: 'Squat' },
+      { lift: 'Bench Press', reps: 5, name: 'Bench Press' },
     ],
     createdAt: '2026-11-27T00:00:00.000Z',
   };
@@ -487,6 +487,23 @@ describe('loadComplexes / a complex slot (#1495)', () => {
     expect(mockedComplexes).toHaveBeenCalledTimes(1);
     expect(plan?.liftDetails[0]?.complex).toMatchObject({ name: 'Bear', limitingLift: 'Bench Press' });
     expect(plan?.liftDetails[0]?.tm).toBe(200);
+  });
+
+  it('reads the complexes alongside the progression settings, not after them', async () => {
+    seedWorkout(['Squat', 'complex:c-bear']);
+    mockedSpec.mockResolvedValue([{ ...spec('Squat'), progression: undefined }, spec('complex:c-bear')]);
+    let releaseSettings: (value: unknown) => void = () => undefined;
+    mockedUserSettings.mockReturnValue(new Promise((resolve) => (releaseSettings = resolve)));
+    mockedComplexes.mockResolvedValue([BEAR]);
+
+    const loading = loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+    for (let i = 0; i < 100 && mockedUserSettings.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(mockedUserSettings).toHaveBeenCalled();
+    // The settings read is still pending, and the complexes are already requested.
+    expect(mockedComplexes).toHaveBeenCalledTimes(1);
+
+    releaseSettings({ defaultProgression: null, defaultWeightIncrement: null });
+    await expect(loading).resolves.toBeTruthy();
   });
 
   it('logs a failed read and leaves the complex slot unplanned as unknown', async () => {

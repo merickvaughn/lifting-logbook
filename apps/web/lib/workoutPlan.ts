@@ -17,7 +17,7 @@ import {
 import type { ResolvedProgression } from '@lifting-logbook/core';
 import type {
   BarbellComplexResponse,
-  ComplexComponent,
+  ComplexComponentResponse,
   MacrocycleDashboardResponse,
   LiftingProgramSpecResponse,
   TrainingMaxResponse,
@@ -250,24 +250,48 @@ export function liftSets(planned: readonly PlannedSet[]): {
 
 /** What a slot naming a complex plans (#1495), beside its sets. */
 export interface ComplexPlan {
-  /** The complex's name, or {@link UNKNOWN_COMPLEX} for one that wasn't found. */
+  /** False for a complex that wasn't found: deleted, or the complexes couldn't be read. */
+  found: boolean;
+  /** The complex's name, or {@link UNKNOWN_COMPLEX} when it wasn't found. */
   name: string;
-  /** In order, each with its reps per round. */
-  components: ComplexComponent[];
-  /** The component whose max the weight comes from; absent while the complex is unplanned. */
+  /** In order, each with its reps per round and the name to show. */
+  components: ComplexComponentResponse[];
+  /** The name of the component whose max the weight comes from; absent while unplanned. */
   limitingLift?: string;
-  /** Components with no training max. The complex plans nothing until each has one. */
-  missing: string[];
+  /**
+   * Components with no training max, each as stored (where a max is saved) and by name. The complex
+   * plans nothing until each has one.
+   */
+  missing: { lift: string; name: string }[];
 }
 
-/** Named for a row whose complex was deleted, or couldn't be read. */
+/** Shown for a row whose complex was deleted, or couldn't be read. */
 export const UNKNOWN_COMPLEX = 'Unknown complex';
+
+/**
+ * The name to show for a slot's `lift`: the lift itself, or for `complex:<id>` the complex's name,
+ * or {@link UNKNOWN_COMPLEX} when it isn't in `complexes`. For pages that list slots without
+ * planning them.
+ */
+export function liftDisplayName(lift: string, complexes: readonly Pick<BarbellComplexResponse, 'id' | 'name'>[]): string {
+  const id = complexIdOf(lift);
+  if (id === undefined) return lift;
+  return complexes.find((c) => c.id === id)?.name ?? UNKNOWN_COMPLEX;
+}
+
+/** The name a plan shows for a slot: the complex's, for a slot that names one. */
+export function slotName(detail: { lift: string; complex?: Pick<ComplexPlan, 'name'> }): string {
+  return detail.complex?.name ?? detail.lift;
+}
 
 /**
  * A slot that names a complex (`complex:<id>`), planned by the weakest-link rule (#1495): its row's
  * percentages of its lowest component max, rounded as any planned set is ({@link computePlannedSets}).
  * The complex has no progression and no max of its own. A component with no max, or a complex not
  * in `complexes`, plans nothing. `undefined` for a slot that names a lift.
+ *
+ * A component's max is found under the lift as stored (a custom lift's id, #1291) or, failing that,
+ * under its name.
  */
 export function planComplex(
   lift: string,
@@ -278,12 +302,18 @@ export function planComplex(
   const id = complexIdOf(lift);
   if (id === undefined) return undefined;
   const found = complexes.find((c) => c.id === id);
-  if (!found) return { complex: { name: UNKNOWN_COMPLEX, components: [], missing: [] }, tm: 0, plannedSets: [] };
-  const complex = { name: found.name, components: found.components };
-  const max = complexMax(found.components, maxFor);
-  if ('missing' in max) return { complex: { ...complex, missing: max.missing }, tm: 0, plannedSets: [] };
+  if (!found) {
+    return { complex: { found: false, name: UNKNOWN_COMPLEX, components: [], missing: [] }, tm: 0, plannedSets: [] };
+  }
+  const nameOf = (key: string) => found.components.find((c) => c.lift === key)?.name ?? key;
+  const complex = { found: true, name: found.name, components: found.components };
+  const max = complexMax(found.components, (key) => maxFor(key) ?? maxFor(nameOf(key)));
+  if ('missing' in max) {
+    const missing = max.missing.map((key) => ({ lift: key, name: nameOf(key) }));
+    return { complex: { ...complex, missing }, tm: 0, plannedSets: [] };
+  }
   return {
-    complex: { ...complex, limitingLift: max.limitingLift, missing: [] },
+    complex: { ...complex, limitingLift: nameOf(max.limitingLift), missing: [] },
     tm: max.weight,
     plannedSets: spec ? computePlannedSets(spec, max.weight) : [],
   };
