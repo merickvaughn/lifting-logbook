@@ -1,4 +1,5 @@
 import { AuthUser } from './auth';
+import { IBarbellComplexRepository } from './IBarbellComplexRepository';
 import { IBodyWeightRepository } from './IBodyWeightRepository';
 import { ICustomLiftRepository } from './ICustomLiftRepository';
 import { IDataSnapshotRepository } from './IDataSnapshotRepository';
@@ -26,6 +27,7 @@ import { IWorkoutRepository } from './IWorkoutRepository';
 import { IWorkoutSkipOverrideRepository } from './IWorkoutSkipOverrideRepository';
 
 export interface RepositoryBundle {
+  barbellComplex: IBarbellComplexRepository;
   bodyWeight: IBodyWeightRepository;
   customLift: ICustomLiftRepository;
   dataSnapshot: IDataSnapshotRepository;

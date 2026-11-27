@@ -10,7 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { canonicalAliasFor } from '@lifting-logbook/core';
+import { canonicalAliasFor, complexIdOf } from '@lifting-logbook/core';
 import { CustomLift, CustomLiftResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -67,7 +67,9 @@ export class CustomLiftController {
     // dto.name is already trimmed by the DTO's own @Transform before this
     // runs — see create-custom-lift.dto.ts for why leading/trailing
     // whitespace must not be allowed to slip past this guard.
-    if (canonicalAliasFor(dto.name) !== undefined) {
+    // `complex:` is how a program row names a complex (#1495), so a lift by such a name would plan
+    // as one and could not be logged.
+    if (canonicalAliasFor(dto.name) !== undefined || complexIdOf(dto.name) !== undefined) {
       throw new ReservedLiftNameConflictError(dto.name);
     }
 
@@ -96,7 +98,7 @@ export class CustomLiftController {
     // typeof === 'string') — UpdateCustomLiftDto's @ValidateIf means a
     // request carrying `name: null` already 400ed before reaching here; see
     // that DTO's own comment for why @IsOptional() alone wasn't sufficient.
-    if (dto.name !== undefined && canonicalAliasFor(dto.name) !== undefined) {
+    if (dto.name !== undefined && (canonicalAliasFor(dto.name) !== undefined || complexIdOf(dto.name) !== undefined)) {
       throw new ReservedLiftNameConflictError(dto.name);
     }
 

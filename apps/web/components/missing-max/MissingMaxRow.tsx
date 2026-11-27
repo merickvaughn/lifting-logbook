@@ -99,6 +99,7 @@ export function MissingMaxRow({
   error: callerError,
   disabled = false,
   onBusyChange,
+  dismissible = true,
 }: MissingMaxRowOptions & {
   entry: MissingMaxEntry;
   /**
@@ -113,6 +114,8 @@ export function MissingMaxRow({
   disabled?: boolean;
   /** Reports a write of the row's own starting and ending, so the caller can hold its own. */
   onBusyChange?: (liftId: string, busy: boolean) => void;
+  /** Offers **Don't ask again**. Off where dismissing wouldn't stop the asking (a complex, #1495). */
+  dismissible?: boolean;
 }) {
   const estimateId = useId();
   const errorId = useId();
@@ -194,9 +197,11 @@ export function MissingMaxRow({
         <button type="button" className={styles.primary} onClick={setUp} disabled={busy || disabled}>
           Set up
         </button>
-        <button type="button" className={styles.secondary} onClick={toggleDismissed} disabled={busy || disabled}>
-          {entry.dismissed ? 'Ask again' : "Don't ask again"}
-        </button>
+        {dismissible && (
+          <button type="button" className={styles.secondary} onClick={toggleDismissed} disabled={busy || disabled}>
+            {entry.dismissed ? 'Ask again' : "Don't ask again"}
+          </button>
+        )}
       </div>
       <p id={estimateId} className={styles.estimate}>
         {estimateLine(entry)}

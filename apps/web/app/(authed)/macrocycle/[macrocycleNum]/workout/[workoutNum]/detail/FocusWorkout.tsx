@@ -316,7 +316,7 @@ export default function FocusWorkout({ program, macrocycleNum, macrocycleId, wor
     );
   }
 
-  const listProps = { liftDetails, macrocycleNum, workoutNum, unit };
+  const listProps = { liftDetails, macrocycleNum, workoutNum, unit, program };
 
   /** The heading's id is `${ids}-${key}`, which the module's `aria-labelledby` names. */
   function moduleHead(

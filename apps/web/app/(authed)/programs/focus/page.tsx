@@ -1,3 +1,4 @@
+import { complexIdOf } from '@lifting-logbook/core';
 import {
   fetchCustomLifts,
   fetchMacrocycleDashboard,
@@ -26,7 +27,12 @@ export default async function FocusPage({ searchParams }: { searchParams: Promis
 
   // A spec row can name a custom lift by its uuid; focus pools and rules name lifts.
   const nameById = new Map(customLifts.map((lift) => [lift.id, lift.name] as const));
-  const programLifts = [...new Set(specs.map((spec) => nameById.get(spec.lift) ?? spec.lift))];
+  // A complex row (#1495) is left out: it has no training max or progression for a rule to follow.
+  const programLifts = [
+    ...new Set(
+      specs.filter((spec) => complexIdOf(spec.lift) === undefined).map((spec) => nameById.get(spec.lift) ?? spec.lift),
+    ),
+  ];
 
   let workouts: FocusWeekWorkout[] = [];
   if (dashboard) {

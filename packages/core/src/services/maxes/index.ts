@@ -1,3 +1,4 @@
+export * from './complexMax';
 export * from './estimateOneRepMax';
 export * from './missingTrainingMaxes';
 export * from './nonCycleReference';

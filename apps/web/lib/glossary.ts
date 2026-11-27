@@ -114,6 +114,15 @@ export const GLOSSARY = [
         ],
       },
       {
+        id: 'complex',
+        term: 'Complex',
+        definition:
+          'A run of lifts done back to back with one bar and one weight, such as a Bear. Its weight comes from the lowest training max among its lifts.',
+        otherMeanings: [
+          'Some coaches also call a single lift done for several rep schemes in a row a complex; here it always means several lifts with one bar.',
+        ],
+      },
+      {
         id: 'training-max',
         term: 'Training max',
         aka: ['TM'],

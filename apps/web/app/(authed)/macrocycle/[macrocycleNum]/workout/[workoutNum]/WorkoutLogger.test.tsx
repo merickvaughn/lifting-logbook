@@ -128,6 +128,42 @@ beforeEach(() => {
   window.sessionStorage.clear();
 });
 
+describe('WorkoutLogger — a complex slot (#1495)', () => {
+  it('shows the complex read-only, with its lifts, working weights and limiting lift', () => {
+    render(
+      <WorkoutLogger
+        {...makeProps({
+          complexes: [
+            {
+              complex: {
+                found: true,
+                name: 'Bear',
+                components: [
+                  { lift: 'Deadlift', reps: 1, name: 'Deadlift' },
+                  { lift: 'Front Squat', reps: 2, name: 'Front Squat' },
+                ],
+                limitingLift: 'Front Squat',
+                missing: [],
+              },
+              tm: 150,
+              workWeights: [150, 105],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const section = within(screen.getByRole('region', { name: 'Complexes' }));
+    // The section heads its complexes: an h2, then an h3 for each.
+    expect(section.getByRole('heading', { level: 2, name: 'Complexes' })).toBeInTheDocument();
+    expect(section.getByRole('heading', { level: 3, name: 'Bear' })).toBeInTheDocument();
+    expect(section.getByText('Front Squat × 2')).toBeInTheDocument();
+    expect(section.getByText('Limited by Front Squat (150 lbs training max)')).toBeInTheDocument();
+    expect(section.getByText('Working sets at 150 lbs, 105 lbs')).toBeInTheDocument();
+    expect(section.getByText('Complexes can’t be logged here yet.')).toBeInTheDocument();
+  });
+});
+
 describe('WorkoutLogger — weight-unit display preference', () => {
   it('renders planned warm-up and working-set weights converted to the preferred unit', () => {
     render(

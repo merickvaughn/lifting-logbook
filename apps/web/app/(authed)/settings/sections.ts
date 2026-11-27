@@ -28,6 +28,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       'Set target weights or bodyweight ratios for each lift and track your progress toward them.',
   },
   {
+    href: '/settings/complexes',
+    label: 'Complexes',
+    description: 'Build barbell complexes from your lifts, to plan in a program like any lift.',
+  },
+  {
     href: '/settings/schedule',
     label: 'Schedule',
     description:

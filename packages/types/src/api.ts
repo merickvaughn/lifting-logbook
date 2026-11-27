@@ -1,4 +1,4 @@
-import { BodyWeightEntry, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
+import { BodyWeightEntry, ComplexComponent, LiftClassification, LiftModificationMaxMode, LiftName, MovementProfile, WeightUnit, WeekNumber, MacrocycleNumber, MacrocycleOrigin, MacrocycleStatus, WeekType } from './domain';
 import { DefaultProgressionSetting, LiftProgressionType } from './progression';
 
 // ---------------------------------------------------------------------------
@@ -1768,6 +1768,38 @@ export interface UpdateLiftModificationRequest {
   name?: string;
   description?: string;
   maxMode?: LiftModificationMaxMode;
+}
+
+// ---------------------------------------------------------------------------
+// Barbell complexes (#1495)
+// ---------------------------------------------------------------------------
+
+/** Serialized complex definition as returned by the API. `userId` is intentionally omitted. */
+export interface BarbellComplexResponse {
+  id: string; // uuid — the REST key, and what a program row names as `complex:<id>`
+  name: string;
+  components: ComplexComponentResponse[];
+  createdAt: string; // ISO 8601 date string
+}
+
+/**
+ * A complex's component as the API returns it: `lift` as stored (a custom lift's id), and `name`,
+ * the lift's current name to show. A custom lift deleted since has the name `Deleted lift`.
+ */
+export interface ComplexComponentResponse extends ComplexComponent {
+  name: string;
+}
+
+/** Request body for POST /lifts/complexes. Each component's lift must be a lift. */
+export interface CreateBarbellComplexRequest {
+  name: string;
+  components: ComplexComponent[];
+}
+
+/** Request body for PATCH /lifts/complexes/:id. Components, when given, replace the list. */
+export interface UpdateBarbellComplexRequest {
+  name?: string;
+  components?: ComplexComponent[];
 }
 
 /**

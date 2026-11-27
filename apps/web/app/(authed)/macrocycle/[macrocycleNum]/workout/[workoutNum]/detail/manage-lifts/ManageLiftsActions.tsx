@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { liftOccurrenceKey } from '@lifting-logbook/core';
+import { complexIdOf, liftOccurrenceKey } from '@lifting-logbook/core';
 import { upsertLiftOverride } from '@/lib/client-api';
 import { logClientError } from '@/lib/log-client-error';
 import { followMovedMacrocycle, withMacrocycleId, writeFailureMessage } from '@/lib/macrocycleUrl';
-import type { WorkoutLiftResponse } from '@lifting-logbook/types';
+import { liftDisplayName } from '@/lib/workoutPlan';
+import type { BarbellComplexResponse, WorkoutLiftResponse } from '@lifting-logbook/types';
 import styles from './ManageLiftsActions.module.css';
 
 interface Props {
@@ -17,9 +18,18 @@ interface Props {
   macrocycleId?: string | undefined;
   workoutNum: number;
   lifts: WorkoutLiftResponse[];
+  /** The lifter's complexes, which name a complex slot (#1495). */
+  complexes?: readonly Pick<BarbellComplexResponse, 'id' | 'name'>[];
 }
 
-export default function ManageLiftsActions({ program, macrocycleNum, macrocycleId, workoutNum, lifts }: Props) {
+export default function ManageLiftsActions({
+  program,
+  macrocycleNum,
+  macrocycleId,
+  workoutNum,
+  lifts,
+  complexes = [],
+}: Props) {
   const router = useRouter();
   // The row being removed, by its occurrence key: a day can plan one lift twice (#1027).
   const [pending, setPending] = useState<string | null>(null);
@@ -34,7 +44,7 @@ export default function ManageLiftsActions({ program, macrocycleNum, macrocycleI
     } catch (err) {
       logClientError('upsertLiftOverride', err, { action: 'remove', program, macrocycleNum, workoutNum, lift });
       if (followMovedMacrocycle(err)) return;
-      setError(writeFailureMessage(err, `Failed to remove ${lift}. Please try again.`));
+      setError(writeFailureMessage(err, `Failed to remove ${liftDisplayName(lift, complexes)}. Please try again.`));
     } finally {
       setPending(null);
     }
@@ -62,13 +72,16 @@ export default function ManageLiftsActions({ program, macrocycleNum, macrocycleI
           return (
             <li key={rowKey} className={styles.liftItem}>
               <span className={styles.liftName}>
-                {lift}
+                {liftDisplayName(lift, complexes)}
                 {planned && <span className={styles.plannedBadge}>planned</span>}
               </span>
               <span className={styles.actions}>
-                <Link href={editUrl(lift)} className={styles.btnSecondary}>
-                  Edit
-                </Link>
+                {/* A complex has no lift metadata to edit; its lifts are edited in Settings. */}
+                {complexIdOf(lift) === undefined && (
+                  <Link href={editUrl(lift)} className={styles.btnSecondary}>
+                    Edit
+                  </Link>
+                )}
                 <Link href={replaceUrl(lift)} className={styles.btnSecondary}>
                   Replace
                 </Link>

@@ -1,4 +1,5 @@
 import type {
+  BarbellComplexResponse,
   MacrocycleDashboardResponse,
   LiftingProgramSpecResponse,
 } from '@lifting-logbook/types';
@@ -8,7 +9,7 @@ import {
   programLengthWeeks,
   type ProgramLengthMeta,
 } from '@lifting-logbook/core';
-import { workoutDateResolver, type WorkoutDay } from './workoutPlan';
+import { liftDisplayName, workoutDateResolver, type WorkoutDay } from './workoutPlan';
 
 // Phase rendering type. Built-in programs are autoregulated (Leangains, RPT) or a
 // no-deload mesocycle (5/3/1), so their presets tag no deload/test weeks and
@@ -167,9 +168,11 @@ export function estimateCompletionDate(
   }, dashboard.macrocycleStartDate);
 }
 
+/** `complexes` names the rows that plan a complex (#1495), by {@link liftDisplayName}. */
 export function deriveProgramSummary(
   specs: LiftingProgramSpecResponse[],
   program: string,
+  complexes: readonly Pick<BarbellComplexResponse, 'id' | 'name'>[] = [],
 ): ProgramSummary {
   // Duration is the canonical program length (single source of truth, issue #680),
   // not Math.max(...specs.week) — the stored spec is only a repeating block, so
@@ -179,7 +182,7 @@ export function deriveProgramSummary(
   const week1Specs = specs.filter((s) => s.week === 1);
   const frequency = new Set(week1Specs.map((s) => s.offset)).size;
 
-  const exercises = [...new Set(specs.map((s) => s.lift))];
+  const exercises = [...new Set(specs.map((s) => s.lift))].map((lift) => liftDisplayName(lift, complexes));
 
   const firstSpec = week1Specs[0];
   const warmUpSets = firstSpec?.warmUpPct?.split(',').filter(Boolean).length ?? 0;
