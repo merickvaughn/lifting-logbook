@@ -6,7 +6,7 @@ import { SpreadsheetCell } from '../../models';
  * quote that isn't closed. The message names the line, for a client to show the lifter (#1497).
  */
 export class CsvParseError extends Error {
-  constructor(message: string, readonly line: number) {
+  constructor(message: string) {
     super(message);
     this.name = 'CsvParseError';
   }
@@ -25,18 +25,16 @@ export function parseCsvText(text: string): SpreadsheetCell[][] {
     return parse(text, PARSE_OPTIONS) as SpreadsheetCell[][];
   } catch (err) {
     if (!(err instanceof CsvError)) throw err;
-    // csv-parse sets `lines` on every CsvError but types its context fields as unknown.
-    const line = Number(err.lines);
     if (err.code === 'CSV_RECORD_INCONSISTENT_FIELDS_LENGTH') {
-      // The error doesn't carry the expected count, so read it off the first row.
+      // The error doesn't carry the expected count, so read it off the first row. csv-parse
+      // sets `lines` and `record` on this error but types its context fields as unknown.
       const [first = []] = parse(text, { ...PARSE_OPTIONS, to: 1 }) as string[][];
       const got = (err.record as string[] | undefined)?.length ?? 0;
       throw new CsvParseError(
-        `Line ${line} has ${got} cells, but the first row has ${first.length}. ` +
+        `Line ${String(err.lines)} has ${got} cells, but the first row has ${first.length}. ` +
           'Every row of the file needs the same number of cells.',
-        line,
       );
     }
-    throw new CsvParseError(`The file isn't valid CSV: ${err.message}`, line);
+    throw new CsvParseError(`The file isn't valid CSV: ${err.message}`);
   }
 }
