@@ -7,7 +7,7 @@ import {
 } from '../../models';
 import { classifyImportRows } from './classifyAndCount';
 import { goalValue } from './goalValue';
-import { classifyLiftRecordRows } from './liftRecordNaturalKey';
+import { classifyLiftRecordRows, countChangedSkips } from './liftRecordNaturalKey';
 import { normalizeAmrap } from './normalize-amrap';
 import { formatDateYYYYMMDD } from '../jsUtil';
 import { LiftImportSoftResult } from './validateLiftImportSoft';
@@ -108,7 +108,8 @@ export function buildLiftRecordsPreview(
   const deltas: ImportDelta[] = [];
   const seenCounts = new Map<string, number>();
 
-  for (const { row: r, kind, key } of classifyLiftRecordRows(incoming, (r) => r, existing)) {
+  const classified = classifyLiftRecordRows(incoming, (r) => r, existing);
+  for (const { row: r, kind, key } of classified) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = rowLabel(r.lift, r);
     const value = `${r.weight} × ${r.reps}`;
@@ -118,7 +119,7 @@ export function buildLiftRecordsPreview(
         : { key: displayKey, label, kind, after: value },
     );
   }
-  return tally(deltas);
+  return { ...tally(deltas), changed: countChangedSkips(classified, (r) => r) };
 }
 
 /**
@@ -136,11 +137,8 @@ export function buildLiftRecordsPreviewSoft(
   const seenCounts = new Map<string, number>();
 
   // Valid rows — normal create/skip classification
-  for (const { row: { record: r, rowIndex }, kind, key } of classifyLiftRecordRows(
-    softResult.validRows,
-    ({ record }) => record,
-    existing,
-  )) {
+  const classified = classifyLiftRecordRows(softResult.validRows, ({ record }) => record, existing);
+  for (const { row: { record: r, rowIndex }, kind, key } of classified) {
     const displayKey = dedupeDisplayKey(key, seenCounts);
     const label = liftRecordLabel(r, liftNames);
     const value = `${r.weight} × ${r.reps}`;
@@ -190,7 +188,7 @@ export function buildLiftRecordsPreviewSoft(
     });
   }
 
-  return tally(deltas);
+  return { ...tally(deltas), changed: countChangedSkips(classified, ({ record }) => record) };
 }
 
 /**

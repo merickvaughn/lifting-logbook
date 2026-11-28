@@ -2809,6 +2809,15 @@ export function ImportWizard({
                 </p>
               )}
 
+              {(previewBody?.changed ?? 0) > 0 && (
+                <p className={styles.stepHint} data-testid="import-changed-note">
+                  {previewBody?.changed} skipped {previewBody?.changed === 1 ? 'row differs' : 'rows differ'} from the set
+                  already stored, in weight or reps. The stored {previewBody?.changed === 1 ? 'set stays' : 'sets stay'} as{' '}
+                  {previewBody?.changed === 1 ? 'it is' : 'they are'}, so this upload won&apos;t apply{' '}
+                  {previewBody?.changed === 1 ? 'that change' : 'those changes'}.
+                </p>
+              )}
+
               {plannedCommit?.counts.split && (
                 <div className={styles.splitCard}>
                   <p className={styles.stepHint}>

@@ -13,6 +13,7 @@ import {
   LiftRecord,
   buildLiftRecordsPreImage,
   classifyLiftRecordRows,
+  countChangedSkips,
   fileMacrocycleKey,
   isNonCycleProgram,
   liftKey,
@@ -342,9 +343,7 @@ export async function planBreakdown(
     ({ r }) => r.r,
     await repos.liftRecord.findStoredSets(records),
   );
-  const changed = classified.filter(
-    ({ kind, paired, row: { r } }) => kind === 'skip' && paired && (paired.weight !== r.r.weight || paired.reps !== r.r.reps),
-  ).length;
+  const changed = countChangedSkips(classified, ({ r }) => r.r);
   // The rows to create, by stretch, with the occurrence each is stored under.
   const creatingIn = new Map<number | null, LiftRecord[]>();
   for (const c of classified) {

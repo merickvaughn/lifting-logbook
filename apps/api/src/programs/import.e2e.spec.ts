@@ -230,6 +230,18 @@ describe('Smart Import HTTP (e2e, in-memory adapters)', () => {
       expect(body.preview.creates).toBe(1);
     });
 
+    it('counts skipped rows whose weight differs from the stored set, and none for an unchanged file (#1223)', async () => {
+      await importCsv('import-lr-changed', LIFT_CSV, '?mode=commit&destination=lift-records');
+      const corrected = LIFT_CSV.replace(',180,', ',185,');
+      expect(corrected).not.toBe(LIFT_CSV);
+      const changed = (await importCsv('import-lr-changed', corrected, '?mode=preview')).json();
+      expect(changed.preview).toMatchObject({ creates: 0, skips: 1, changed: 1 });
+      const commit = (await importCsv('import-lr-changed', corrected, '?mode=commit&destination=lift-records')).json();
+      expect(commit).toMatchObject({ created: 0, skipped: 1, changed: 1 });
+      const same = (await importCsv('import-lr-changed', LIFT_CSV, '?mode=preview')).json();
+      expect(same.preview).toMatchObject({ skips: 1, changed: 0 });
+    });
+
     // Regression guard (#911 review, fourth pass): a CSV whose exercise
     // column is named something other than "Lift" (the case the MAP_COLUMNS
     // step exists to let a user fix) leaves r.lift undefined on every row —

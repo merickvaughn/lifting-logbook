@@ -217,6 +217,21 @@ export function classifyLiftRecordRows<T, S extends LoggedSet = LoggedSet>(
 }
 
 /**
+ * How many rows {@link classifyLiftRecordRows} skipped whose weight or reps differ from the stored
+ * set they paired with (decision 13). The stored set stays as it is, so the lifter's change to the
+ * row isn't applied.
+ */
+export function countChangedSkips<T, S extends LoggedSet>(
+  classified: readonly ClassifiedLiftRecordRow<T, S>[],
+  recordOf: (row: T) => LoggedSet,
+): number {
+  return classified.filter(({ kind, paired, row }) => {
+    const r = recordOf(row);
+    return kind === 'skip' && paired !== undefined && (paired.weight !== r.weight || paired.reps !== r.reps);
+  }).length;
+}
+
+/**
  * A key's last segment: the set number, then `~occurrence` past a lift's first
  * occurrence. Every key that names one set (the natural key, the record id, the web
  * logger's draft key) ends in it.

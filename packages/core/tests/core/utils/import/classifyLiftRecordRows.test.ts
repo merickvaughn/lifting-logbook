@@ -1,4 +1,4 @@
-import { classifyLiftRecordRows } from "@src/core";
+import { classifyLiftRecordRows, countChangedSkips } from "@src/core";
 import type { LiftRecord } from "@src/core";
 
 // Count-based duplicate detection (proposal decision 13, #1199).
@@ -18,6 +18,24 @@ const set = (over: Partial<LiftRecord> = {}): LiftRecord => ({
 
 const classify = (rows: LiftRecord[], stored: LiftRecord[] = []) =>
   classifyLiftRecordRows(rows, (r) => r, stored).map(({ kind, occurrence }) => ({ kind, occurrence }));
+
+describe("countChangedSkips (#1223)", () => {
+  const changed = (rows: LiftRecord[], stored: LiftRecord[]) =>
+    countChangedSkips(classifyLiftRecordRows(rows, (r) => r, stored), (r) => r);
+
+  it("counts a skipped row whose weight differs from the stored set it paired with", () => {
+    expect(changed([set({ weight: 105 })], [set()])).toBe(1);
+  });
+
+  it("counts a skipped row whose reps differ", () => {
+    expect(changed([set({ reps: 6 })], [set()])).toBe(1);
+  });
+
+  it("reports zero for identical rows, and for rows that create", () => {
+    expect(changed([set()], [set()])).toBe(0);
+    expect(changed([set({ setNum: 2, weight: 105 })], [set()])).toBe(0);
+  });
+});
 
 describe("classifyLiftRecordRows", () => {
   it("skips a re-imported file whatever its macrocycle, workout and program numbers", () => {

@@ -957,6 +957,11 @@ export interface ImportPreview {
    */
   unresolved: number;
   deltas: ImportDelta[];
+  /**
+   * Lift-records files only: skipped rows whose weight or reps differ from the stored set they
+   * paired with. The stored set stays as it is, so the file's change isn't applied (decision 13).
+   */
+  changed?: number;
   /** Training-max rows under different spellings of one lift; absent when there are none. */
   spellingCollisions?: ImportSpellingCollision[];
   /** Strength-goal rows under different spellings of one lift; absent when there are none. */
@@ -1111,6 +1116,8 @@ export interface ImportCommitResponse extends ImportWriteResult {
    * plain commit using neither, it matches the original CSV data-row number.
    */
   skippedDetail?: SkippedRecord[];
+  /** Lift records only: skipped rows that differ from the stored set they paired with, which stays as stored. */
+  changed?: number;
   /** Present when the commit stored an Assign breakdown (#1254). */
   assigned?: ImportAssignedCounts;
   /**

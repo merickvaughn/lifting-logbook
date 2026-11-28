@@ -26,6 +26,7 @@ import {
   buildStrengthGoalPreImage,
   buildProgramSpecPreImage,
   classifyLiftRecordRows,
+  countChangedSkips,
   ClassifiedLiftRecordRow,
   pairWithRowNumber,
   buildSkippedDetail,
@@ -196,6 +197,7 @@ const liftRecordsHandler: ImportHandler<LiftRecord> = {
       updated: 0,
       skipped: classified.length - created,
       skippedDetail: buildSkippedDetail(classified, (r) => liftRecordLabel(r, liftNames)),
+      changed: countChangedSkips(classified, ({ r }) => r),
       // Created rows only, by design: a lift whose rows were all skipped wasn't brought in by
       // this import, and Settings still lists it if it has no max (#1273).
       lifts: liftsOf(toCreate),
