@@ -572,6 +572,11 @@ export interface LiftingProgramSpecResponse {
   progression?: LiftProgressionType;
   /** The bottom of the row's rep range; `reps` is the top. */
   repsLow?: number;
+  /**
+   * The share of the lift's max the row plans from, as a fraction (#1526). Absent means 100%.
+   * It scales the whole plan: warm-ups and work sets are the row's percentages of it.
+   */
+  loadPct?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +714,11 @@ export interface CustomProgramSpecRow {
    * except that a kept value above the row's `reps` is cleared.
    */
   repsLow?: number | null;
+  /**
+   * The share of the lift's max the row plans from, as a fraction above 0 and at most 1 (#1526).
+   * A response leaves it out when unset. A request stores what it sends: null or left out is unset.
+   */
+  loadPct?: number | null;
 }
 
 export interface CustomProgramResponse {
@@ -780,6 +790,7 @@ export type ImportErrorCode =
   | 'SETS_INVALID'
   | 'WT_DECREMENT_PCT_INVALID'
   | 'WEEK_TYPE_INVALID'
+  | 'LOAD_PCT_INVALID'
   | 'FILE_PARSE_FAILED'
   | 'ROW_LIMIT_EXCEEDED'
   | 'OCCURRENCE_INVALID'

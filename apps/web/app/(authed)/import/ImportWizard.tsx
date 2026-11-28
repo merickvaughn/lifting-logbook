@@ -215,6 +215,7 @@ const KIND_FIELDS: Record<ImportKind, FieldOption[]> = {
     { key: 'weightPct', label: 'Weight %' },
     { key: 'activation', label: 'Activation' },
     { key: 'weekType', label: 'Week Type' },
+    { key: 'loadPct', label: 'Load %' },
   ],
 };
 

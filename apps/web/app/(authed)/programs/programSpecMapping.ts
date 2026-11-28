@@ -40,6 +40,8 @@ export type WeekParams = {
    */
   progression?: CustomProgramSpecRow['progression'];
   repsLow?: CustomProgramSpecRow['repsLow'];
+  /** The share of the lift's max the row plans from, as a fraction (#1526). Unset is 100%. */
+  loadPct?: CustomProgramSpecRow['loadPct'];
 };
 
 export type LiftInstance = {
@@ -108,6 +110,7 @@ function pickWeekParams(row: CustomProgramSpecRow): WeekParams {
   if (row.weekType !== undefined) params.weekType = row.weekType;
   if (row.progression !== undefined) params.progression = row.progression;
   if (row.repsLow !== undefined) params.repsLow = row.repsLow;
+  if (row.loadPct != null) params.loadPct = row.loadPct;
   return params;
 }
 
@@ -149,6 +152,8 @@ export function specsFromDays(days: WorkoutDayModel[]): CustomProgramSpecRow[] {
             // The editor shows `reps` but not the carried `repsLow`. If the lifter lowers reps
             // below it, clear it rather than send a range the API rejects and the UI can't fix.
             repsLow: params.repsLow != null && params.repsLow <= params.reps ? params.repsLow : null,
+            // Sent explicitly too, null for a row that plans from the whole max (#1526).
+            loadPct: params.loadPct ?? null,
           });
         }
       });

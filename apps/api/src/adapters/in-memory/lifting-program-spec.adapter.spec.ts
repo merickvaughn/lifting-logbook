@@ -71,3 +71,29 @@ describe('InMemoryLiftingProgramSpecRepository.saveProgramSpec progression (#121
     ]);
   });
 });
+
+// The Prisma upsert leaves `loadPct` out when the file has no `Load %` column, keeping a stored
+// value, and writes what a file with the column says (#1526). This adapter must store the same.
+describe('InMemoryLiftingProgramSpecRepository.saveProgramSpec load percentage (#1526)', () => {
+  it('keeps a stored load percentage for a file without the column, and sets or clears it for one with it', async () => {
+    const repo = new SeededRepository();
+    repo.seed(PROGRAM, [
+      spec('Squat', 5, { loadPct: 0.85 }),
+      spec('Bench Press', 5, { loadPct: 0.85 }),
+      spec('Deadlift', 5, { loadPct: 0.85 }),
+    ]);
+
+    await repo.saveProgramSpec(PROGRAM, [
+      spec('Squat', 4),
+      spec('Bench Press', 4, { loadPct: 0.7 }),
+      spec('Deadlift', 4, { loadPct: null }),
+    ]);
+
+    const rows = await repo.getProgramSpec(PROGRAM);
+    expect(rows.map((r) => [r.lift, r.sets, r.loadPct])).toEqual([
+      ['Squat', 4, 0.85],
+      ['Bench Press', 4, 0.7],
+      ['Deadlift', 4, undefined],
+    ]);
+  });
+});

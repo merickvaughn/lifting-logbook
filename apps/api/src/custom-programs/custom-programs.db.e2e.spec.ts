@@ -85,6 +85,37 @@ describeOrSkip('Custom program weekType (#1187, DB e2e)', () => {
     expect(res.statusCode).toBe(201);
   });
 
+  // #1526: a row's load percentage is stored, read back by the editor and by planning, and
+  // cleared by a save that sends null.
+  it('stores a load percentage, returns it to the editor and the plan, and clears it on null', async () => {
+    const created = await post('load percentage', { loadPct: 0.7 });
+    expect(created.statusCode).toBe(201);
+    const { id } = created.json() as { id: string };
+    const auth = { authorization: `Bearer ${USER}` };
+
+    const read = await server().inject({ method: 'GET', url: `/programs/custom/${id}`, headers: auth });
+    expect((read.json() as { specs: Array<{ loadPct?: number }> }).specs[0]?.loadPct).toBe(0.7);
+    const plan = await server().inject({ method: 'GET', url: `/programs/${id}/spec`, headers: auth });
+    expect(plan.statusCode).toBe(200);
+    expect((plan.json() as Array<{ loadPct?: number }>)[0]?.loadPct).toBe(0.7);
+
+    const cleared = await server().inject({
+      method: 'PUT',
+      url: `/programs/custom/${id}`,
+      headers: { ...auth, 'content-type': 'application/json' },
+      payload: JSON.stringify({ specs: [{ ...SPEC_ROW, loadPct: null }] }),
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect((cleared.json() as { specs: Array<Record<string, unknown>> }).specs[0]).not.toHaveProperty('loadPct');
+    expect((await owner.customProgramSpec.findFirst({ where: { programId: id } }))?.loadPct).toBeNull();
+  });
+
+  it('returns 400 for a load percentage above the whole max', async () => {
+    const res = await post('load percentage too high', { loadPct: 85 });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { message: string[] }).message).toEqual(['specs.0.loadPct must not be greater than 1']);
+  });
+
   it('still reads back a stored row whose weekType is outside WeekType', async () => {
     const program = await owner.customProgram.create({
       data: { userId: USER, name: 'legacy', specs: { create: [{ ...SPEC_ROW, weekType: 'legacy-value' }] } },

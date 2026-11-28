@@ -33,6 +33,7 @@ type SpecRow = {
   weekType: string | null;
   progression: string | null;
   repsLow: number | null;
+  loadPct: number | null;
 };
 
 /** The 400 for a built-in program: its spec is immutable seed data. */
@@ -58,6 +59,7 @@ function toSpec(s: SpecRow): LiftingProgramSpec {
     ...(s.weekType !== null && { weekType: s.weekType as 'training' | 'test' | 'deload' }),
     ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
     ...(s.repsLow !== null && { repsLow: s.repsLow }),
+    ...(s.loadPct !== null && { loadPct: s.loadPct }),
   };
 }
 
@@ -162,6 +164,9 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               wtDecrementPct: r.wtDecrementPct,
               activation: r.activation,
               weekType: r.weekType ?? null,
+              // A file with no `Load %` column leaves `loadPct` out, so the upsert keeps a stored
+              // value on update (#1526); a blank cell is null and clears it.
+              ...(r.loadPct !== undefined && { loadPct: r.loadPct }),
               // No `progression`/`repsLow` (#1210): a spec import never carries them, and the
               // upsert leaves an omitted column alone on update, so a re-import keeps a stored
               // override, such as a backfilled `amrap_gated`. A created row gets null.

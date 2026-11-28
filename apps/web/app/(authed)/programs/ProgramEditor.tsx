@@ -84,6 +84,43 @@ function NumberField({ value, min, max, onCommit, ...inputProps }: NumberFieldPr
   );
 }
 
+/** A stored fraction as the whole percent the field shows: 0.7 is 70, not 70.00000000000001. */
+const percentOf = (share: number | null | undefined): string =>
+  share == null ? '' : String(Number((share * 100).toFixed(4)));
+
+type LoadPctFieldProps = Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  'type' | 'value' | 'min' | 'max' | 'onChange' | 'onBlur'
+> & {
+  value: number | null | undefined;
+  onCommit: (value: number | null) => void;
+};
+
+// A row's load percentage (#1526), edited as a whole percent and stored as a fraction. Blank is
+// no load percentage: the row plans from the whole max. Like NumberField it clamps, to 1–100%, and
+// leaves partial text ("-") uncommitted.
+function LoadPctField({ value, onCommit, ...inputProps }: LoadPctFieldProps) {
+  const [draft, setDraft] = useState(percentOf(value));
+  return (
+    <input
+      {...inputProps}
+      type="number"
+      min={1}
+      max={100}
+      placeholder="100"
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const n = Number(raw);
+        if (raw.trim() === '') onCommit(null);
+        else if (Number.isFinite(n)) onCommit(Math.min(Math.max(n, 1), 100) / 100);
+      }}
+      onBlur={() => setDraft(percentOf(value))}
+    />
+  );
+}
+
 export default function ProgramEditor({
   mode,
   existing,
@@ -165,7 +202,7 @@ export default function ProgramEditor({
     instId: string,
     week: EditableWeek,
     field: keyof WeekParams,
-    value: number | boolean | string,
+    value: number | boolean | string | null,
   ) {
     setDays((prev) =>
       prev.map((d) =>
@@ -321,6 +358,7 @@ export default function ProgramEditor({
                             <th>AMRAP</th>
                             <th>Increment</th>
                             <th>Warmup %</th>
+                            <th>Load %</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -376,6 +414,14 @@ export default function ProgramEditor({
                                     aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} warmup percents`}
                                     onChange={(e) => updateInstanceWeek(day.id, inst.id, week, 'warmUpPct', e.target.value)}
                                     placeholder="0.4,0.5,0.6"
+                                  />
+                                </td>
+                                <td>
+                                  <LoadPctField
+                                    className={styles.specInput}
+                                    value={p.loadPct}
+                                    aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} Week ${week} load percent`}
+                                    onCommit={(v) => updateInstanceWeek(day.id, inst.id, week, 'loadPct', v)}
                                   />
                                 </td>
                               </tr>

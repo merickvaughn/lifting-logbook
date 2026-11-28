@@ -372,6 +372,15 @@ describe("buildProgramSpecPreview", () => {
     const preview = buildProgramSpecPreview([spec()], [spec()]);
     expect(preview).toMatchObject({ creates: 0, updates: 0, skips: 1 });
   });
+
+  // #1526: a file with no `Load %` column keeps the stored value, so only a stated one can differ.
+  it("updates on a changed or cleared load percentage, and skips a file without the column", () => {
+    const stored = [spec({ loadPct: 0.85 })];
+    expect(buildProgramSpecPreview([spec({ loadPct: 0.7 })], stored)).toMatchObject({ updates: 1, skips: 0 });
+    expect(buildProgramSpecPreview([spec({ loadPct: null })], stored)).toMatchObject({ updates: 1, skips: 0 });
+    expect(buildProgramSpecPreview([spec()], stored)).toMatchObject({ updates: 0, skips: 1 });
+    expect(buildProgramSpecPreview([spec({ loadPct: null })], [spec()])).toMatchObject({ updates: 0, skips: 1 });
+  });
 });
 
 // The shared create/update/skip decision used by BOTH the preview builders above

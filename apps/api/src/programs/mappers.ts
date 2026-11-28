@@ -178,6 +178,7 @@ export const toLiftingProgramSpecResponse = (
   activation: s.activation,
   ...(s.progression !== undefined && { progression: s.progression }),
   ...(s.repsLow !== undefined && { repsLow: s.repsLow }),
+  ...(s.loadPct != null && { loadPct: s.loadPct }),
 });
 
 /**

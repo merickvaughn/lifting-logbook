@@ -63,11 +63,14 @@ export class InMemoryLiftingProgramSpecRepository
       (r) => programSpecRowKind(r, existingByKey),
       (r, _kind, key) => {
         // Stores what the Prisma adapter's upsert stores (#1210): never the imported row's
-        // progression fields, but the stored row's, except a `repsLow` the new `reps` falls below.
-        const { progression: _p, repsLow: _r, ...imported } = r;
+        // progression fields, but the stored row's, except a `repsLow` the new `reps` falls below;
+        // and the stored `loadPct` when the file has no `Load %` column (#1526).
+        const { progression: _p, repsLow: _r, loadPct, ...imported } = r;
         const stored = existingByKey.get(key);
+        const keptLoadPct = loadPct === undefined ? stored?.loadPct : loadPct;
         byKey.set(key, {
           ...imported,
+          ...(keptLoadPct != null && { loadPct: keptLoadPct }),
           ...(stored?.progression !== undefined && { progression: stored.progression }),
           ...(stored?.repsLow !== undefined && stored.repsLow <= r.reps && { repsLow: stored.repsLow }),
         });

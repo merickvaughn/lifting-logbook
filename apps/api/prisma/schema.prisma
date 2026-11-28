@@ -479,6 +479,8 @@ model CustomProgramSpec {
   // backfilled to `amrap_gated`; a new row may leave it null and follow the lift's value.
   progression    String?
   repsLow        Int?
+  // The share of the lift's max the row plans from, as a fraction (#1526). Null means 100%.
+  loadPct        Float?
   program        CustomProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
 
   // Enforces the natural key the import path keys on, so two concurrent imports of

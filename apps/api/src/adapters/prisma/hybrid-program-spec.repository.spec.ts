@@ -167,6 +167,27 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
     expect(args('Squat').create).not.toHaveProperty('repsLow');
   });
 
+  // #1526: a file with no `Load %` column leaves `loadPct` out of the upsert, so a stored value
+  // survives the update; a file with the column writes what it says, null included.
+  it('writes loadPct only when the imported row carries it', async () => {
+    const stored = (lift: string) => ({ ...spec(lift, 5), weekType: null, loadPct: 0.85 });
+    const { prisma, upsert } = makeSavePrisma([stored('Squat'), stored('Bench'), stored('Deadlift')]);
+    const repo = new HybridLiftingProgramSpecRepository(prisma, 'user-1');
+
+    await repo.saveProgramSpec(CUSTOM_PROGRAM_ID, [
+      spec('Squat', 4), // no column → kept
+      { ...spec('Bench', 5), loadPct: 0.7 }, // changed → written
+      { ...spec('Deadlift', 5), loadPct: null }, // blank cell → cleared
+    ]);
+
+    const args = (lift: string) =>
+      upsert.mock.calls.map((c) => c[0]).find((a) => a.where.programId_week_offset_lift_order.lift === lift);
+    expect(args('Squat').update).not.toHaveProperty('loadPct');
+    expect(args('Squat').create).not.toHaveProperty('loadPct');
+    expect(args('Bench').update).toMatchObject({ loadPct: 0.7 });
+    expect(args('Deadlift').update).toMatchObject({ loadPct: null });
+  });
+
   it('classifies create/update/skip from one snapshot read and counts an in-batch duplicate as skipped', async () => {
     const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null });
     const { prisma, findFirst, findMany, upsert, $transaction } = makeSavePrisma([
