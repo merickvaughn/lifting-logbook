@@ -19,6 +19,11 @@ export interface UserDataRows {
   strengthGoals: (StrengthGoalExportRow & { program: string })[];
   customPrograms: { id: string; name: string; specs: ProgramSpecExportRow[] }[];
   customLifts: { id: string; name: string }[];
+  /**
+   * Barbell complex definitions (#1495, #1506): each a name and its components, where a custom
+   * lift is its id, as `customLifts` holds it.
+   */
+  barbellComplexes: StoredRow[];
   /** Null until the user changes a setting. */
   userSettings: { activeProgram: string | null } | null;
   /** Typed where the lift-record CSV reads each set's status (#1308). */

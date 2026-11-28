@@ -172,6 +172,30 @@ describe('Barbell complexes HTTP (e2e, in-memory adapters, #1495)', () => {
     expect((await user('PATCH', `/lifts/complexes/${created.id}`, { name: 'Front Squat' })).statusCode).toBe(400);
   });
 
+  it("refuses a lift's name in any case, a catalog lift's and a custom lift's (#1506)", async () => {
+    const user = as('complex-lift-name-case');
+    const lower = await user('POST', '/lifts/complexes', { name: 'squat', components: BEAR_COMPONENTS });
+    expect(lower.statusCode).toBe(400);
+    expect((lower.json() as { message: string }).message).toBe("'squat' is a lift's name; give the complex another");
+    expect((await user('POST', '/lifts/custom', { name: 'Zercher Squat', classification: 'compound' })).statusCode).toBe(201);
+    expect((await user('POST', '/lifts/complexes', { name: 'ZERCHER SQUAT', components: BEAR_COMPONENTS })).statusCode).toBe(
+      400,
+    );
+  });
+
+  it("refuses a custom lift named after a complex in any case, on create and on rename (#1506)", async () => {
+    const user = as('custom-lift-complex-name');
+    await create(user, 'Bear');
+    const res = await user('POST', '/lifts/custom', { name: 'bear', classification: 'compound' });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { message: string }).message).toBe("'bear' is a complex's name; give the lift another");
+    const lift = (await user('POST', '/lifts/custom', { name: 'Grizzly', classification: 'compound' })).json() as {
+      id: string;
+    };
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'BEAR' })).statusCode).toBe(400);
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'Grizzly Bear' })).statusCode).toBe(200);
+  });
+
   it('refuses a custom lift whose name a program row would read as a complex', async () => {
     const user = as('complex-reserved-prefix');
     expect((await user('POST', '/lifts/custom', { name: 'complex:EMOM', classification: 'compound' })).statusCode).toBe(409);

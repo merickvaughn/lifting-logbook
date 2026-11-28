@@ -11,7 +11,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { NamedLift, lookupLift } from '@lifting-logbook/core';
+import { NamedLift, canonicalAliasFor, lookupLift } from '@lifting-logbook/core';
 import { BarbellComplex, BarbellComplexResponse, ComplexComponent } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -62,11 +62,17 @@ function checkedComponents(
 
 /**
  * A complex's name, trimmed. A lift's name is refused: the timer and a lift's settings find a lift
- * by the name a plan shows, so a complex called `Squat` would read as the lift.
+ * by the name a plan shows, so a complex called `Squat` would read as the lift. Case is ignored
+ * (#1506), as it is for a custom lift's name, so `squat` is refused too.
  */
 function checkedName(name: string, customLifts: readonly NamedLift[]): string {
   const trimmed = name.trim();
-  if (modificationLiftId(trimmed, customLifts) !== undefined) {
+  const lower = trimmed.toLowerCase();
+  if (
+    modificationLiftId(trimmed, customLifts) !== undefined ||
+    canonicalAliasFor(trimmed) !== undefined ||
+    customLifts.some((lift) => lift.name.toLowerCase() === lower)
+  ) {
     throw new BadRequestException(`'${trimmed}' is a lift's name; give the complex another`);
   }
   return trimmed;
