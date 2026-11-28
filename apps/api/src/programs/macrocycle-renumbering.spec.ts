@@ -56,6 +56,26 @@ describe('renumberPreImageKeys', () => {
     });
   });
 
+  // #1485: a stored number can be negative, and its keys must move with its sets.
+  it('moves set and legacy-row keys on a negative number, and leaves the positive number it shares digits with', () => {
+    const moved = renumberPreImageKeys(
+      {
+        '-2:1:20260302:Bench Press:1': set,
+        'macrocycle-row:-2': { kind: 'created', wrote: { macrocycleNum: -2 } },
+        '2:1:20260105:Squat:1': set,
+        'bench-press': { kind: 'updated', before: { weight: 180 }, wrote: { weight: 200 } },
+      },
+      new Map([[-2, 1]]),
+    );
+
+    expect(moved).toEqual({
+      '1:1:20260302:Bench Press:1': set,
+      'macrocycle-row:1': { kind: 'created', wrote: { macrocycleNum: 1 } },
+      '2:1:20260105:Squat:1': set,
+      'bench-press': { kind: 'updated', before: { weight: 180 }, wrote: { weight: 200 } },
+    });
+  });
+
   it('matches the whole number, not a prefix of it', () => {
     expect(renumberPreImageKeys({ '12:1:20250303:Squat:1': set }, new Map([[1, 2]]))).toBeNull();
   });
