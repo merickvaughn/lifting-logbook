@@ -216,6 +216,12 @@ const KIND_FIELDS: Record<ImportKind, FieldOption[]> = {
     { key: 'activation', label: 'Activation' },
     { key: 'weekType', label: 'Week Type' },
   ],
+  complexes: [
+    { key: 'complex', label: 'Complex' },
+    { key: 'component', label: 'Component' },
+    { key: 'lift', label: 'Lift' },
+    { key: 'reps', label: 'Reps' },
+  ],
 };
 
 function getAllFieldsForKind(kind: ImportKind): FieldOption[] {
@@ -2630,7 +2636,11 @@ export function ImportWizard({
                                       ? // An incomplete row has no value to show, so its reason
                                         // goes here instead of an empty cell (#1402).
                                         (d.after ?? d.message)
-                                      : 'unchanged'}
+                                      : // A skipped complex says why (#1514).
+                                        (d.message ?? 'unchanged')}
+                                  {d.message && d.after && d.kind !== 'skip' && !d.status && (
+                                    <span className={styles.deltaMessage}>{d.message}</span>
+                                  )}
                                 </td>
                                 <td>
                                   {!excluded ? (

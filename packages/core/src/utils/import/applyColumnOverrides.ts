@@ -1,6 +1,7 @@
 import { ImportKind } from '@lifting-logbook/types';
 import { SpreadsheetCell } from '../../models';
 import {
+  COMPLEX_HEADER_MAP,
   LIFT_RECORD_HEADER_MAP,
   LIFTING_PROGRAM_SPEC_HEADER_MAP,
   TRAINING_MAX_HEADER_MAP,
@@ -17,6 +18,7 @@ const DESTINATION_KEY_TO_HEADER: Partial<Record<ImportKind, Map<string, string>>
   'lift-records': invertHeaderMap(LIFT_RECORD_HEADER_MAP),
   'training-maxes': invertHeaderMap(TRAINING_MAX_HEADER_MAP),
   'program-spec': invertHeaderMap(LIFTING_PROGRAM_SPEC_HEADER_MAP),
+  'complexes': invertHeaderMap(COMPLEX_HEADER_MAP),
 };
 
 function invertHeaderMap(map: Record<string, { key: string }>): Map<string, string> {

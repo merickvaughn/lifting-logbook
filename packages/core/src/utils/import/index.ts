@@ -32,6 +32,7 @@ export type {
   StretchStatusReason,
 } from './segmentLiftHistory';
 export * from './splitLiftRecords';
+export * from './validateComplexImport';
 export * from './validateLiftImport';
 export * from './validateLiftImportSoft';
 export * from './validateProgramSpecImport';

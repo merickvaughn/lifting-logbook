@@ -30,6 +30,16 @@ export const TRAINING_MAX_HEADER_MAP: Record<
   Lift: { key: "lift", type: "string" },
   Weight: { key: "weight", type: "number" },
 };
+// Barbell complex header mapping (#1514): one row per component, `Component` its 1-based position.
+export const COMPLEX_HEADER_MAP: Record<
+  string,
+  { key: string; type: string }
+> = {
+  Complex: { key: "complex", type: "string" },
+  Component: { key: "component", type: "number" },
+  Lift: { key: "lift", type: "string" },
+  Reps: { key: "reps", type: "number" },
+};
 // LiftingProgramSpec header mapping for parsing
 export const LIFTING_PROGRAM_SPEC_HEADER_MAP: Record<
   string,

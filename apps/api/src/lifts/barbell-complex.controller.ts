@@ -11,14 +11,14 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { NamedLift, canonicalAliasFor, lookupLift } from '@lifting-logbook/core';
+import { NamedLift, lookupLift } from '@lifting-logbook/core';
 import { BarbellComplex, BarbellComplexResponse, ComplexComponent } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
 import { IRepositoryFactory } from '../ports/factory';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
+import { complexComponentLift, isLiftName } from './barbell-complex.util';
 import { CreateBarbellComplexDto } from './create-barbell-complex.dto';
-import { modificationLiftId } from './lift-modification.util';
 import { UpdateBarbellComplexDto } from './update-barbell-complex.dto';
 
 /** The name a component shows when its custom lift has been deleted. */
@@ -37,9 +37,8 @@ function toBarbellComplexResponse(complex: BarbellComplex, customLifts: readonly
 }
 
 /**
- * The components, each checked to name a catalog or custom lift. A catalog lift keeps the name it
- * was given, which any spelling of its max resolves from (`currentMaxLookup`). A custom lift is
- * stored by its id, where its training max is kept (#1291), and which a rename doesn't change.
+ * The components, each checked to name a catalog or custom lift and stored as
+ * {@link complexComponentLift} says.
  *
  * A lift already in `stored` (the complex's current components) is kept unchecked, so a complex
  * whose custom lift was deleted can still be renamed or have its other components edited.
@@ -52,27 +51,18 @@ function checkedComponents(
   return components.map(({ lift, reps }) => {
     const name = lift.trim();
     if (stored.some((c) => c.lift === name)) return { lift: name, reps };
-    const { custom } = lookupLift(name, customLifts);
-    if (modificationLiftId(name, customLifts) === undefined) {
+    const resolved = complexComponentLift(name, customLifts);
+    if (resolved === undefined) {
       throw new BadRequestException(`'${name}' is not a lift`);
     }
-    return { lift: custom?.id ?? name, reps };
+    return { lift: resolved, reps };
   });
 }
 
-/**
- * A complex's name, trimmed. A lift's name is refused: the timer and a lift's settings find a lift
- * by the name a plan shows, so a complex called `Squat` would read as the lift. Case is ignored
- * (#1506), as it is for a custom lift's name, so `squat` is refused too.
- */
+/** A complex's name, trimmed. A lift's name is refused ({@link isLiftName}). */
 function checkedName(name: string, customLifts: readonly NamedLift[]): string {
   const trimmed = name.trim();
-  const lower = trimmed.toLowerCase();
-  if (
-    modificationLiftId(trimmed, customLifts) !== undefined ||
-    canonicalAliasFor(trimmed) !== undefined ||
-    customLifts.some((lift) => lift.name.toLowerCase() === lower)
-  ) {
+  if (isLiftName(trimmed, customLifts)) {
     throw new BadRequestException(`'${trimmed}' is a lift's name; give the complex another`);
   }
   return trimmed;

@@ -183,16 +183,17 @@ async function seedUser(
   await prisma.liftMetadata.create({
     data: { userId, lift: 'Squat', muscleGroups: [mark], substitutions: [] },
   });
-  await prisma.customLift.create({
+  const customLift = await prisma.customLift.create({
     data: { userId, name: `${mark} press`, classification: 'accessory', patterns: [], jointActions: [] },
   });
-  await prisma.barbellComplex.create({
+  // A custom lift component is stored by its id (#1291), which the import must resolve by name.
+  const complex = await prisma.barbellComplex.create({
     data: {
       userId,
       name: `${mark} complex`,
       components: [
         { lift: 'Romanian Deadlift', reps: 6 },
-        { lift: 'Front Squat', reps: 6 },
+        { lift: customLift.id, reps: 3 },
       ],
     },
   });
@@ -262,17 +263,31 @@ async function seedUser(
       userId,
       name: `${mark} plan`,
       specs: {
-        create: {
-          week: 1,
-          lift: 'Squat',
-          increment: 5,
-          order: 1,
-          sets: 3,
-          reps: 5,
-          warmUpPct: '.5',
-          wtDecrementPct: 0,
-          activation: mark,
-        },
+        create: [
+          {
+            week: 1,
+            lift: 'Squat',
+            increment: 5,
+            order: 1,
+            sets: 3,
+            reps: 5,
+            warmUpPct: '.5',
+            wtDecrementPct: 0,
+            activation: mark,
+          },
+          // A row that plans the complex (#1514).
+          {
+            week: 1,
+            lift: `complex:${complex.id}`,
+            increment: 5,
+            order: 2,
+            sets: 3,
+            reps: 1,
+            warmUpPct: '',
+            wtDecrementPct: 0,
+            activation: '',
+          },
+        ],
       },
     },
   });
@@ -346,6 +361,10 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     });
     await prisma.trainingMax.create({
       data: { userId: USER_IMPORT, program: ACTIVE_PROGRAM, lift: 'Deadlift', weight: 350, dateUpdated: DAY },
+    });
+    // The owner's complex names this custom lift, which the importing account has under its own id.
+    await prisma.customLift.create({
+      data: { userId: USER_IMPORT, name: 'owner-marker press', classification: 'accessory', patterns: [], jointActions: [] },
     });
 
     app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), { logger: false });
@@ -422,16 +441,28 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(logbook.tables['userSettings']).toMatchObject({ activeProgram: ACTIVE_PROGRAM });
   });
 
-  it("keeps the owner's complex with its components in order (#1506)", () => {
+  it("keeps the owner's complex with its components in order (#1506)", async () => {
+    const press = await prisma.customLift.findFirstOrThrow({ where: { userId: USER_OWNER } });
     expect(logbook.tables['barbellComplexes']).toEqual([
       expect.objectContaining({
         name: 'owner-marker complex',
         components: [
           { lift: 'Romanian Deadlift', reps: 6 },
-          { lift: 'Front Squat', reps: 6 },
+          { lift: press.id, reps: 3 },
         ],
       }),
     ]);
+  });
+
+  it('writes complexes.csv and the row planning a complex by name, not id (#1514)', () => {
+    expect(parseCsvText(files['complexes.csv']!)).toEqual([
+      ['Complex', 'Component', 'Lift', 'Reps'],
+      ['owner-marker complex', '1', 'Romanian Deadlift', '6'],
+      ['owner-marker complex', '2', 'owner-marker press', '3'],
+    ]);
+    expect(files[`other-programs/owner-marker-plan-${OWNER_PROGRAM_ID.slice(0, 8)}/program-spec.csv`]).toContain(
+      'complex:owner-marker complex',
+    );
   });
 
   it('never shows another user, in any file', () => {
@@ -507,6 +538,8 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     ['lift-records.csv', 'lift-records', () => files['lift-records.csv']!, ACTIVE_PROGRAM],
     ['training-maxes.csv', 'training-maxes', () => files['training-maxes.csv']!, ACTIVE_PROGRAM],
     ['strength-goals.csv', 'strength-goals', () => files['strength-goals.csv']!, ACTIVE_PROGRAM],
+    // Before the program spec, which names its complex (#1514).
+    ['complexes.csv', 'complexes', () => files['complexes.csv']!, ACTIVE_PROGRAM],
     [
       'program-spec.csv',
       'program-spec',
@@ -531,6 +564,20 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
       expect(res.statusCode).toBe(200);
       expect((res.json() as ImportCommitResponse).created).toBeGreaterThan(0);
     });
+  });
+
+  // The imports above ran in file order: complexes.csv, then the custom program's spec.
+  it("restores the complex on the importing account's lifts, and the spec row plans it (#1514)", async () => {
+    const press = await prisma.customLift.findFirstOrThrow({ where: { userId: USER_IMPORT, name: 'owner-marker press' } });
+    const restored = await prisma.barbellComplex.findFirstOrThrow({
+      where: { userId: USER_IMPORT, name: 'owner-marker complex' },
+    });
+    expect(restored.components).toEqual([
+      { lift: 'Romanian Deadlift', reps: 6 },
+      { lift: press.id, reps: 3 },
+    ]);
+    const row = await prisma.customProgramSpec.findFirstOrThrow({ where: { programId: IMPORT_PROGRAM_ID, order: 2 } });
+    expect(row.lift).toBe(`complex:${restored.id}`);
   });
 
   it('restores the relative goal and the goal in kg as they were', async () => {

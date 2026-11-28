@@ -1,5 +1,6 @@
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import {
+  COMPLEX_HEADER_MAP,
   LIFT_RECORD_HEADER_MAP,
   TRAINING_MAX_HEADER_MAP,
 } from '../../constants';
@@ -264,5 +265,29 @@ export function serializeProgramSpec(rows: readonly ProgramSpecExportRow[]): str
   return serializeCsvText([
     PROGRAM_SPEC_COLUMNS.map(([header]) => header),
     ...rows.map((r) => PROGRAM_SPEC_COLUMNS.map(([, value]) => value(r))),
+  ]);
+}
+
+/** A barbell complex as `complexes.csv` writes it: its name and its components, lifts by name. */
+export interface ComplexExportRow {
+  name: string;
+  components: readonly { lift: string; reps: number }[];
+}
+
+/**
+ * `complexes.csv` (#1514): one row per component, in order, which the `complexes` import reads
+ * back (`parseComplexes`). A custom lift is written by name, as every other file writes one.
+ */
+export function serializeComplexes(complexes: readonly ComplexExportRow[]): string {
+  return serializeCsvText([
+    Object.keys(COMPLEX_HEADER_MAP),
+    ...complexes.flatMap((c) =>
+      c.components.map((component, i) => [
+        escapeCsvFormula(c.name),
+        i + 1,
+        escapeCsvFormula(component.lift),
+        component.reps,
+      ]),
+    ),
   ]);
 }

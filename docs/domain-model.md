@@ -225,14 +225,27 @@ neither is part of the natural key or id.
   lift is gone. A complex can't take a lift's name, and a custom lift can't take a complex's name
   or start with `complex:`. Both checks ignore case
   ([#1506](https://github.com/merickvaughn/lifting-logbook/issues/1506)).
-- Download My Data writes the definitions to `logbook.json` as `barbellComplexes`, as it writes
-  custom lifts; no import reads them back yet. Clear data keeps them, so a snapshot doesn't hold
-  them. The missing-max list (`GET .../training-maxes/missing`) names lifts with logged sets and
+- Download My Data writes the definitions to `logbook.json` as `barbellComplexes`, and to
+  `complexes.csv`, one row per component (`Complex`, `Component`, `Lift`, `Reps`) with a custom
+  lift by name. `/import` reads that file back as a fifth kind, `complexes`
+  ([#1514](https://github.com/merickvaughn/lifting-logbook/issues/1514)): each component resolves
+  to a catalog lift or the importing account's custom lift of that name, as the editor resolves
+  it. A complex whose name is a lift's or one of the account's complexes' (ignoring case), or
+  that names a lift the account lacks, is a skip in the preview, saying why, so the rest still
+  import; one the account already has with the same lifts is skipped silently. A complex is
+  account-wide, so the program the import is made in only files its batch, whose undo deletes the
+  complexes it created. A separate file, not program-spec rows carrying definitions, because a
+  complex no program plans still has to come back. Clear data keeps complexes, so a snapshot
+  doesn't hold them. The missing-max list (`GET .../training-maxes/missing`) names lifts with logged sets and
   no max, so it leaves out a component that has none; the workout page asks for it instead
   ([#1506](https://github.com/merickvaughn/lifting-logbook/issues/1506)).
 - A program row plans a complex by naming it in `lift` as `complex:<id>` (`complexLift`,
   `complexIdOf` in `packages/core`). The rest of the row (sets, reps, percentages, increment) means
-  what it does for a lift.
+  what it does for a lift. An export's `program-spec.csv` writes the row as `complex:<name>`, since
+  the id means nothing on another account, and a program-spec import stores `complex:<x>` as the
+  account's complex whose id is `x`, or else whose name is `x` ignoring case. A row naming neither
+  is stored as written, plans nothing, and says so in the preview, so `complexes.csv` imports
+  first (#1514).
 - **Weakest-link rule.** The row's percentages are of the lowest training max among the complex's
   lifts (`complexMax`), rounded as any planned set is. That lift is shown as limiting. A complex has
   no max or progression of its own, and while any of its lifts has no max it plans nothing and asks

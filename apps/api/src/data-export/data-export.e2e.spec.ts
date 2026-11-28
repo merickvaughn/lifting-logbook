@@ -83,6 +83,7 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     const files = unzip((await exportFor('export-empty')).rawPayload);
 
     expect(Object.keys(files).sort()).toEqual([
+      'complexes.csv',
       'lift-records.csv',
       'logbook.json',
       'program-spec.csv',

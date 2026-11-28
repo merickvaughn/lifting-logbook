@@ -1,5 +1,8 @@
 import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
 import {
+  complexIdOf,
+  complexLift,
+  serializeComplexes,
   serializeLiftRecords,
   serializeProgramSpec,
   serializeStrengthGoals,
@@ -33,15 +36,26 @@ export function rowCounts(rows: UserDataRows): Record<string, number> {
  * Built-in programs have no spec rows of their own, so their `program-spec.csv` is a header.
  *
  * Every CSV writes a custom lift by name, not id: it reads in a spreadsheet, and import resolves
- * either, but only the name means anything on another account.
+ * either, but only the name means anything on another account. `complexes.csv` holds the lifter's
+ * complexes, which belong to no program, and a spec row names a complex by name for the same
+ * reason (#1514).
  */
 export function buildExportFiles(rows: UserDataRows, now: Date): Record<string, string> {
   const names = new Map(rows.customLifts.map((lift) => [lift.id, lift.name]));
   const named = <R extends { lift: string }>(row: R): R => ({ ...row, lift: names.get(row.lift) ?? row.lift });
+  const complexes = storedComplexes(rows.barbellComplexes);
+  // A spec row plans a complex as `complex:<id>`, an id another account doesn't have, so it is
+  // written by the complex's name, which the program-spec import reads back (#1514).
+  const complexNames = new Map(complexes.map((c) => [c.id, c.name]));
+  const namedSpec = <R extends { lift: string }>(row: R): R => {
+    const id = complexIdOf(row.lift);
+    const complex = id === undefined ? undefined : complexNames.get(id);
+    return complex === undefined ? named(row) : { ...row, lift: complexLift(complex) };
+  };
   const maxesFor = (program: string) => rows.trainingMaxes.filter((m) => m.program === program).map(named);
   const goalsFor = (program: string) => rows.strengthGoals.filter((g) => g.program === program).map(named);
   const specsFor = (program: string) =>
-    (rows.customPrograms.find((p) => p.id === program)?.specs ?? []).map(named);
+    (rows.customPrograms.find((p) => p.id === program)?.specs ?? []).map(namedSpec);
 
   const parts = exportParts(rows.liftRecords.map(named), rows.macrocycles);
   const files: Record<string, string> = {};
@@ -84,12 +98,34 @@ export function buildExportFiles(rows: UserDataRows, now: Date): Record<string, 
     }
   }
 
+  files['complexes.csv'] = serializeComplexes(
+    complexes.map((c) => ({ name: c.name, components: c.components.map(named) })),
+  );
+
   files['logbook.json'] = JSON.stringify({
     schemaVersion: LOGBOOK_SCHEMA_VERSION,
     exportedAt: now.toISOString(),
     tables: rows,
   });
   return files;
+}
+
+/**
+ * The stored complexes, read from their rows. `components` is a JSON column, so a component is
+ * kept only when it has the shape the API writes.
+ */
+function storedComplexes(
+  stored: UserDataRows['barbellComplexes'],
+): { id: string; name: string; components: { lift: string; reps: number }[] }[] {
+  return stored.map((row) => ({
+    id: String(row['id']),
+    name: String(row['name']),
+    components: (Array.isArray(row['components']) ? row['components'] : []).flatMap((c: unknown) =>
+      typeof c === 'object' && c !== null && 'lift' in c && 'reps' in c && typeof c.lift === 'string' && typeof c.reps === 'number'
+        ? [{ lift: c.lift, reps: c.reps }]
+        : [],
+    ),
+  }));
 }
 
 /**

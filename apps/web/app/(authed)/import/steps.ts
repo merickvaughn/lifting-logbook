@@ -5,6 +5,7 @@ export const KIND_LABEL: Record<ImportKind, string> = {
   'training-maxes': 'Training Maxes',
   'strength-goals': 'Strength Goals',
   'program-spec': 'Program',
+  complexes: 'Complexes',
 };
 
 export const ALL_KINDS: ImportKind[] = [
@@ -12,6 +13,7 @@ export const ALL_KINDS: ImportKind[] = [
   'training-maxes',
   'strength-goals',
   'program-spec',
+  'complexes',
 ];
 
 /** A program the wizard can import into. */
