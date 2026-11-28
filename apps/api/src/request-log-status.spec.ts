@@ -7,14 +7,15 @@ import {
   NotFoundException,
   Res,
 } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { APP_INTERCEPTOR, NestFactory } from '@nestjs/core';
 import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import type { FastifyReply } from 'fastify';
 import { LoggerModule } from 'nestjs-pino';
-import { pinoHttpOptions } from './app.module';
+import { AppModule, pinoHttpOptions } from './app.module';
+import { ThrownErrorInterceptor } from './observability/thrown-error.interceptor';
 
 // Regression coverage for #1127: every API request log line recorded
 // res.statusCode as null. pino-http applies the standard serializers before
@@ -26,7 +27,7 @@ interface RequestLogLine {
   msg: string;
   req?: { url: string; headers: Record<string, string> };
   res?: { statusCode: number | null; headers: Record<string, string> };
-  err?: { type: string; message: string };
+  err?: { type: string; message: string; stack?: string };
 }
 
 const lines: RequestLogLine[] = [];
@@ -65,6 +66,7 @@ class ProbeController {
 @Module({
   imports: [LoggerModule.forRoot({ pinoHttp: [pinoHttpOptions, capture] })],
   controllers: [ProbeController],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: ThrownErrorInterceptor }],
 })
 class ProbeModule {}
 
@@ -114,14 +116,28 @@ describe('request log lines through the real logging setup', () => {
     expect(line.msg).toBe(msg);
   });
 
-  it('still serializes the error on a failed request', async () => {
+  // #1510: the specs boot Nest with `logger: false`, which silences its ExceptionsHandler, so
+  // this line is the only place a 500's cause shows in test and CI output.
+  it('logs the error a failed request threw, with its stack', async () => {
     const url = '/probe/boom?err=1';
     await fetch(`${baseUrl}${url}`);
 
     const line = await logLineFor(url);
-    expect(line.err).toMatchObject({
-      type: 'Error',
-      message: 'failed with status code 500',
+    expect(line.err).toMatchObject({ type: 'Error', message: 'probe failure' });
+    expect(line.err?.stack).toContain('ProbeController.boom');
+  });
+
+  it('adds no error to a 4xx line', async () => {
+    const url = '/probe/not-found?err=1';
+    await fetch(`${baseUrl}${url}`);
+
+    expect((await logLineFor(url)).err).toBeUndefined();
+  });
+
+  it('registers the interceptor in AppModule', () => {
+    expect(Reflect.getMetadata('providers', AppModule)).toContainEqual({
+      provide: APP_INTERCEPTOR,
+      useClass: ThrownErrorInterceptor,
     });
   });
 

@@ -371,6 +371,13 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(rows).toEqual([{ role: 'lifting_app', rolsuper: false, rolbypassrls: false }]);
   });
 
+  // #1510: on the database every worker shared, another suite's ALTER TABLE deadlocked this
+  // suite's program-spec preview into a 500.
+  it("runs on this Jest worker's own database", async () => {
+    const [{ db }] = await prisma.$queryRaw<[{ db: string }]>`SELECT current_database() AS db`;
+    expect(db).toMatch(new RegExp(`_w${process.env.JEST_WORKER_ID ?? '1'}$`));
+  });
+
   it('accounts for every model in the schema', () => {
     const models = Prisma.dmmf.datamodel.models.map((model) => model.name).sort();
     expect(models).toEqual([...Object.keys(LOGBOOK_KEYS), ...NOT_EXPORTED].sort());

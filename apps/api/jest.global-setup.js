@@ -35,6 +35,10 @@
 // by that point Docker and migrations are both known-good, so the failure is
 // specific to the ALTER ROLE statement itself.
 //
+// In paths 1 and 3 it then clones the migrated database once per Jest worker, and
+// jest.env.setup.js points each worker's two connection strings at its own copy, so no
+// two suites share a database (#1510, jest.worker-db.js).
+//
 // In paths 1 and 3 the spec reads LIFTING_TC_DATABASE_URL / LIFTING_TC_OWNER_DATABASE_URL
 // (not DATABASE_URL) because jest.env.setup.js force-blanks DATABASE_URL in every
 // worker to keep the in-memory e2e suite wiring InMemoryRepositoryFactory. The DB
@@ -44,6 +48,7 @@
 
 const path = require('path');
 const { execSync } = require('child_process');
+const { createWorkerDatabases } = require('./jest.worker-db');
 
 // Pinned to a digest so local and CI runs are byte-identical. Keep this in sync
 // with .github/workflows/ci.yml's postgres service image. To update: pull the
@@ -168,7 +173,7 @@ async function provisionAppRolePassword(ownerUrl) {
 // to the hard-fail path.
 const SKIP_DB_E2E_TRUTHY = new Set(['1', 'true', 'yes']);
 
-module.exports = async function globalSetup() {
+module.exports = async function globalSetup(globalConfig) {
   if (process.env.DATABASE_URL) {
     const ownerUrl = process.env.DATABASE_URL;
     try {
@@ -176,6 +181,7 @@ module.exports = async function globalSetup() {
     } catch (err) {
       throw new Error(buildRoleProvisioningFailedMessage(err));
     }
+    await createWorkerDatabases(ownerUrl, globalConfig.maxWorkers);
     process.env.LIFTING_TC_OWNER_DATABASE_URL = ownerUrl;
     process.env.LIFTING_TC_DATABASE_URL = appRoleUrl(ownerUrl);
     // Clear DATABASE_URL so worker setupFiles' BLOCK list takes effect uniformly.
@@ -254,6 +260,14 @@ module.exports = async function globalSetup() {
     await container.stop().catch(() => {});
     globalThis.__LL_PG_CONTAINER__ = undefined;
     throw new Error(buildRoleProvisioningFailedMessage(err));
+  }
+
+  try {
+    await createWorkerDatabases(url, globalConfig.maxWorkers);
+  } catch (err) {
+    await container.stop().catch(() => {});
+    globalThis.__LL_PG_CONTAINER__ = undefined;
+    throw err;
   }
 
   process.env.LIFTING_TC_OWNER_DATABASE_URL = url;
