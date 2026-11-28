@@ -117,34 +117,17 @@ type JsonCopy<T> = { [K in keyof T]: T[K] };
  * (`macrocycle-row:<n>`). JavaScript and Postgres read it alike, so the Prisma adapter filters
  * batches in SQL with the same pattern {@link preImageKeyNumber} uses. Two kinds of key hold no
  * number and read as null: a 1RM split's training max, keyed by lift id, and a non-cycle set,
- * keyed `non-cycle:<natural key>` (#1184). A key on a negative macrocycle number reads as null
- * too, since the pattern allows no sign; undo reads keys with {@link signedPreImageKeyNumber}
- * instead (#1235), and #1485 tracks the other readers.
+ * keyed `non-cycle:<natural key>` (#1184). The number may be negative, as the #1200 migration's
+ * `key_number` reads it: one stored before #1224 checked its range, or one
+ * `macrocycle_renumber_reverse()` put back, can be (#1235, #1485).
  */
-export const PRE_IMAGE_KEY_NUMBER = '^(?:macrocycle-row:)?([0-9]+)(?::|$)';
+export const PRE_IMAGE_KEY_NUMBER = '^(?:macrocycle-row:)?(-?[0-9]+)(?::|$)';
 
 const preImageKeyNumberPattern = new RegExp(PRE_IMAGE_KEY_NUMBER);
 
-/** The macrocycle number a lift-records pre-image key holds, else null. */
+/** The macrocycle number a lift-records pre-image key holds, negative ones included, else null. */
 export function preImageKeyNumber(key: string): number | null {
   const num = preImageKeyNumberPattern.exec(key)?.[1];
-  return num === undefined ? null : Number(num);
-}
-
-/**
- * {@link PRE_IMAGE_KEY_NUMBER} with a sign allowed, as the #1200 migration's `key_number` reads
- * it. A number stored before #1224 checked its range, or one `macrocycle_renumber_reverse()` put
- * back, can be negative (#1235).
- */
-const signedKeyNumberPattern = /^(?:macrocycle-row:)?(-?[0-9]+)(?::|$)/;
-
-/**
- * The macrocycle number a lift-records pre-image key holds, negative ones included, else null.
- * Undo tells sets and `legacy` rows from training maxes with it, so a set on a negative number
- * is deleted rather than read as a training max (#1235).
- */
-export function signedPreImageKeyNumber(key: string): number | null {
-  const num = signedKeyNumberPattern.exec(key)?.[1];
   return num === undefined ? null : Number(num);
 }
 
