@@ -198,6 +198,9 @@ sequences the runbooks below in reading order and explains what the signals mean
 | [Database unreachable](runbooks/database-unreachable.md) | DB connection error triage — SEV1 |
 | [Auth provider outage](runbooks/auth-provider-outage.md) | 401/403 surge + Clerk status incident — SEV2 |
 | [Deploy regression rollback](runbooks/deploy-regression-rollback.md) | Error rate spike correlated with a recent deploy — SEV2 |
+| [Staging CI flakiness](runbooks/staging-ci-flakiness.md) | `staging.yml` runs that go red or yellow on transient causes and pass when the failed jobs are re-run, or `Verify deploy prerequisites` failing with "deploy-api did not succeed" — SEV3 |
+| [Macrocycle rename rollback](runbooks/macrocycle-rename-rollback.md) | Reverting PR #1041 (ADR-038) after its `rename_cycle_to_macrocycle` migration has run, or that PR closed unmerged after its staging run migrated the staging database — SEV2 |
+| [Turn the import Assign step off](runbooks/import-assign-flag.md) | Stopping new assigned imports in an environment (`IMPORT_ASSIGN_ENABLED`): an Assign-step bug, a bad suggestion rate, or a rollout paused before production — SEV3 |
 | [Import suggestions from an AI model](runbooks/import-suggestions.md) | Turning the import wizard's AI suggestions on or off, a provider outage, or a local Ollama setup — SEV3 |
 
 ---
