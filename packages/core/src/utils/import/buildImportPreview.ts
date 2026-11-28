@@ -329,6 +329,7 @@ export function programSpecComparable(r: LiftingProgramSpec): string {
     wtDecrementPct: r.wtDecrementPct,
     activation: r.activation,
     weekType: r.weekType ?? null,
+    loadPct: r.loadPct ?? null,
   });
 }
 
@@ -339,7 +340,9 @@ export function programSpecRowKind(
 ): ImportRowKind {
   const prior = existingByKey.get(programSpecNaturalKey(r));
   if (!prior) return 'create';
-  return programSpecComparable(prior) === programSpecComparable(r) ? 'skip' : 'update';
+  // A file with no `Load %` column keeps the stored value (#1526), so it can't differ on it.
+  const incoming = r.loadPct === undefined ? { ...r, loadPct: prior.loadPct ?? null } : r;
+  return programSpecComparable(prior) === programSpecComparable(incoming) ? 'skip' : 'update';
 }
 
 /**

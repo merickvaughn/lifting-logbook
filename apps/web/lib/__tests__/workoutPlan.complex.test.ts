@@ -65,6 +65,23 @@ describe('buildLiftDetails — a row naming a complex plans from its weakest lif
     ]);
   });
 
+  // The usual complex, written directly (#1526): 3 rounds at 70%, rather than through a 70%
+  // warm-up and a decrement as the row above has to.
+  it('plans every work set at the row’s load percentage of the lowest component max', () => {
+    const maxes = [max('Power Clean', 135), max('Front Squat', 185), max('Push Press', 155)];
+    const atSeventy = { ...row, sets: 3, warmUpPct: '', wtDecrementPct: 0, loadPct: 0.7 };
+    const [detail] = buildLiftDetails(workout, [atSeventy], maxes, [], [BEAR]);
+    expect(detail?.tm).toBe(135);
+    expect(detail?.plannedSets.map((s) => [s.type, s.weight])).toEqual([
+      ['work', 95],
+      ['work', 95],
+      ['work', 95],
+    ]);
+    // Rounded to the row's increment: 94.5 to 90 at 10 lb.
+    const [coarse] = buildLiftDetails(workout, [{ ...atSeventy, increment: 10 }], maxes, [], [BEAR]);
+    expect(coarse?.plannedSets.map((s) => s.weight)).toEqual([90, 90, 90]);
+  });
+
   it('finds a component max stored under another spelling of the lift', () => {
     const maxes = [max('Power Clean', 135), max('front-squat', 120), max('Push Press', 155)];
     const [detail] = buildLiftDetails(workout, [row], maxes, [], [BEAR]);

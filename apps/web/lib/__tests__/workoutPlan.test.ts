@@ -1,3 +1,4 @@
+import { MROUND } from '@lifting-logbook/core';
 import type { LiftingProgramSpecResponse } from '@lifting-logbook/types';
 import {
   buildLiftDetails,
@@ -242,6 +243,42 @@ describe('computePlannedSets', () => {
     const warmups = sets.filter((s) => s.setLabel.startsWith('Warm-up'));
     expect(warmups).toHaveLength(6);
     expect(warmups[5]?.reps).toBe(1);
+  });
+
+  // The owner's OH Press-HV slot (#1141): Overhead Press's 103.75 max, run at 85%.
+  describe('a row with a load percentage (#1526)', () => {
+    const hv = makeSpec({ lift: 'Overhead Press', sets: 3, reps: 12, increment: 2.5, wtDecrementPct: 0.1, loadPct: 0.85 });
+
+    it('plans every set from that share of the max, rounded once to the increment', () => {
+      const scaled = 103.75 * 0.85; // 88.1875
+      const sets = computePlannedSets(hv, 103.75);
+      expect(sets.map((s) => [s.type, s.weight])).toEqual([
+        ['warmup', MROUND(scaled * 0.4, 2.5)],
+        ['warmup', MROUND(scaled * 0.5, 2.5)],
+        ['warmup', MROUND(scaled * 0.6, 2.5)],
+        ['work', MROUND(scaled, 2.5)],
+        ['work', MROUND(scaled * 0.9, 2.5)],
+        ['work', MROUND(scaled * 0.8, 2.5)],
+      ]);
+      // The same weights written out, so the formula above can't drift with the code.
+      expect(sets.map((s) => s.weight)).toEqual([35, 45, 52.5, 87.5, 80, 70]);
+    });
+
+    it('plans from the whole max with no load percentage, or a null one', () => {
+      const { loadPct: _l, ...full } = hv;
+      expect(computePlannedSets(full, 103.75).filter((s) => s.type === 'work').map((s) => s.weight)).toEqual([105, 92.5, 82.5]);
+      expect(computePlannedSets({ ...full, loadPct: undefined }, 103.75)).toEqual(computePlannedSets(full, 103.75));
+    });
+
+    it('scales a double lift’s working weight too', () => {
+      const row = { ...hv, sets: 2, warmUpPct: '', progression: 'double' as const, repsLow: 8 };
+      const rule = { type: 'double' as const, repsLow: 8, repsHigh: 12, increment: 2.5 };
+      expect(planLift(row, 103.75, { progression: { rule } }).map((s) => s.weight)).toEqual([87.5, 87.5]);
+    });
+
+    it('scales an own modification’s max as it does the lift’s', () => {
+      expect(planLift(hv, 200, { ownMax: 100 })).toEqual(computePlannedSets(hv, 100));
+    });
   });
 });
 

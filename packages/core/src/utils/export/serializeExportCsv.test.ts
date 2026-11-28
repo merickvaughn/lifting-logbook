@@ -348,19 +348,28 @@ describe('serializeProgramSpec', () => {
     weekType: 'training',
   };
 
+  // The export writes a blank `Load %` for a row with none, which reads back as null: no load
+  // percentage, rather than a file without the column (#1526).
   it('reads back through parseLiftingProgramSpec and is classified', () => {
     const table = parseCsvText(serializeProgramSpec([spec]));
-    expect(parseLiftingProgramSpec(table)).toEqual([spec]);
+    expect(parseLiftingProgramSpec(table)).toEqual([{ ...spec, loadPct: null }]);
     expect(classifyImport(table).type).toBe('program-spec');
   });
 
+  it('writes a load percentage as a fraction that reads back unchanged (#1526)', () => {
+    const table = parseCsvText(serializeProgramSpec([{ ...spec, loadPct: 0.85 }]));
+    const [header = [], row = []] = table;
+    expect(row[header.indexOf('Load %')]).toBe('0.85');
+    expect(parseLiftingProgramSpec(table)).toEqual([{ ...spec, loadPct: 0.85 }]);
+  });
+
   it('escapes a week type, which the custom-program API accepts as free text', () => {
-    const [, row] = parseCsvText(serializeProgramSpec([{ ...spec, weekType: '=HYPERLINK("x")' }]));
-    expect(row![row!.length - 1]).toBe(`'=HYPERLINK("x")`);
+    const [header = [], row = []] = parseCsvText(serializeProgramSpec([{ ...spec, weekType: '=HYPERLINK("x")' }]));
+    expect(row[header.indexOf('Week Type')]).toBe(`'=HYPERLINK("x")`);
   });
 
   it('leaves a missing week type empty, which the parser defaults', () => {
     const table = parseCsvText(serializeProgramSpec([{ ...spec, amrap: 'FALSE', weekType: null }]));
-    expect(parseLiftingProgramSpec(table)).toEqual([{ ...spec, amrap: false, weekType: 'training' }]);
+    expect(parseLiftingProgramSpec(table)).toEqual([{ ...spec, amrap: false, weekType: 'training', loadPct: null }]);
   });
 });

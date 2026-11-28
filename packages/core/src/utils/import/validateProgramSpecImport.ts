@@ -60,6 +60,8 @@ export function validateProgramSpecImport(
       });
     else if (!isNum(r.wtDecrementPct))
       rowErrors.push({ row, field: 'wtDecrementPct', code: 'WT_DECREMENT_PCT_INVALID', message: 'WT Decrement % is not a number' });
+    if (r.loadPct != null && !(isNum(r.loadPct) && r.loadPct > 0 && r.loadPct <= 1))
+      rowErrors.push({ row, field: 'loadPct', code: 'LOAD_PCT_INVALID', message: 'Load % must be above 0 and at most 1 (or 100%), or blank' });
     if (r.weekType !== undefined && !['training', 'test', 'deload'].includes(r.weekType))
       rowErrors.push({ row, field: 'weekType', code: 'WEEK_TYPE_INVALID', message: 'Week Type must be training, test, or deload' });
 

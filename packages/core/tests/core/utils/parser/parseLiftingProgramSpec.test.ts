@@ -92,3 +92,35 @@ describe("parseLiftingProgramSpec: a sheet carrying both percent columns", () =>
     expect(errors[0]).toMatchObject({ row: 1, field: "wtDecrementPct" });
   });
 });
+
+// A row's load percentage (#1526): the share of the lift's max it plans from.
+describe("parseLiftingProgramSpec + validateProgramSpecImport: a Load % column", () => {
+  const header = ["Week", "Offset", "Lift", "Increment", "Order", "Sets", "Reps", "AMRAP?", "Warm-Up %", "WT Decrement %", "Activation"];
+  const row: SpreadsheetCell[] = [1, 0, "Squat", 5, 1, 3, 5, "FALSE", "0.5", "0", ""];
+  const withLoad = (...cells: SpreadsheetCell[]): SpreadsheetCell[][] => [
+    [...header, "Load %"],
+    ...cells.map((cell, i) => [...row.slice(0, 4), i + 1, ...row.slice(5), cell]),
+  ];
+
+  it("reads a fraction, a sheet's percent cell, and a blank as none", () => {
+    const rows = parseLiftingProgramSpec(withLoad("0.85", "70%", "", 0.5));
+    expect(rows.map((r) => r.loadPct)).toEqual([0.85, 0.7, null, 0.5]);
+    expect(validateProgramSpecImport(rows).errors).toEqual([]);
+  });
+
+  it("leaves it out for a sheet with no Load % column, so an import keeps the stored value", () => {
+    const [parsed] = parseLiftingProgramSpec([header, row]);
+    expect(parsed).not.toHaveProperty("loadPct");
+  });
+
+  it("rejects zero, more than the whole max, and text, naming the row and field", () => {
+    const rows = parseLiftingProgramSpec(withLoad("0", "85", "heavy", "1"));
+    const { errors, valid } = validateProgramSpecImport(rows);
+    expect(errors.map((e) => [e.row, e.field, e.code])).toEqual([
+      [1, "loadPct", "LOAD_PCT_INVALID"],
+      [2, "loadPct", "LOAD_PCT_INVALID"],
+      [3, "loadPct", "LOAD_PCT_INVALID"],
+    ]);
+    expect(valid.map((r) => r.loadPct)).toEqual([1]);
+  });
+});

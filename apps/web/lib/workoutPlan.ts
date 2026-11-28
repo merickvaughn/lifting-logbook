@@ -123,11 +123,16 @@ export function workoutDateResolver(
  * Uses PROG_SPEC_WARMUP_PCTS / PROG_SPEC_WORK_PCTS / MROUND from
  * @lifting-logbook/core — the same math as the spreadsheet layer, without
  * the SpreadsheetCell[][] wrapper.
+ *
+ * A row with a load percentage (#1526) plans from that share of the max: each warm-up and work
+ * set is its percentage of the scaled max, rounded once to the row's increment, as a computed
+ * per-workout weight is (docs/standards/training-max-precision.md).
  */
 export function computePlannedSets(
   spec: LiftingProgramSpecResponse,
-  trainingMax: number,
+  liftMax: number,
 ): PlannedSet[] {
+  const trainingMax = liftMax * loadShare(spec);
   const warmupPcts = PROG_SPEC_WARMUP_PCTS(spec.warmUpPct).filter(
     (p) => !isNaN(p) && p > 0,
   );
@@ -148,6 +153,11 @@ export function computePlannedSets(
   }));
 
   return [...warmupSets, ...workSets];
+}
+
+/** The share of the max a row plans from (#1526): its load percentage, or all of it. */
+function loadShare(spec: LiftingProgramSpecResponse | undefined): number {
+  return spec?.loadPct ?? 1;
 }
 
 /**
@@ -199,8 +209,8 @@ function planDouble(
   const lastReps = last && !bumped && !fromOwnMax ? last.reps : [];
   const warmUps = spec ? computePlannedSets(spec, max).filter((s) => s.type === 'warmup') : [];
   const count = spec?.sets ?? (last?.reps.length || OFF_PROGRAM_SETS);
-  // The resolved increment is the row's inside a program.
-  return flatSets(warmUps, count, MROUND(max, increment), (i) => lastReps[i] ?? bottom);
+  // The resolved increment is the row's inside a program, and so is the load percentage.
+  return flatSets(warmUps, count, MROUND(max * loadShare(spec), increment), (i) => lastReps[i] ?? bottom);
 }
 
 /**
@@ -287,6 +297,7 @@ export function slotName(detail: { lift: string; complex?: Pick<ComplexPlan, 'na
 /**
  * A slot that names a complex (`complex:<id>`), planned by the weakest-link rule (#1495): its row's
  * percentages of its lowest component max, rounded as any planned set is ({@link computePlannedSets}).
+ * A complex is usually run well under that max, which the row says with a load percentage (#1526).
  * The complex has no progression and no max of its own. A component with no max, or a complex not
  * in `complexes`, plans nothing. `undefined` for a slot that names a lift.
  *

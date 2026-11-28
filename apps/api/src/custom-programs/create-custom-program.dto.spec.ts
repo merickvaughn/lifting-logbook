@@ -125,6 +125,20 @@ describe('CreateCustomProgramDto validation', () => {
     expect(await flattenConstraintKeys(dtoWith({ reps: 8, repsLow: 9 }))).toContain('isAtMostSibling');
   });
 
+  // #1526: the share of the lift's max a row plans from, above 0 and at most the whole max.
+  it.each([0.85, 1, null])('accepts the load percentage %s', async (loadPct) => {
+    expect(await validate(dtoWith({ loadPct }), { whitelist: true })).toHaveLength(0);
+  });
+
+  it.each([
+    [0, 'isPositive'],
+    [-0.5, 'isPositive'],
+    [85, 'max'],
+    ['0.85', 'isNumber'],
+  ])('rejects the load percentage %p', async (loadPct, constraint) => {
+    expect(await flattenConstraintKeys(dtoWith({ loadPct }))).toContain(constraint);
+  });
+
   // #1187: weekType is the closed WeekType set; an omitted one is fine.
   it.each(['training', 'test', 'deload'])('accepts the weekType %s', async (weekType) => {
     expect(await validate(dtoWith({ weekType }), { whitelist: true })).toHaveLength(0);

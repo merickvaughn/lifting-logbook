@@ -160,6 +160,20 @@ describe('daysFromSpecs', () => {
     expect(saved[0]).toMatchObject({ progression: null, repsLow: null });
   });
 
+  // #1526: a save replaces every row, so a dropped load percentage would plan the slot at 100%.
+  it('carries each week’s load percentage through an edit round-trip, null where a week has none', () => {
+    const rows: CustomProgramSpecRow[] = [1, 2, 3].map((week) => ({
+      ...legacyRow(week, 'Overhead Press', 1),
+      ...(week !== 3 && { loadPct: week === 1 ? 0.85 : 0.7 }),
+    }));
+    const saved = specsFromDays(daysFromSpecs(rows));
+    expect(saved.map((s) => [s.week, s.loadPct])).toEqual([
+      [1, 0.85],
+      [2, 0.7],
+      [3, null],
+    ]);
+  });
+
   it('collapses a legacy all-offset-0 program to a single populated day', () => {
     const legacy: CustomProgramSpecRow[] = [1, 2, 3].flatMap((week) => [
       legacyRow(week, 'Squat', 1),

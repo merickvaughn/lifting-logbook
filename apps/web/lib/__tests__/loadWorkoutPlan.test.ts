@@ -330,6 +330,31 @@ describe('loadWorkoutPlan — the plan follows the lift’s progression type (#1
     expect(mockedLiftRecords).not.toHaveBeenCalled();
   });
 
+  // The owner's OH Press-HV slot (#1141, #1526): 3×12 at 85% of a 103.75 max is 87.5 at 2.5 lb.
+  it('plans a row with a load percentage the same way on the page, in the logger and in the timer', async () => {
+    seedWorkout(['Overhead Press']);
+    const row = { ...spec('Overhead Press'), reps: 12, increment: 2.5, warmUpPct: '', loadPct: 0.85 };
+    mockedSpec.mockResolvedValue([row]);
+    const maxes = [{ lift: 'Overhead Press', weight: 103.75, dateUpdated: '2026-01-05T00:00:00.000Z' }];
+    mockedMaxes.mockResolvedValue(maxes);
+
+    const plan = await loadWorkoutPlan('5-3-1', 1, 'WorkoutDetailPage');
+    if (!plan) throw new Error('expected a plan');
+
+    const [press] = plan.liftDetails;
+    expect(press?.tm).toBe(103.75);
+    expect(work(press?.plannedSets)).toEqual(['12@87.5', '12@87.5', '12@87.5']);
+    // The logger plans the row through the same `planLift`, from its progression read.
+    const [loggerProgression] = await loadProgressionPlans(plan.workout, [row], maxes, 'WorkoutLoggingPage');
+    expect(planLift(row, 103.75, { progression: loggerProgression })).toEqual(press?.plannedSets);
+    // And the timer counts down the same weights.
+    expect((await plan.timerLifts(null))[0]?.sets.map((s) => s.spec)).toEqual([
+      '12 × 87.5 lbs',
+      '12 × 87.5 lbs',
+      '12 × 87.5 lbs',
+    ]);
+  });
+
   it('plans an off-program linear lift at its repsHigh, on the page and in the timer', async () => {
     seedWorkout(['Hammer Curl']);
     mockedSpec.mockResolvedValue([]);

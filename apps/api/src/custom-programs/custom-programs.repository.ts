@@ -45,6 +45,7 @@ function toSpecRow(s: {
   weekType: string | null;
   progression: string | null;
   repsLow: number | null;
+  loadPct: number | null;
 }): CustomProgramSpecRow {
   return {
     week: s.week,
@@ -61,6 +62,7 @@ function toSpecRow(s: {
     ...(s.weekType !== null && { weekType: s.weekType }),
     ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
     ...(s.repsLow !== null && { repsLow: s.repsLow }),
+    ...(s.loadPct !== null && { loadPct: s.loadPct }),
   };
 }
 
@@ -149,6 +151,7 @@ export class CustomProgramsRepository {
             wtDecrementPct: s.wtDecrementPct,
             activation: s.activation,
             weekType: s.weekType ?? null,
+            loadPct: s.loadPct ?? null,
             ...progressionColumns(s),
           })),
         },
@@ -185,6 +188,7 @@ export class CustomProgramsRepository {
             wtDecrementPct: s.wtDecrementPct,
             activation: s.activation,
             weekType: s.weekType ?? null,
+            loadPct: s.loadPct ?? null,
             ...progressionColumns(s, stored.get(specKey(s))),
           })),
         }

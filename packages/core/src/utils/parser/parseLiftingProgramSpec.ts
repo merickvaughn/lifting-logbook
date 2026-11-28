@@ -35,6 +35,7 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
   // A one-week program repeats a single block, so its sheet has no Week column: every row is week 1.
   const hasWeekColumn = (data[0] ?? []).some((h) => String(h) === "Week");
   const headers = (data[0] ?? []).map((h) => String(h));
+  const hasLoadPctColumn = headers.includes("Load %");
   const useWeightPct = !headers.includes("WT Decrement %") && headers.includes("Weight %");
   const parsed = rawObjects.map((obj) => {
     const result: Record<string, unknown> = {};
@@ -45,7 +46,7 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
       // sheet carrying both columns keeps `WT Decrement %` as its decrement, and an
       // always-set `weightPct` would re-point that column's validation error at
       // `weightPct` (validateProgramSpecImport).
-      if (key === "weightPct") continue;
+      if (key === "weightPct" || key === "loadPct") continue;
       let value: unknown = key === "week" && !hasWeekColumn ? 1 : obj[header];
       if (type === "number") {
         value = Number(value);
@@ -56,6 +57,15 @@ export function parseLiftingProgramSpec(data: SpreadsheetCell[][]): LiftingProgr
       }
       if (ESCAPED_FIELDS.has(key) && typeof value === "string") value = unescapeCsvFormula(value);
       result[key] = value;
+    }
+    // `Load %` (#1526): left out when the sheet has no such column, so an import keeps the
+    // stored value; a blank cell is null, no load percentage. A fraction (`0.85`) as the other
+    // percent columns are, or a sheet's percent cell (`85%`). Text that isn't a number stays NaN
+    // for the validator to name.
+    if (hasLoadPctColumn) {
+      const raw = String(obj["Load %"] ?? "").trim();
+      result.loadPct =
+        raw === "" ? null : raw.endsWith("%") ? Number(raw.slice(0, -1)) / 100 : Number(raw);
     }
     if (useWeightPct) {
       result.weightPct = String(obj["Weight %"] ?? "");

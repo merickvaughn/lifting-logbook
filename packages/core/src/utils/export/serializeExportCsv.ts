@@ -61,6 +61,7 @@ export interface ProgramSpecExportRow {
   wtDecrementPct: number;
   activation: string;
   weekType?: string | null;
+  loadPct?: number | null;
 }
 
 /**
@@ -258,6 +259,8 @@ const PROGRAM_SPEC_COLUMNS: readonly (readonly [
   ['WT Decrement %', (r) => r.wtDecrementPct],
   ['Activation', (r) => escapeCsvFormula(r.activation)],
   ['Week Type', (r) => escapeCsvFormula(r.weekType ?? '')],
+  // Blank for a row that plans from the whole max (#1526); a fraction, as the other percents.
+  ['Load %', (r) => r.loadPct ?? ''],
 ];
 
 export function serializeProgramSpec(rows: readonly ProgramSpecExportRow[]): string {

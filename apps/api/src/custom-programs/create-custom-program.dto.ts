@@ -65,6 +65,9 @@ export class CustomProgramSpecRowDto {
   // whose top is `reps`, so `reps` bounds it.
   @IsOptional() @IsLiftProgression() progression?: LiftProgressionType | null;
   @IsOptional() @IsProgressionReps('reps') repsLow?: number | null;
+  // The share of the lift's max the row plans from (#1526), a fraction above 0 and at most 1.
+  // Null or left out plans from the whole max.
+  @IsOptional() @IsNumber() @IsPositive() @Max(1) loadPct?: number | null;
 }
 
 export class CreateCustomProgramDto {

@@ -51,6 +51,9 @@ export const LIFTING_PROGRAM_SPEC_HEADER_MAP: Record<
   "Weight %": { key: "weightPct", type: "string" },
   Activation: { key: "activation", type: "string" },
   "Week Type": { key: "weekType", type: "string" },
+  // Optional (#1526): a blank cell is no load percentage, and a sheet without the column keeps
+  // what is stored. The parser reads it itself, since a missing number column would be NaN.
+  "Load %": { key: "loadPct", type: "number" },
 };
 
 export const WEEKDAY_MAP: Record<string, number> = {
