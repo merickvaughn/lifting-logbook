@@ -33,6 +33,7 @@ type SpecRow = {
   weekType: string | null;
   progression: string | null;
   repsLow: number | null;
+  modifications: string[];
 };
 
 /** The 400 for a built-in program: its spec is immutable seed data. */
@@ -58,6 +59,7 @@ function toSpec(s: SpecRow): LiftingProgramSpec {
     ...(s.weekType !== null && { weekType: s.weekType as 'training' | 'test' | 'deload' }),
     ...(isLiftProgressionType(s.progression) && { progression: s.progression }),
     ...(s.repsLow !== null && { repsLow: s.repsLow }),
+    ...(s.modifications.length > 0 && { modifications: s.modifications }),
   };
 }
 
@@ -164,7 +166,8 @@ export class HybridLiftingProgramSpecRepository implements ILiftingProgramSpecRe
               weekType: r.weekType ?? null,
               // No `progression`/`repsLow` (#1210): a spec import never carries them, and the
               // upsert leaves an omitted column alone on update, so a re-import keeps a stored
-              // override, such as a backfilled `amrap_gated`. A created row gets null.
+              // override, such as a backfilled `amrap_gated`, and its start-on `modifications`
+              // (#1155). A created row gets null and none.
             };
             // ...except a stored `repsLow` the imported `reps` falls below, which is cleared:
             // the bottom of a range can't be above its top.

@@ -1,13 +1,20 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import type { InputHTMLAttributes } from 'react';
 import { LIFT_CATALOG, complexIdOf, complexLift } from '@lifting-logbook/core';
 import { useRouter } from 'next/navigation';
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
-import type { BarbellComplexResponse, CustomProgramResponse, CustomProgramSpecRow } from '@lifting-logbook/types';
+import type {
+  BarbellComplexResponse,
+  CustomProgramResponse,
+  CustomProgramSpecRow,
+  LiftModificationResponse,
+} from '@lifting-logbook/types';
 import { createCustomProgram, updateCustomProgram, switchProgram } from './actions';
 import { templateSeedSpecs } from '@/lib/programs';
+import { fetchLiftModificationsByLift } from '@/lib/client-api';
+import { logClientError } from '@/lib/log-client-error';
 import {
   MAX_DAYS,
   MAX_INSTANCES_PER_DAY,
@@ -148,7 +155,54 @@ export default function ProgramEditor({
           ? d
           : d.instances.length >= MAX_INSTANCES_PER_DAY
             ? d
-            : { ...d, instances: [...d.instances, { id: uid(), lift, weeks: defaultWeeks(increment) }] },
+            : { ...d, instances: [...d.instances, { id: uid(), lift, weeks: defaultWeeks(increment), modifications: [] }] },
+      ),
+    );
+  }
+
+  // The modifications each lift in the program has (#1155), for the slots' "Starts with" boxes.
+  // Fetched in the browser like the logger's. A failed fetch shows no boxes and logs; the slot's
+  // saved list is untouched, since the editor only sends what it holds.
+  const [modificationsByLift, setModificationsByLift] = useState<ReadonlyMap<string, LiftModificationResponse[]>>(
+    new Map(),
+  );
+  // A complex slot has no modifications of its own, so it isn't asked about.
+  const liftsKey = [
+    ...new Set(days.flatMap((d) => d.instances.map((i) => i.lift)).filter((l) => complexIdOf(l) === undefined)),
+  ]
+    .sort()
+    .join('\n');
+  useEffect(() => {
+    if (liftsKey === '') return;
+    let cancelled = false;
+    fetchLiftModificationsByLift(liftsKey.split('\n'))
+      .then((byLift) => {
+        if (!cancelled) setModificationsByLift(new Map(Object.entries(byLift)));
+      })
+      .catch((err) => logClientError('fetchLiftModificationsByLift', err, { program: existing?.id }));
+    return () => {
+      cancelled = true;
+    };
+  }, [liftsKey, existing?.id]);
+
+  function toggleStartOn(dayId: string, instId: string, modificationId: string) {
+    setDays((prev) =>
+      prev.map((d) =>
+        d.id !== dayId
+          ? d
+          : {
+              ...d,
+              instances: d.instances.map((inst) =>
+                inst.id !== instId
+                  ? inst
+                  : {
+                      ...inst,
+                      modifications: inst.modifications.includes(modificationId)
+                        ? inst.modifications.filter((m) => m !== modificationId)
+                        : [...inst.modifications, modificationId],
+                    },
+              ),
+            },
       ),
     );
   }
@@ -310,6 +364,22 @@ export default function ProgramEditor({
                         Remove
                       </button>
                     </div>
+                    {(modificationsByLift.get(inst.lift) ?? []).length > 0 && (
+                      <fieldset className={styles.startOn}>
+                        <legend>Starts with on</legend>
+                        {(modificationsByLift.get(inst.lift) ?? []).map((m) => (
+                          <label key={m.id}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} starts with ${m.name}`}
+                              checked={inst.modifications.includes(m.id)}
+                              onChange={() => toggleStartOn(day.id, inst.id, m.id)}
+                            />{' '}
+                            {m.name}
+                          </label>
+                        ))}
+                      </fieldset>
+                    )}
                     <div className={styles.instanceSpec}>
                       <table className={styles.specTable}>
                         <thead>

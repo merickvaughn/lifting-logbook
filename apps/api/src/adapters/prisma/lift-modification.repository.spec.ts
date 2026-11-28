@@ -25,8 +25,14 @@ function setup() {
     create: jest.fn(),
   };
   const liftRecord = { findFirst: jest.fn().mockResolvedValue(null) };
-  const prisma = { liftModification, liftRecord } as unknown as PrismaClient;
-  return { repo: new PrismaLiftModificationRepository(prisma, 'u'), liftModification, liftRecord };
+  const customProgramSpec = { findFirst: jest.fn().mockResolvedValue(null) };
+  const prisma = { liftModification, liftRecord, customProgramSpec } as unknown as PrismaClient;
+  return {
+    repo: new PrismaLiftModificationRepository(prisma, 'u'),
+    liftModification,
+    liftRecord,
+    customProgramSpec,
+  };
 }
 
 // A row can go between the ownership read and the write when two requests race, such as a
@@ -57,6 +63,17 @@ describe('PrismaLiftModificationRepository, when a row goes between the read and
     liftRecord.findFirst.mockResolvedValueOnce({ id: 'r1' });
     liftModification.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(repo.delete('m1')).rejects.toThrow(LiftModificationNotFoundError);
+  });
+
+  it('delete archives, not removes, a modification only a program slot names (#1155)', async () => {
+    const { repo, liftModification, customProgramSpec } = setup();
+    customProgramSpec.findFirst.mockResolvedValueOnce({ id: 's1' });
+    await repo.delete('m1');
+    expect(customProgramSpec.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modifications: { has: 'm1' }, program: { userId: 'u' } } }),
+    );
+    expect(liftModification.deleteMany).not.toHaveBeenCalled();
+    expect(liftModification.updateMany).toHaveBeenCalled();
   });
 
   it('rethrows anything else', async () => {

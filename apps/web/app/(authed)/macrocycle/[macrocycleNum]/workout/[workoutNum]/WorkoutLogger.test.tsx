@@ -704,6 +704,29 @@ describe('WorkoutLogger — lift modifications (#1152)', () => {
     expect(screen.queryByRole('button', { name: 'Add modification' })).not.toBeInTheDocument();
   });
 
+  it("starts a slot's start-on modification on, and a replaced slot's off (#1155)", async () => {
+    const user = userEvent.setup();
+    const WIDE = modification('m-wide', 'Wide grip');
+    mockFetchLiftModifications.mockResolvedValue([WIDE]);
+    mockCreateLiftRecord.mockResolvedValue(LOGGED);
+    const { unmount } = render(<WorkoutLogger {...makeProps({ lifts: [makeLift({ startOn: ['m-wide'] })] })} />);
+
+    expect(await screen.findByRole('button', { name: 'Wide grip', pressed: true })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+    expect(createdBody(0)).toEqual(expect.objectContaining({ modifications: ['m-wide'] }));
+    unmount();
+    window.localStorage.clear();
+
+    // After a Manage Lifts `replace` the page leaves `startOn` out.
+    mockCreateLiftRecord.mockClear();
+    render(<WorkoutLogger {...makeProps({ lifts: [makeLift()] })} />);
+    expect(await screen.findByRole('button', { name: 'Wide grip', pressed: false })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Log' }));
+    await waitFor(() => expect(mockCreateLiftRecord).toHaveBeenCalledTimes(1));
+    expect(createdBody(0)).not.toHaveProperty('modifications');
+  });
+
   it('shows no toggles and sends no modifications for a lift without any', async () => {
     const user = userEvent.setup();
     mockCreateLiftRecord.mockResolvedValue(LOGGED);

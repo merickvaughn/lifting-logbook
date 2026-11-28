@@ -1,5 +1,7 @@
 import {
+  ArrayMaxSize,
   ArrayMinSize,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsIn,
@@ -19,6 +21,7 @@ import {
 import { Type } from 'class-transformer';
 import { LiftProgressionType, WEEK_TYPES, WeekType } from '@lifting-logbook/types';
 import { IsLiftProgression, IsProgressionReps } from '../lifts/progression.validation';
+import { MAX_SET_MODIFICATIONS } from '../programs/lift-record.limits';
 
 // Cross-field guard: the work percentage for set i is (1 - i * wtDecrementPct), so the
 // final set is (1 - (sets-1) * wtDecrementPct). When that goes below 0 the prescribed
@@ -65,6 +68,11 @@ export class CustomProgramSpecRowDto {
   // whose top is `reps`, so `reps` bounds it.
   @IsOptional() @IsLiftProgression() progression?: LiftProgressionType | null;
   @IsOptional() @IsProgressionReps('reps') repsLow?: number | null;
+  // The modification ids this slot starts with on (#1155). Left out keeps the stored list on an
+  // update; [] clears it. The logger drops an id that is no longer listed, so a foreign or
+  // archived one starts nothing.
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_SET_MODIFICATIONS) @ArrayUnique() @IsString({ each: true })
+  modifications?: string[];
 }
 
 export class CreateCustomProgramDto {

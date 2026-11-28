@@ -5,6 +5,8 @@ import { createCustomProgram } from './actions';
 
 // ProgramEditor statically imports the server-only ./actions module and next/navigation's
 // router; both are stubbed so Save resolves without a network call.
+// The editor reads the lifts' modifications in the browser (#1155); these tests don't exercise them.
+jest.mock('@/lib/client-api', () => ({ fetchLiftModificationsByLift: jest.fn().mockResolvedValue({}) }));
 jest.mock('./actions', () => ({
   createCustomProgram: jest.fn().mockResolvedValue({ id: 'saved-id' }),
   updateCustomProgram: jest.fn(),

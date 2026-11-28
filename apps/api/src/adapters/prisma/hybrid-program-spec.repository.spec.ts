@@ -150,6 +150,7 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
       weekType: null,
       progression: 'double',
       repsLow,
+      modifications: [],
     });
     const { prisma, upsert } = makeSavePrisma([stored('Squat', 8), stored('Bench', 8)]);
     const repo = new HybridLiftingProgramSpecRepository(prisma, 'user-1');
@@ -168,7 +169,7 @@ describe('HybridLiftingProgramSpecRepository.saveProgramSpec', () => {
   });
 
   it('classifies create/update/skip from one snapshot read and counts an in-batch duplicate as skipped', async () => {
-    const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null });
+    const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null, modifications: [] });
     const { prisma, findFirst, findMany, upsert, $transaction } = makeSavePrisma([
       toRow(spec('Squat', 5)),
       toRow(spec('Bench', 5)),

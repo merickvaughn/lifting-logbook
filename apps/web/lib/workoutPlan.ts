@@ -206,8 +206,9 @@ function planDouble(
 /**
  * The sets one lift occurrence plans (#1153): its spec row's, from an `own` modification's max
  * when one is given, otherwise from the lift's. The logger, the detail page and the timer share
- * this formula; only the logger passes an own max, when a toggle with one is on, since a slot has
- * no start-on modifications yet.
+ * this formula; only the logger passes an own max, when a toggle with one is on. A slot's start-on
+ * modifications (#1155) reach only the logger's start state, so the detail page and the timer
+ * still plan from the lift's max.
  *
  * A `progression` (#1211; the detail page and the timer too since #1249) plans by the lift's type: a `double` lift
  * plans its range ({@link planDouble}), and a lift with no spec row on `linear` or `amrap_gated`
@@ -452,8 +453,8 @@ export function buildLiftDetails(
       };
     }
     const tm = maxFor(wl.lift)?.weight ?? 0;
-    // A slot has no start-on modifications yet, so the timer and this page plan from the lift's
-    // max, as the logger does before a toggle.
+    // The timer and this page plan from the lift's max; a slot's start-on modifications (#1155)
+    // only set the logger's toggles.
     const plannedSets = planLift(spec, tm, { progression: progressions[i] });
     return {
       lift: wl.lift,

@@ -60,6 +60,12 @@ export interface LiftData {
    */
   plan?: { spec: LiftingProgramSpecResponse; liftMax: number; progression?: ProgressionPlan };
   /**
+   * The modification ids the slot starts this lift on with (#1155), left out when none. Absent
+   * after a Manage Lifts `replace` too: a modification belongs to one lift, so the slot's list
+   * doesn't follow a swap, and the logger offers the replacement's own toggles.
+   */
+  startOn?: string[];
+  /**
    * The lift's resolved progression type and increment, with or without a spec row. Finishing the
    * workout offers to set up a missing training max only for a lift that plans from one: any type
    * but `manual` (#1211, #1246). The increment steps that offer's weight input.

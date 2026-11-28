@@ -10,7 +10,7 @@ import {
 } from './programSpecMapping';
 
 function makeInstance(lift: string): LiftInstance {
-  return { id: uid(), lift, weeks: defaultWeeks(5) };
+  return { id: uid(), lift, weeks: defaultWeeks(5), modifications: [] };
 }
 
 function makeDay(...lifts: string[]): WorkoutDayModel {
@@ -91,7 +91,7 @@ describe('specsFromDays', () => {
     });
     const day: WorkoutDayModel = {
       id: uid(),
-      instances: [{ id: uid(), lift: 'Squat', weeks: { 1: week(5, false), 2: week(3, false), 3: week(1, true) } }],
+      instances: [{ id: uid(), lift: 'Squat', weeks: { 1: week(5, false), 2: week(3, false), 3: week(1, true) }, modifications: [] }],
     };
     const specs = specsFromDays([day]);
     expect(specs.find((s) => s.week === 1)?.reps).toBe(5);
@@ -151,6 +151,18 @@ describe('daysFromSpecs', () => {
       [2, 6, 'double', null],
       [3, 12, 'double', 8],
     ]);
+  });
+
+  it("carries a slot's start-on modifications through an edit round-trip, and clears them (#1155)", () => {
+    const rows = [1, 2, 3].map((week) => ({ ...legacyRow(week, 'Cable Curl', 1), modifications: ['m-wide'] }));
+
+    const days = daysFromSpecs(rows);
+    expect(days[0]?.instances[0]?.modifications).toEqual(['m-wide']);
+    expect(specsFromDays(days).map((r) => r.modifications)).toEqual([['m-wide'], ['m-wide'], ['m-wide']]);
+
+    // A slot with none sends [], so the API clears what was stored rather than keeping it.
+    const cleared = days.map((d) => ({ ...d, instances: d.instances.map((i) => ({ ...i, modifications: [] })) }));
+    expect(specsFromDays(cleared).map((r) => r.modifications)).toEqual([[], [], []]);
   });
 
   // Null, not absent: the API keeps a stored value for a field left out, so a row with no

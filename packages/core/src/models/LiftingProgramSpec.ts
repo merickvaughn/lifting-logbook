@@ -27,4 +27,9 @@ export interface LiftingProgramSpec {
   progression?: LiftProgressionType;
   /** The bottom of the row's rep range; `reps` is the target and the top of the range. */
   repsLow?: number;
+  /**
+   * Ids of the lift modifications this slot starts with on (#1155). Absent means none. They
+   * belong to the slot's lift, so a Manage Lifts `replace` doesn't carry them over.
+   */
+  modifications?: string[];
 }
