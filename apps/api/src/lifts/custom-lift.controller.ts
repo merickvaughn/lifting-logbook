@@ -116,8 +116,11 @@ export class CustomLiftController {
     }
 
     const repos = await this.factory.forUser(user);
-    if (dto.name !== undefined) await assertNotComplexName(dto.name, repos);
     const { customLift } = repos;
+    // An unchanged name is kept unchecked, so a lift named before this check (#1506) stays editable.
+    if (dto.name !== undefined && (await customLift.list()).find((l) => l.id === id)?.name !== dto.name) {
+      await assertNotComplexName(dto.name, repos);
+    }
     const patch: UpdateCustomLiftPatch = {};
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.classification !== undefined) patch.classification = dto.classification;

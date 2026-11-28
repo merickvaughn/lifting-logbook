@@ -108,11 +108,18 @@ export class BarbellComplexController {
   ): Promise<BarbellComplexResponse> {
     const repos = await this.factory.forUser(user);
     const customLifts = await repos.customLift.list();
-    const name = dto.name !== undefined ? checkedName(dto.name, customLifts) : undefined;
+    const stored = (await repos.barbellComplex.list()).find((c) => c.id === id);
+    // The editor sends the name on every save, so an unchanged one is kept unchecked: a complex
+    // named before the check ignored case (#1506) stays editable.
+    const name =
+      dto.name === undefined
+        ? undefined
+        : dto.name.trim() === stored?.name
+          ? stored.name
+          : checkedName(dto.name, customLifts);
     let components: ComplexComponent[] | undefined;
     if (dto.components !== undefined) {
-      const stored = (await repos.barbellComplex.list()).find((c) => c.id === id)?.components;
-      components = checkedComponents(customLifts, dto.components, stored);
+      components = checkedComponents(customLifts, dto.components, stored?.components);
     }
     const updated = await repos.barbellComplex.update(id, {
       ...(name !== undefined ? { name } : {}),

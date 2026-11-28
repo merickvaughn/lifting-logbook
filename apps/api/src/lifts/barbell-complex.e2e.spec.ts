@@ -4,6 +4,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { BarbellComplexResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { IRepositoryFactory } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 import { injectPage } from '../testing/macrocycle-id';
@@ -194,6 +196,25 @@ describe('Barbell complexes HTTP (e2e, in-memory adapters, #1495)', () => {
     };
     expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'BEAR' })).statusCode).toBe(400);
     expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'Grizzly Bear' })).statusCode).toBe(200);
+  });
+
+  // A pair named before the checks ignored case: the editors send the name on every save.
+  it('keeps a complex and a custom lift named before #1506 editable', async () => {
+    const id = 'case-collision-before-1506';
+    const user = as(id);
+    const repos = await app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id, email: `${id}@example.com`, provider: 'dev' });
+    const complex = await repos.barbellComplex.create({ name: 'bear crawl', components: BEAR_COMPONENTS });
+    const lift = await repos.customLift.create({ name: 'Bear Crawl', classification: 'compound' });
+
+    const edited = await user('PATCH', `/lifts/complexes/${complex.id}`, {
+      name: 'bear crawl',
+      components: BEAR_COMPONENTS.slice(0, 2),
+    });
+    expect(edited.statusCode).toBe(200);
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'Bear Crawl' })).statusCode).toBe(200);
+    // A changed name is still checked, either way round.
+    expect((await user('PATCH', `/lifts/complexes/${complex.id}`, { name: 'BEAR CRAWL' })).statusCode).toBe(400);
+    expect((await user('PATCH', `/lifts/complexes/${complex.id}`, { name: 'Bench Press' })).statusCode).toBe(400);
   });
 
   it('refuses a custom lift whose name a program row would read as a complex', async () => {
