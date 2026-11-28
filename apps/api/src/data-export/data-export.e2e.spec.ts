@@ -170,6 +170,43 @@ describe('Download My Data HTTP (e2e, in-memory adapters)', () => {
     expect(files['logbook.json']).not.toContain('"userId"');
   });
 
+  it('includes complexes in logbook.json, a custom component by its id (#1506)', async () => {
+    const user = 'export-complex';
+    const lift = await inject({
+      method: 'POST',
+      url: '/lifts/custom',
+      headers: { ...auth(user), 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Hang Power Clean Pull', classification: 'compound' }),
+    });
+    const { id: liftId } = lift.json() as { id: string };
+    const created = await inject({
+      method: 'POST',
+      url: '/lifts/complexes',
+      headers: { ...auth(user), 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        name: 'Bear complex',
+        components: [
+          { lift: 'Hang Power Clean Pull', reps: 1 },
+          { lift: 'Front Squat', reps: 1 },
+        ],
+      }),
+    });
+    expect(created.statusCode).toBe(201);
+
+    const logbook = JSON.parse(unzip((await exportFor(user)).rawPayload)['logbook.json']!);
+
+    expect(logbook.tables.barbellComplexes).toEqual([
+      expect.objectContaining({
+        name: 'Bear complex',
+        components: [
+          { lift: liftId, reps: 1 },
+          { lift: 'Front Squat', reps: 1 },
+        ],
+      }),
+    ]);
+    expect(logbook.tables.barbellComplexes[0]).not.toHaveProperty('userId');
+  });
+
   it.each([
     ['lift-records.csv', 'lift-records'],
     ['training-maxes.csv', 'training-maxes'],

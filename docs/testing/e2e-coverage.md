@@ -121,16 +121,28 @@ how issue [#644](https://github.com/merickvaughn/lifting-logbook/issues/644) shi
 for 3+ weeks: `RlsInterceptor` silently never set the `app.current_user_id` GUC, and no suite
 besides `rls.db.e2e.spec.ts` ran with RLS actually capable of rejecting anything.
 
-## DB E2E suites share one database
+## Each Jest worker has its own database
 
-Jest runs the DB E2E suites in parallel workers against the same Postgres. A test that changes
-something for every user, such as a `REVOKE` from `lifting_app` or a committed `ALTER TABLE`,
-also changes it for whichever suite is running at that moment. To make a write fail, refuse it
-for the test's own user with a `BEFORE INSERT` trigger. Create it with `OR REPLACE` and drop it in
-`finally`, as the "can't be saved" tests in `import-overwrite.db.e2e.spec.ts` and
-`snapshots.db.e2e.spec.ts` do. Schema changes a test needs belong in a transaction it rolls back.
-A database-wide `REVOKE` in the snapshots suite once failed an overwrite's backup in another
-worker with a 503 ([#1408](https://github.com/merickvaughn/lifting-logbook/issues/1408)).
+Jest runs the DB E2E suites in parallel workers on one Postgres server. `jest.global-setup.js`
+clones the migrated database once per worker (`<name>_w1`, `<name>_w2`, …), and
+`jest.env.setup.js` points each worker's `LIFTING_TC_*` URLs at its own copy
+([`jest.worker-db.js`](../../apps/api/jest.worker-db.js)). Suites in one worker run one at a
+time, so no two suites share a database while they run.
+
+Before [#1510](https://github.com/merickvaughn/lifting-logbook/issues/1510) every worker used the
+same database. A migration test's `ALTER TABLE` in a rolled-back transaction then deadlocked
+another worker's read of the same tables, and Postgres cancelled the read with a 500 after its
+1-second `deadlock_timeout`. A database-wide `REVOKE` in the snapshots suite once failed an
+overwrite's backup in another worker with a 503
+([#1408](https://github.com/merickvaughn/lifting-logbook/issues/1408)).
+
+Two things are still shared. Suites in the same worker run in turn on one database, so a test that
+changes something for every user should undo it: refuse a write for the test's own user with a
+`BEFORE INSERT` trigger, created with `OR REPLACE` and dropped in `finally` (the "can't be saved"
+tests in `import-overwrite.db.e2e.spec.ts` and `snapshots.db.e2e.spec.ts`), and make schema
+changes in a transaction the test rolls back. Roles are server-wide, so a `CREATE ROLE` or
+`ALTER ROLE` reaches every worker: create a probe role inside a transaction that rolls back, as
+the migration tests do.
 
 ## Running locally when Docker is unavailable
 

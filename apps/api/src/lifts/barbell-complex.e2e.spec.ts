@@ -4,6 +4,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { BarbellComplexResponse } from '@lifting-logbook/types';
 import { AppModule } from '../app.module';
+import { IRepositoryFactory } from '../ports/factory';
+import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { DomainConflictFilter } from '../programs/conflict.filter';
 import { DomainNotFoundFilter } from '../programs/not-found.filter';
 import { injectPage } from '../testing/macrocycle-id';
@@ -170,6 +172,49 @@ describe('Barbell complexes HTTP (e2e, in-memory adapters, #1495)', () => {
     expect((res.json() as { message: string }).message).toBe("'Squat' is a lift's name; give the complex another");
     const created = await create(user, 'Bear');
     expect((await user('PATCH', `/lifts/complexes/${created.id}`, { name: 'Front Squat' })).statusCode).toBe(400);
+  });
+
+  it("refuses a lift's name in any case, a catalog lift's and a custom lift's (#1506)", async () => {
+    const user = as('complex-lift-name-case');
+    const lower = await user('POST', '/lifts/complexes', { name: 'squat', components: BEAR_COMPONENTS });
+    expect(lower.statusCode).toBe(400);
+    expect((lower.json() as { message: string }).message).toBe("'squat' is a lift's name; give the complex another");
+    expect((await user('POST', '/lifts/custom', { name: 'Zercher Squat', classification: 'compound' })).statusCode).toBe(201);
+    expect((await user('POST', '/lifts/complexes', { name: 'ZERCHER SQUAT', components: BEAR_COMPONENTS })).statusCode).toBe(
+      400,
+    );
+  });
+
+  it("refuses a custom lift named after a complex in any case, on create and on rename (#1506)", async () => {
+    const user = as('custom-lift-complex-name');
+    await create(user, 'Bear');
+    const res = await user('POST', '/lifts/custom', { name: 'bear', classification: 'compound' });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { message: string }).message).toBe("'bear' is a complex's name; give the lift another");
+    const lift = (await user('POST', '/lifts/custom', { name: 'Grizzly', classification: 'compound' })).json() as {
+      id: string;
+    };
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'BEAR' })).statusCode).toBe(400);
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'Grizzly Bear' })).statusCode).toBe(200);
+  });
+
+  // A pair named before the checks ignored case: the editors send the name on every save.
+  it('keeps a complex and a custom lift named before #1506 editable', async () => {
+    const id = 'case-collision-before-1506';
+    const user = as(id);
+    const repos = await app.get<IRepositoryFactory>(REPOSITORY_FACTORY).forUser({ id, email: `${id}@example.com`, provider: 'dev' });
+    const complex = await repos.barbellComplex.create({ name: 'bear crawl', components: BEAR_COMPONENTS });
+    const lift = await repos.customLift.create({ name: 'Bear Crawl', classification: 'compound' });
+
+    const edited = await user('PATCH', `/lifts/complexes/${complex.id}`, {
+      name: 'bear crawl',
+      components: BEAR_COMPONENTS.slice(0, 2),
+    });
+    expect(edited.statusCode).toBe(200);
+    expect((await user('PATCH', `/lifts/custom/${lift.id}`, { name: 'Bear Crawl' })).statusCode).toBe(200);
+    // A changed name is still checked, either way round.
+    expect((await user('PATCH', `/lifts/complexes/${complex.id}`, { name: 'BEAR CRAWL' })).statusCode).toBe(400);
+    expect((await user('PATCH', `/lifts/complexes/${complex.id}`, { name: 'Bench Press' })).statusCode).toBe(400);
   });
 
   it('refuses a custom lift whose name a program row would read as a complex', async () => {

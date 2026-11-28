@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -14,12 +15,23 @@ import { canonicalAliasFor, complexIdOf } from '@lifting-logbook/core';
 import { CustomLift, CustomLiftResponse } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
-import { IRepositoryFactory } from '../ports/factory';
+import { IRepositoryFactory, RepositoryBundle } from '../ports/factory';
 import { UpdateCustomLiftPatch } from '../ports/ICustomLiftRepository';
 import { ReservedLiftNameConflictError } from '../ports/errors';
 import { REPOSITORY_FACTORY } from '../ports/tokens';
 import { CreateCustomLiftDto } from './create-custom-lift.dto';
 import { UpdateCustomLiftDto } from './update-custom-lift.dto';
+
+/**
+ * Refuses a custom lift name a complex already has, ignoring case (#1506): the timer and a lift's
+ * settings find a lift by the name a plan shows, so the two would read as one.
+ */
+async function assertNotComplexName(name: string, repos: Pick<RepositoryBundle, 'barbellComplex'>): Promise<void> {
+  const lower = name.trim().toLowerCase();
+  if ((await repos.barbellComplex.list()).some((c) => c.name.toLowerCase() === lower)) {
+    throw new BadRequestException(`'${name.trim()}' is a complex's name; give the lift another`);
+  }
+}
 
 function toCustomLiftResponse(lift: CustomLift): CustomLiftResponse {
   return {
@@ -73,8 +85,9 @@ export class CustomLiftController {
       throw new ReservedLiftNameConflictError(dto.name);
     }
 
-    const { customLift } = await this.factory.forUser(user);
-    const created = await customLift.create({
+    const repos = await this.factory.forUser(user);
+    await assertNotComplexName(dto.name, repos);
+    const created = await repos.customLift.create({
       name: dto.name,
       classification: dto.classification,
       ...(dto.movementProfile !== undefined ? { movementProfile: dto.movementProfile } : {}),
@@ -102,7 +115,12 @@ export class CustomLiftController {
       throw new ReservedLiftNameConflictError(dto.name);
     }
 
-    const { customLift } = await this.factory.forUser(user);
+    const repos = await this.factory.forUser(user);
+    const { customLift } = repos;
+    // An unchanged name is kept unchecked, so a lift named before this check (#1506) stays editable.
+    if (dto.name !== undefined && (await customLift.list()).find((l) => l.id === id)?.name !== dto.name) {
+      await assertNotComplexName(dto.name, repos);
+    }
     const patch: UpdateCustomLiftPatch = {};
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.classification !== undefined) patch.classification = dto.classification;

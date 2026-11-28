@@ -11,7 +11,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { NamedLift, lookupLift } from '@lifting-logbook/core';
+import { NamedLift, canonicalAliasFor, lookupLift } from '@lifting-logbook/core';
 import { BarbellComplex, BarbellComplexResponse, ComplexComponent } from '@lifting-logbook/types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../ports/auth';
@@ -62,11 +62,17 @@ function checkedComponents(
 
 /**
  * A complex's name, trimmed. A lift's name is refused: the timer and a lift's settings find a lift
- * by the name a plan shows, so a complex called `Squat` would read as the lift.
+ * by the name a plan shows, so a complex called `Squat` would read as the lift. Case is ignored
+ * (#1506), as it is for a custom lift's name, so `squat` is refused too.
  */
 function checkedName(name: string, customLifts: readonly NamedLift[]): string {
   const trimmed = name.trim();
-  if (modificationLiftId(trimmed, customLifts) !== undefined) {
+  const lower = trimmed.toLowerCase();
+  if (
+    modificationLiftId(trimmed, customLifts) !== undefined ||
+    canonicalAliasFor(trimmed) !== undefined ||
+    customLifts.some((lift) => lift.name.toLowerCase() === lower)
+  ) {
     throw new BadRequestException(`'${trimmed}' is a lift's name; give the complex another`);
   }
   return trimmed;
@@ -102,11 +108,18 @@ export class BarbellComplexController {
   ): Promise<BarbellComplexResponse> {
     const repos = await this.factory.forUser(user);
     const customLifts = await repos.customLift.list();
-    const name = dto.name !== undefined ? checkedName(dto.name, customLifts) : undefined;
+    const stored = (await repos.barbellComplex.list()).find((c) => c.id === id);
+    // The editor sends the name on every save, so an unchanged one is kept unchecked: a complex
+    // named before the check ignored case (#1506) stays editable.
+    const name =
+      dto.name === undefined
+        ? undefined
+        : dto.name.trim() === stored?.name
+          ? stored.name
+          : checkedName(dto.name, customLifts);
     let components: ComplexComponent[] | undefined;
     if (dto.components !== undefined) {
-      const stored = (await repos.barbellComplex.list()).find((c) => c.id === id)?.components;
-      components = checkedComponents(customLifts, dto.components, stored);
+      components = checkedComponents(customLifts, dto.components, stored?.components);
     }
     const updated = await repos.barbellComplex.update(id, {
       ...(name !== undefined ? { name } : {}),

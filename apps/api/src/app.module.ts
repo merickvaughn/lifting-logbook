@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { ClsModule } from 'nestjs-cls';
 import { trace, context } from '@opentelemetry/api';
@@ -16,6 +17,7 @@ import { SupplementsModule } from './supplements/supplements.module';
 import { HealthModule } from './health/health.module';
 import { LiftsModule } from './lifts/lifts.module';
 import { ProgramsModule } from './programs/programs.module';
+import { ThrownErrorInterceptor, withThrownError } from './observability/thrown-error.interceptor';
 import { UserSettingsModule } from './user-settings/user-settings.module';
 
 // Exported (rather than inlined below) so otel-log-redaction.spec.ts and
@@ -119,6 +121,8 @@ export const pinoHttpOptions: PinoHttpOptions = {
     const { traceId, spanId } = span.spanContext();
     return { trace_id: traceId, span_id: spanId };
   },
+  // A 500's line carries the error the request threw, not "failed with status code 500" (#1510).
+  customErrorObject: withThrownError,
 };
 
 @Module({
@@ -143,5 +147,7 @@ export const pinoHttpOptions: PinoHttpOptions = {
     SupplementsModule,
     UserSettingsModule,
   ],
+  // AppModule's enhancers are registered before its imports', so this one wraps RlsInterceptor.
+  providers: [{ provide: APP_INTERCEPTOR, useClass: ThrownErrorInterceptor }],
 })
 export class AppModule {}

@@ -52,6 +52,13 @@ for (const key of BLOCK) {
 // the policy — see ADR-021.
 process.env.OTEL_SDK_AUTOSTART = 'false';
 
+// Each worker gets its own database, which jest.global-setup.js cloned from the migrated one
+// (#1510): a suite's DDL can then never deadlock a suite in another worker.
+const { workerDatabaseUrl } = require('./jest.worker-db');
+for (const key of ['LIFTING_TC_DATABASE_URL', 'LIFTING_TC_OWNER_DATABASE_URL']) {
+  if (process.env[key]) process.env[key] = workerDatabaseUrl(process.env[key], process.env.JEST_WORKER_ID ?? '1');
+}
+
 const originalEnv = process.env;
 process.env = new Proxy(originalEnv, {
   set(target, key, value) {

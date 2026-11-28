@@ -364,6 +364,8 @@
 .addDayButton:hover { background: var(--color-surface); }
 .addDayButton:disabled { opacity: 0.5; cursor: default; }
 
+.complexesNote { margin: 0; font-size: 0.8125rem; color: var(--color-text-muted); }
+
 .customProgramList { display: flex; flex-direction: column; gap: 0.5rem; }
 
 .customProgramItem {

@@ -52,6 +52,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
   WorkoutLiftOverride: 'workoutLiftOverrides',
   LiftMetadata: 'liftMetadata',
   CustomLift: 'customLifts',
+  BarbellComplex: 'barbellComplexes',
   LiftModification: 'liftModifications',
   LiftModificationMax: 'liftModificationMaxes',
   MissingMaxDismissal: 'missingMaxDismissals',
@@ -72,10 +73,7 @@ const LOGBOOK_KEYS: Record<string, keyof UserDataRows | 'customProgramSpecs'> = 
 // not the user's data. A Clear data snapshot (#1309) holds rows the lifter cleared, and its sets
 // download from the snapshot itself.
 // A pending Google link attempt (#1432) holds only a state hash and a PKCE verifier.
-// Barbell complex definitions (#1495) are the lifter's own, but the export doesn't carry them yet:
-// a follow-up to #1495 adds them, and moves this entry to LOGBOOK_KEYS.
 const NOT_EXPORTED = [
-  'BarbellComplex',
   'DataSnapshot',
   'GoogleOauthRequest',
   'ImportBatch',
@@ -105,6 +103,7 @@ async function cleanUsers(prisma: PrismaClient): Promise<void> {
   await prisma.workoutLiftOverride.deleteMany({ where });
   await prisma.liftMetadata.deleteMany({ where });
   await prisma.customLift.deleteMany({ where });
+  await prisma.barbellComplex.deleteMany({ where });
   await prisma.liftModification.deleteMany({ where });
   await prisma.missingMaxDismissal.deleteMany({ where });
   await prisma.userSettings.deleteMany({ where });
@@ -186,6 +185,16 @@ async function seedUser(
   });
   await prisma.customLift.create({
     data: { userId, name: `${mark} press`, classification: 'accessory', patterns: [], jointActions: [] },
+  });
+  await prisma.barbellComplex.create({
+    data: {
+      userId,
+      name: `${mark} complex`,
+      components: [
+        { lift: 'Romanian Deadlift', reps: 6 },
+        { lift: 'Front Squat', reps: 6 },
+      ],
+    },
   });
   const modification = await prisma.liftModification.create({ data: { userId, lift: 'bench-press', name: mark } });
   await prisma.liftModificationMax.create({
@@ -371,6 +380,13 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect(rows).toEqual([{ role: 'lifting_app', rolsuper: false, rolbypassrls: false }]);
   });
 
+  // #1510: on the database every worker shared, another suite's ALTER TABLE deadlocked this
+  // suite's program-spec preview into a 500.
+  it("runs on this Jest worker's own database", async () => {
+    const [{ db }] = await prisma.$queryRaw<[{ db: string }]>`SELECT current_database() AS db`;
+    expect(db).toMatch(new RegExp(`_w${process.env.JEST_WORKER_ID ?? '1'}$`));
+  });
+
   it('accounts for every model in the schema', () => {
     const models = Prisma.dmmf.datamodel.models.map((model) => model.name).sort();
     expect(models).toEqual([...Object.keys(LOGBOOK_KEYS), ...NOT_EXPORTED].sort());
@@ -404,6 +420,18 @@ describeOrSkip('Download My Data HTTP (e2e, PrismaRepositoryFactory)', () => {
 
   it("holds the owner's settings, not another user's", () => {
     expect(logbook.tables['userSettings']).toMatchObject({ activeProgram: ACTIVE_PROGRAM });
+  });
+
+  it("keeps the owner's complex with its components in order (#1506)", () => {
+    expect(logbook.tables['barbellComplexes']).toEqual([
+      expect.objectContaining({
+        name: 'owner-marker complex',
+        components: [
+          { lift: 'Romanian Deadlift', reps: 6 },
+          { lift: 'Front Squat', reps: 6 },
+        ],
+      }),
+    ]);
   });
 
   it('never shows another user, in any file', () => {

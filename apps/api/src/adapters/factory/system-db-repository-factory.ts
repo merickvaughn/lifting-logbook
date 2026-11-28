@@ -144,6 +144,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     // and matches InMemoryRepositoryFactory).
     const sharedRecords: Map<string, LiftRecord[]> = new Map();
     const customLift = new InMemoryCustomLiftRepository(userId);
+    const barbellComplex = new InMemoryBarbellComplexRepository(userId);
     const strengthGoal = new InMemoryStrengthGoalRepository();
     const trainingMax = new InMemoryTrainingMaxRepository();
     const userSettings = new InMemoryUserSettingsRepository();
@@ -154,7 +155,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
     const bundle: RepositoryBundle = {
       dataSnapshot: new InMemoryDataSnapshotRepository(),
       trainingData,
-      barbellComplex: new InMemoryBarbellComplexRepository(userId),
+      barbellComplex,
       bodyWeight: new InMemoryBodyWeightRepository(),
       customLift,
       focus: new InMemoryFocusRepository(),
@@ -177,6 +178,7 @@ export class SystemDbRepositoryFactory implements IRepositoryFactory, OnModuleDe
         trainingMax,
         strengthGoal,
         customLift,
+        barbellComplex,
         userSettings,
         supplement,
         googleSheetLink,
