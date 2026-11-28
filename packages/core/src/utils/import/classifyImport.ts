@@ -112,6 +112,18 @@ const PROFILES: readonly KindProfile[] = [
     transposed: true,
     scanAllCells: true,
   },
+  {
+    // `complexes.csv` (#1514). A lift-record export has a `Complex` column too, so a set's columns
+    // argue against this type. No lift hit rate: a complex's lifts are often custom ones.
+    kind: 'complexes',
+    signatureTokens: ['complex', 'component', 'lift', 'reps'],
+    distinctiveTokens: ['component'],
+    antiTokens: ['date', 'weight', 'set', 'workout', 'cycle', 'program'],
+    expectedCols: 4,
+    usesLiftColumn: false,
+    transposed: false,
+    scanAllCells: false,
+  },
 ];
 
 const norm = (cell: SpreadsheetCell | undefined): string =>

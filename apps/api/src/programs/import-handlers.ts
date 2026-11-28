@@ -32,8 +32,13 @@ import {
   liftRecordLabel,
   withImportProgram,
   withOccurrence,
+  ComplexImportRow,
+  complexIdOf,
+  complexImportKey,
+  complexLift,
 } from '@lifting-logbook/core';
 import { RepositoryBundle } from '../ports/factory';
+import { complexesHandler } from './complex-import';
 import { liftNamesFor } from './effective-slot-map.util';
 import { legacyRowsPreImage, lockForImport, nonCycleRowsPreImage, placeFileRows } from './macrocycle-history.util';
 import {
@@ -260,23 +265,71 @@ const strengthGoalsHandler: ImportHandler<StrengthGoalEntry> = {
   },
 };
 
+/**
+ * The rows with each `complex:<x>` resolved to the account's complex (#1514): `x` is kept when it
+ * is one of the account's complex ids, and otherwise read as a name, ignoring case, which is how
+ * an export writes a complex so another account can read it. `names` gives each resolved complex
+ * id its name, for the preview's labels; `unknown` holds the `x` no complex matched, whose rows are
+ * stored as written and plan nothing until the row is changed.
+ */
+async function withAccountComplexes(
+  rows: LiftingProgramSpec[],
+  repos: RepositoryBundle,
+): Promise<{ rows: LiftingProgramSpec[]; names: Map<string, string>; unknown: Set<string> }> {
+  const names = new Map<string, string>();
+  const unknown = new Set<string>();
+  if (!rows.some((r) => complexIdOf(r.lift) !== undefined)) return { rows, names, unknown };
+  const complexes = await repos.barbellComplex.list();
+  const byName = new Map(complexes.map((c) => [complexImportKey(c.name), c]));
+  for (const c of complexes) names.set(c.id, c.name);
+  const resolved = rows.map((r) => {
+    const named = complexIdOf(r.lift);
+    if (named === undefined || names.has(named)) return r;
+    const complex = byName.get(complexImportKey(named));
+    if (!complex) {
+      unknown.add(named);
+      return r;
+    }
+    return { ...r, lift: complexLift(complex.id) };
+  });
+  return { rows: resolved, names, unknown };
+}
+
 const programSpecHandler: ImportHandler<LiftingProgramSpec> = {
   parse: parseLiftingProgramSpec,
   validate: validateProgramSpecImport,
   async preview(valid, program, repos) {
     const existing = await repos.liftingProgramSpec.getProgramSpec(program);
-    return buildProgramSpecPreview(valid, existing);
+    const { rows, names, unknown } = await withAccountComplexes(valid, repos);
+    const preview = buildProgramSpecPreview(rows, existing);
+    // A complex row reads by the complex's name, not its id, and one the account lacks says so.
+    for (const delta of preview.deltas) {
+      const row = delta.rowIndex === undefined ? undefined : rows[delta.rowIndex - 1];
+      const named = row && complexIdOf(row.lift);
+      if (!row || named === undefined) continue;
+      const name = names.get(named);
+      if (name !== undefined) delta.label = `Week ${row.week} · ${name} (#${row.order})`;
+      else if (unknown.has(named)) {
+        delta.message = `This account has no complex named "${named}". Import complexes.csv first, or this row plans nothing`;
+      }
+    }
+    return preview;
   },
   async commit(valid, program, repos) {
     const existing = await repos.liftingProgramSpec.getProgramSpec(program);
-    const result = await repos.liftingProgramSpec.saveProgramSpec(program, valid);
-    return { ...result, preImage: buildProgramSpecPreImage(valid, existing) };
+    const { rows } = await withAccountComplexes(valid, repos);
+    const result = await repos.liftingProgramSpec.saveProgramSpec(program, rows);
+    return { ...result, preImage: buildProgramSpecPreImage(rows, existing) };
   },
 };
 
-export const IMPORT_HANDLERS: Record<ImportKind, ImportHandler<LiftRecord | TrainingMax | StrengthGoalEntry | LiftingProgramSpec>> = {
+export const IMPORT_HANDLERS: Record<
+  ImportKind,
+  ImportHandler<LiftRecord | TrainingMax | StrengthGoalEntry | LiftingProgramSpec | ComplexImportRow>
+> = {
   'lift-records': liftRecordsHandler,
   'training-maxes': trainingMaxesHandler,
   'strength-goals': strengthGoalsHandler,
   'program-spec': programSpecHandler,
+  complexes: complexesHandler,
 };

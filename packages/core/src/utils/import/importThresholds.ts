@@ -21,6 +21,7 @@ export const IMPORT_THRESHOLDS: Readonly<
   'training-maxes': { autoAccept: 0.75, high: 0.88, medium: 0.65 },
   'program-spec': { autoAccept: 0.78, high: 0.9, medium: 0.7 },
   'strength-goals': { autoAccept: 0.65, high: 0.82, medium: 0.55 },
+  'complexes': { autoAccept: 0.75, high: 0.88, medium: 0.65 },
 };
 
 /** Maps a confidence score to its display bucket using the type's own cutoffs. */

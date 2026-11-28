@@ -66,10 +66,11 @@ const spec = {
 };
 
 describe('buildExportFiles', () => {
-  it('writes the five files for an empty account, with no rows and every table present', () => {
+  it('writes the six files for an empty account, with no rows and every table present', () => {
     const files = buildExportFiles(emptyRows(), NOW);
 
     expect(Object.keys(files).sort()).toEqual([
+      'complexes.csv',
       'lift-records.csv',
       'logbook.json',
       'program-spec.csv',
@@ -88,7 +89,33 @@ describe('buildExportFiles', () => {
     });
   });
 
-  it('keeps a single-program account to the five files', () => {
+  it('writes complexes by name, with custom lifts by name, and spec rows naming a complex by its name (#1514)', () => {
+    const rows = emptyRows();
+    const customId = '11111111-2222-3333-4444-555555555555';
+    rows.userSettings = { activeProgram: customId };
+    rows.customLifts = [{ id: 'lift-uuid', name: 'Zercher Hold' }];
+    rows.barbellComplexes = [
+      { id: 'complex-uuid', name: 'Bear', components: [{ lift: 'Squat', reps: 2 }, { lift: 'lift-uuid', reps: 3 }] },
+    ];
+    rows.customPrograms = [
+      { id: customId, name: 'Plan', specs: [{ ...spec, lift: 'complex:complex-uuid' }, { ...spec, lift: 'complex:gone', order: 2 }] },
+    ];
+
+    const files = buildExportFiles(rows, NOW);
+
+    expect(parseCsvText(files['complexes.csv']!)).toEqual([
+      ['Complex', 'Component', 'Lift', 'Reps'],
+      ['Bear', '1', 'Squat', '2'],
+      ['Bear', '2', 'Zercher Hold', '3'],
+    ]);
+    // A deleted complex's row keeps its id: no name is left to write.
+    expect(parseCsvText(files['program-spec.csv']!).slice(1).map((row) => row[2])).toEqual([
+      'complex:Bear',
+      'complex:gone',
+    ]);
+  });
+
+  it('keeps a single-program account to the six files', () => {
     const rows = emptyRows();
     rows.userSettings = { activeProgram: 'rpt' };
     rows.liftRecords = [record()];
@@ -97,7 +124,7 @@ describe('buildExportFiles', () => {
 
     const files = buildExportFiles(rows, NOW);
 
-    expect(Object.keys(files)).toHaveLength(5);
+    expect(Object.keys(files)).toHaveLength(6);
     expect(parseCsvText(files['training-maxes.csv']!)[1]).toEqual(['2026-01-05', 'Squat', '300']);
     expect(files['strength-goals.csv']).toContain('Squat');
   });

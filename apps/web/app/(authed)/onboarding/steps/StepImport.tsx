@@ -25,6 +25,7 @@ const KIND_LABEL: Record<string, string> = {
   'lift-records': 'lift history',
   'strength-goals': 'strength goals',
   'program-spec': 'a program definition',
+  complexes: 'barbell complexes',
 };
 
 type Props = {

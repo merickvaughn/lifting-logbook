@@ -47,6 +47,11 @@ describe("classifyImport — golden outputs", () => {
           type: "strength-goals",
           confidence: 0,
           closeCall: false
+        },
+        {
+          type: "complexes",
+          confidence: 0,
+          closeCall: false
         }
       ]
     });
@@ -78,6 +83,11 @@ describe("classifyImport — golden outputs", () => {
           type: "program-spec",
           confidence: 0.0962,
           closeCall: false
+        },
+        {
+          type: "complexes",
+          confidence: 0,
+          closeCall: false
         }
       ]
     });
@@ -106,6 +116,11 @@ describe("classifyImport — golden outputs", () => {
         },
         {
           type: "training-maxes",
+          confidence: 0,
+          closeCall: false
+        },
+        {
+          type: "complexes",
           confidence: 0,
           closeCall: false
         }
@@ -138,6 +153,11 @@ describe("classifyImport — golden outputs", () => {
           type: "program-spec",
           confidence: 0.0909,
           closeCall: false
+        },
+        {
+          type: "complexes",
+          confidence: 0,
+          closeCall: false
         }
       ]
     });
@@ -148,10 +168,17 @@ describe("classifyImport — golden outputs", () => {
       type: null,
       confidence: 0.15,
       bucket: "low",
+      // #1514: the complexes profile (4 columns expected) now edges out training-maxes on
+      // shape alone. Below auto-accept either way, so `type` stays null.
       reasons: [
-        "3 columns (≈3 expected)"
+        "3 columns (≈4 expected)"
       ],
       alternatives: [
+        {
+          type: "training-maxes",
+          confidence: 0.15,
+          closeCall: true
+        },
         {
           type: "strength-goals",
           confidence: 0.12,

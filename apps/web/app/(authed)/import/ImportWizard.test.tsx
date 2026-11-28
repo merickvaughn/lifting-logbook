@@ -2074,6 +2074,26 @@ describe('ImportWizard', () => {
       ).toBeInTheDocument();
     });
 
+    // #1514: a skipped complex says why in place of "unchanged", and a row that has a value and a
+    // note, such as a program row naming a complex the account lacks, shows both.
+    it("shows a skipped row's reason, and a note under a row's value", async () => {
+      const user = userEvent.setup();
+      mockPreview.mockResolvedValue(
+        withDeltas([
+          { key: 'bear', label: 'Bear', kind: 'skip', before: 'Squat × 1', after: 'Squat × 2', message: 'You already have a complex named "Bear"' },
+          { key: 'flow', label: 'Flow', kind: 'skip', before: 'Squat × 1', after: 'Squat × 1' },
+          { key: 'row', label: 'Week 1 · complex:Gone (#2)', kind: 'create', after: '3×1', message: 'This account has no complex named "Gone"' },
+        ]),
+      );
+
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, AMBIGUOUS_LIFT_CSV);
+
+      expect(screen.getByText('You already have a complex named "Bear"')).toBeInTheDocument();
+      expect(screen.getByText('unchanged')).toBeInTheDocument();
+      expect(screen.getByText('This account has no complex named "Gone"').parentElement).toHaveTextContent('3×1');
+    });
+
     it("shows a remapped row's lift name, not its id, and counts it as a create", async () => {
       const user = userEvent.setup();
       mockDryRun.mockResolvedValue({

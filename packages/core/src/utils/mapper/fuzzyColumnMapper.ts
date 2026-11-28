@@ -1,5 +1,6 @@
 import { SpreadsheetCell } from '../../models';
 import {
+  COMPLEX_HEADER_MAP,
   LEGACY_LIFT_RECORD_HEADERS,
   LIFT_RECORD_HEADER_MAP,
   TRAINING_MAX_HEADER_MAP,
@@ -149,6 +150,7 @@ function getRequiredFields(kind: ImportKind, assign: boolean): Set<string> {
     // Strength goals requires lift, goalType, unit, and either target or ratio
     // For now, mark lift, goalType, unit as required (target/ratio checked per-row)
     ['strength-goals', new Set<string>()],
+    ['complexes', new Set(['complex', 'component', 'lift', 'reps'])],
   ]);
 
   return required.get(kind) ?? new Set();
@@ -165,6 +167,8 @@ function getHeaderMapForKind(kind: ImportKind): Record<string, { key: string; ty
       return TRAINING_MAX_HEADER_MAP;
     case 'program-spec':
       return LIFTING_PROGRAM_SPEC_HEADER_MAP;
+    case 'complexes':
+      return COMPLEX_HEADER_MAP;
     default:
       return {};
   }

@@ -99,6 +99,13 @@ const PREVIEWS: Record<ImportKind, ImportPreviewResponse> = {
     preview: { creates: 0, updates: 0, skips: 0, unresolved: 0, deltas: [] },
     errors: [],
   },
+  complexes: {
+    classification: classified('complexes', 0.9),
+    destination: 'complexes',
+    columnMappings: [],
+    preview: { creates: 0, updates: 0, skips: 0, unresolved: 0, deltas: [] },
+    errors: [],
+  },
 };
 
 beforeEach(() => {

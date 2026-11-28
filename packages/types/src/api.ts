@@ -785,6 +785,8 @@ export type ImportErrorCode =
   | 'OCCURRENCE_INVALID'
   | 'STATUS_INVALID'
   | 'COMPLEX_ROUND_INVALID'
+  | 'COMPLEX_NAME_INVALID'
+  | 'COMPONENT_INVALID'
   | 'UNEXPECTED_ERROR';
 
 /** A single validation error from a CSV import attempt. */
@@ -862,15 +864,17 @@ export interface ImportLiftRecordsResponse {
 // ---------------------------------------------------------------------------
 
 /**
- * The four destinations the Smart Import wizard can route a CSV to. Mirrors the
- * four CSV exports the app stores: lift history, training maxes, strength goals,
- * and a program spec.
+ * The destinations the Smart Import wizard can route a CSV to. Mirrors the CSV files Download My
+ * Data writes: lift history, training maxes, strength goals, a program spec, and the lifter's
+ * barbell complexes (#1514). Complexes belong to the lifter, not a program, so that import ignores
+ * the program it's made in.
  */
 export type ImportKind =
   | 'lift-records'
   | 'training-maxes'
   | 'strength-goals'
-  | 'program-spec';
+  | 'program-spec'
+  | 'complexes';
 
 /** Confidence bucket for a classification, derived from per-type thresholds. */
 export type ImportConfidenceBucket = 'high' | 'medium' | 'low';
@@ -927,7 +931,9 @@ export interface ImportDelta {
   /**
    * Why the row is not 'ok', from the first of its validation errors. An incomplete row has no
    * `after` to show, so without this the Review table says only "incomplete" and the lifter can't
-   * tell a bad date from a missing weight (#1402).
+   * tell a bad date from a missing weight (#1402). A skipped complex says why it is skipped, such
+   * as a name the account already uses, and a program-spec row naming a complex the account
+   * doesn't have says so (#1514).
    */
   message?: string;
   /**

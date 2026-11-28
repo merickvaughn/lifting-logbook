@@ -311,6 +311,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A note under a row's change, such as a program row naming a complex the account lacks (#1514). */
+.deltaMessage {
+  display: block;
+  font-size: var(--font-size-sm);
+}
+
 .deltaKindCreate {
   border-left: 3px solid var(--color-success);
 }

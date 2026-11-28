@@ -51,6 +51,10 @@ export default function DownloadAll() {
           own folder under <code>other-programs</code>.
         </li>
         <li>
+          <code>complexes.csv</code> has your barbell complexes. Upload it before a program that
+          plans one, so the program finds them.
+        </li>
+        <li>
           <code>logbook.json</code>{' '}
           is the complete record. Importing doesn&apos;t read it, so it&apos;s the only copy of what the CSV files leave out, such as a custom
           program&apos;s name and description.

@@ -67,6 +67,8 @@ import {
   type TrainingMaxSpellingCollision,
   liftRecordNaturalKey,
   programSpecNaturalKey,
+  complexImportKey,
+  type ComplexImportRow,
   withImportProgram,
   parseLiftRecords,
   segmentLiftHistory,
@@ -579,6 +581,7 @@ export class ImportController {
     const allGoals = batch.destination === 'strength-goals'
       ? await repos.strengthGoal.getGoals(program)
       : [];
+    const allComplexes = batch.destination === 'complexes' ? await repos.barbellComplex.list() : [];
 
     if (batch.destination === 'lift-records') {
       const asOf = assignImportDate(today);
@@ -776,6 +779,16 @@ export class ImportController {
             // reconstruct the previous spec. Flag so the caller knows undo was partial.
             flagged.push({ key, reason: 'program-spec row updates cannot be undone automatically' });
             skipped++;
+          }
+        } else if (batch.destination === 'complexes') {
+          // A complexes import only creates, keyed by the new complex's id (#1514). One deleted
+          // since is gone already.
+          if (allComplexes.some((c) => c.id === key)) {
+            await repos.barbellComplex.delete(key);
+            restored++;
+          } else {
+            skipped++;
+            flagged.push({ key, reason: 'complex no longer exists' });
           }
         }
       }
@@ -1052,6 +1065,8 @@ export class ImportController {
         valid = (valid as LiftRecord[]).filter((r) => !excludeKeys.has(liftRecordNaturalKey(r)));
       } else if (destination === 'program-spec') {
         valid = (valid as LiftingProgramSpec[]).filter((r) => !excludeKeys.has(programSpecNaturalKey(r)));
+      } else if (destination === 'complexes') {
+        valid = (valid as ComplexImportRow[]).filter((r) => !excludeKeys.has(complexImportKey(r.complex)));
       } else {
         // Training-max and strength-goal delta keys are the lift name.
         valid = (valid as (TrainingMax | StrengthGoalEntry)[]).filter((r) => !excludeKeys.has(r.lift));

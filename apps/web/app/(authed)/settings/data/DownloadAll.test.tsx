@@ -82,7 +82,7 @@ describe('Settings → Data', () => {
     render(<DownloadAll />);
 
     expect(screen.getByRole('link', { name: 'Import' })).toHaveAttribute('href', '/import');
-    for (const file of ['lift-records.csv', 'training-maxes.csv', 'strength-goals.csv', 'program-spec.csv', 'logbook.json']) {
+    for (const file of ['lift-records.csv', 'training-maxes.csv', 'strength-goals.csv', 'program-spec.csv', 'complexes.csv', 'logbook.json']) {
       expect(screen.getByText(file)).toBeInTheDocument();
     }
     expect(screen.getByText('logbook.json').parentElement).toHaveTextContent('logbook.json is the complete record');
