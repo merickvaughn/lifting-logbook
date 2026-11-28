@@ -48,6 +48,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
         ? new Map([[SEED_PROGRAM, seedLiftRecords()]])
         : new Map();
       const customLift = new InMemoryCustomLiftRepository(user.id);
+      const barbellComplex = new InMemoryBarbellComplexRepository(user.id);
       const strengthGoal = new InMemoryStrengthGoalRepository();
       const trainingMax = new InMemoryTrainingMaxRepository(preSeed);
       const userSettings = new InMemoryUserSettingsRepository();
@@ -58,7 +59,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
       const bundle: RepositoryBundle = {
         dataSnapshot: new InMemoryDataSnapshotRepository(),
         trainingData,
-        barbellComplex: new InMemoryBarbellComplexRepository(user.id),
+        barbellComplex,
         bodyWeight: new InMemoryBodyWeightRepository(),
         customLift,
         focus: new InMemoryFocusRepository(),
@@ -81,6 +82,7 @@ export class InMemoryRepositoryFactory implements IRepositoryFactory {
           trainingMax,
           strengthGoal,
           customLift,
+          barbellComplex,
           userSettings,
           supplement,
           googleSheetLink,

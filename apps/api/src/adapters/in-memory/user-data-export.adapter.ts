@@ -1,4 +1,5 @@
 import { LiftRecord, LiftRecordExportRow } from '@lifting-logbook/core';
+import { IBarbellComplexRepository } from '../../ports/IBarbellComplexRepository';
 import { ICustomLiftRepository } from '../../ports/ICustomLiftRepository';
 import { InMemoryGoogleSheetLinkRepository } from './google-sheet-link.adapter';
 import {
@@ -12,7 +13,7 @@ import { InMemorySupplementRepository } from './supplement.adapter';
 import { InMemoryTrainingMaxRepository } from './training-max.adapter';
 
 /**
- * Lift records, training maxes, strength goals, custom lifts, settings, supplements and the Google
+ * Lift records, training maxes, strength goals, custom lifts, complexes, settings, supplements and the Google
  * Sheet link, which is
  * what the endpoint's in-memory tests read. Every other table is empty here, and row shapes and order
  * follow the in-memory stores. Only Postgres is authoritative for `logbook.json`, which is proven
@@ -24,6 +25,7 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
     private readonly trainingMax: InMemoryTrainingMaxRepository,
     private readonly strengthGoal: InMemoryStrengthGoalRepository,
     private readonly customLift: ICustomLiftRepository,
+    private readonly barbellComplex: IBarbellComplexRepository,
     private readonly userSettings: IUserSettingsRepository,
     private readonly supplement: InMemorySupplementRepository,
     private readonly googleSheetLink: InMemoryGoogleSheetLinkRepository,
@@ -59,6 +61,10 @@ export class InMemoryUserDataExportRepository implements IUserDataExportReposito
       customPrograms: [],
       customLifts: (await this.customLift.list()).map((lift) => {
         const { userId: _userId, ...rest } = lift;
+        return rest;
+      }),
+      barbellComplexes: (await this.barbellComplex.list()).map((complex) => {
+        const { userId: _userId, ...rest } = complex;
         return rest;
       }),
       userSettings: settings,

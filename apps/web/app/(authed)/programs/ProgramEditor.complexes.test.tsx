@@ -59,6 +59,47 @@ describe('ProgramEditor — a row can plan a complex (#1495)', () => {
     expect(screen.queryByRole('group', { name: 'Complexes' })).not.toBeInTheDocument();
   });
 
+  it('links to Settings → Complexes in a new tab when the lifter has none (#1506)', () => {
+    render(
+      <ProgramEditor
+        mode="new"
+        activeProgram={null}
+        defaultWeightIncrement={5}
+        complexes={[]}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const link = screen.getByRole('link', { name: 'Settings → Complexes' });
+    expect(link).toHaveAttribute('href', '/settings/complexes');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('leaves the link out once a complex exists, or when the complexes couldn’t be read', () => {
+    const { rerender } = render(
+      <ProgramEditor
+        mode="new"
+        activeProgram={null}
+        defaultWeightIncrement={5}
+        complexes={[BEAR]}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('link', { name: 'Settings → Complexes' })).not.toBeInTheDocument();
+    rerender(
+      <ProgramEditor
+        mode="new"
+        activeProgram={null}
+        defaultWeightIncrement={5}
+        complexes={null}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('link', { name: 'Settings → Complexes' })).not.toBeInTheDocument();
+  });
+
   it('names a row whose complex was deleted as such, rather than by its id', () => {
     const existing: CustomProgramResponse = {
       id: 'p1',

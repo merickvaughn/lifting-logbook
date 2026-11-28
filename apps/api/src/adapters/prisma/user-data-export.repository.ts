@@ -45,6 +45,7 @@ export class PrismaUserDataExportRepository implements IUserDataExportRepository
         }),
       ),
       customLifts: withoutUserId(await this.prisma.customLift.findMany({ where, orderBy: { name: 'asc' } })),
+      barbellComplexes: withoutUserId(await this.prisma.barbellComplex.findMany({ where, orderBy: { name: 'asc' } })),
       userSettings: settings,
       macrocycles: withoutUserId(
         await this.prisma.macrocycle.findMany({ where, orderBy: [{ program: 'asc' }, { startDate: 'asc' }] }),

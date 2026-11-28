@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import type { InputHTMLAttributes } from 'react';
 import { LIFT_CATALOG, complexIdOf, complexLift } from '@lifting-logbook/core';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DEFAULT_WEIGHT_INCREMENT } from '@lifting-logbook/types';
 import type { BarbellComplexResponse, CustomProgramResponse, CustomProgramSpecRow } from '@lifting-logbook/types';
@@ -411,6 +412,17 @@ export default function ProgramEditor({
             </div>
           );
         })}
+
+        {/* A new tab, so the program being edited isn't lost (#1506). */}
+        {complexes !== null && complexes.length === 0 && (
+          <p className={styles.complexesNote}>
+            No complexes yet. Make one in{' '}
+            <Link href="/settings/complexes" target="_blank" rel="noopener">
+              Settings → Complexes
+            </Link>{' '}
+            (opens a new tab) to plan it here.
+          </p>
+        )}
 
         <button
           type="button"

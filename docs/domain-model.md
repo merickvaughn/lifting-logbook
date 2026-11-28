@@ -222,7 +222,14 @@ neither is part of the natural key or id.
   is stored by name and a custom lift by its id, where its training max lives
   ([#1291](https://github.com/merickvaughn/lifting-logbook/issues/1291)), so a rename doesn't
   break it. The API answers each component with a `name` to show, `Deleted lift` once its custom
-  lift is gone. A complex can't take a lift's name, and a custom lift can't start with `complex:`.
+  lift is gone. A complex can't take a lift's name, and a custom lift can't take a complex's name
+  or start with `complex:`. Both checks ignore case
+  ([#1506](https://github.com/merickvaughn/lifting-logbook/issues/1506)).
+- Download My Data writes the definitions to `logbook.json` as `barbellComplexes`, as it writes
+  custom lifts; no import reads them back yet. Clear data keeps them, so a snapshot doesn't hold
+  them. The missing-max list (`GET .../training-maxes/missing`) names lifts with logged sets and
+  no max, so it leaves out a component that has none; the workout page asks for it instead
+  ([#1506](https://github.com/merickvaughn/lifting-logbook/issues/1506)).
 - A program row plans a complex by naming it in `lift` as `complex:<id>` (`complexLift`,
   `complexIdOf` in `packages/core`). The rest of the row (sets, reps, percentages, increment) means
   what it does for a lift.

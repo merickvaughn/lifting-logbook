@@ -12,6 +12,7 @@ const emptyRows = (): UserDataRows => ({
   strengthGoals: [],
   customPrograms: [],
   customLifts: [],
+  barbellComplexes: [],
   userSettings: null,
   macrocycles: [],
   macrocycleDashboards: [],
