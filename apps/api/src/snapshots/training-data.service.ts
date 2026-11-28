@@ -237,8 +237,6 @@ export async function placeAfterStored(
   program: string,
   keep: ReadonlyMap<number, number> = new Map(),
 ): Promise<void> {
-  const offset = [...(await repos.macrocycle.numbersInUse(program))].reduce((n, m) => Math.max(n, m), 0);
-  const to = (n: number) => keep.get(n) ?? n + offset;
   const batches = data.importBatches.filter((batch) => batch.program === program && isLiftRecordsBatch(batch));
   const numbers = [
     ...NUMBERED_TRAINING_TABLES.flatMap((table) => data[table])
@@ -246,6 +244,18 @@ export async function placeAfterStored(
       .flatMap((row) => row.macrocycleNum ?? []),
     ...batches.flatMap((batch) => Object.keys(preImageOf(batch)).flatMap((key) => preImageKeyNumber(key) ?? [])),
   ];
+  // Moving every number by the highest stored one clears the stored numbers only when the
+  // snapshot's lowest is 1 or more. A snapshot taken before #1200's renumbering, or after
+  // `macrocycle_renumber_reverse()`, can hold 0 or negative numbers, and with 1 to 5 stored its -2
+  // would land on 3 (#1513). So the offset is also at least enough to put the lowest moved number
+  // one past the highest stored, stored negative numbers included.
+  const stored = [...(await repos.macrocycle.numbersInUse(program))];
+  const moved = numbers.filter((n) => !keep.has(n));
+  const highestStored = stored.reduce((a, b) => Math.max(a, b), -Infinity);
+  const lowestMoved = moved.reduce((a, b) => Math.min(a, b), Infinity);
+  const offset =
+    stored.length === 0 || moved.length === 0 ? 0 : Math.max(0, highestStored, highestStored - lowestMoved + 1);
+  const to = (n: number) => keep.get(n) ?? n + offset;
   const changes = new Map(numbers.filter((n) => to(n) !== n).map((n) => [n, to(n)]));
   if (changes.size === 0) return;
   moveRows(data, program, (row) => (row.macrocycleNum === undefined ? {} : { macrocycleNum: to(row.macrocycleNum) }));
