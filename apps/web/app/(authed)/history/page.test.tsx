@@ -10,6 +10,7 @@ jest.mock('@/lib/api', () => ({
   fetchImportBatches: jest.fn().mockResolvedValue([]),
   fetchCustomPrograms: jest.fn().mockResolvedValue([]),
   fetchRecordedPrograms: jest.fn().mockResolvedValue([]),
+  fetchCustomLifts: jest.fn().mockResolvedValue([]),
   // Read through the real lib/active-program, so these tests hold whichever of its reads the page uses.
   fetchUserSettings: jest.fn().mockResolvedValue({ activeProgram: '5-3-1' }),
 }));
