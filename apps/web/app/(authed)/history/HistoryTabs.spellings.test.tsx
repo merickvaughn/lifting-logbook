@@ -133,4 +133,23 @@ describe('HistoryTabs across stored spellings', () => {
     expect(screen.getByText('200 lbs')).toBeInTheDocument();
     expect(screen.getByText('210 lbs')).toBeInTheDocument();
   });
+
+  // #1503: import stores a custom lift under its id.
+  it('names a custom lift stored by its id on the TM Timeline', async () => {
+    const user = userEvent.setup();
+    render(
+      <HistoryTabs
+        records={[]}
+        tmEntries={[tmEntry('a', 'custom-zercher-id', 185)]}
+        macrocycles={[]}
+        customLifts={[{ id: 'custom-zercher-id', name: 'Zercher Squat' }]}
+        unit="lbs"
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: 'TM Timeline' }));
+    expect(liftOptions()).toEqual(['All Lifts', 'Zercher Squat']);
+    expect(screen.getByRole('heading', { name: 'Zercher Squat' })).toBeInTheDocument();
+    expect(screen.queryByText('custom-zercher-id')).not.toBeInTheDocument();
+  });
 });

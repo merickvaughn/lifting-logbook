@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { storedIdListing } from '@lifting-logbook/core';
 import {
+  fetchCustomLifts,
   fetchImportBatches,
   fetchLiftRecords,
   fetchMacrocycles,
@@ -11,12 +11,14 @@ import { getPreferredUnit } from '@/lib/preferences';
 import { readUserPrograms } from '@/lib/read-user-programs';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
+  CustomLiftResponse,
   ImportBatchSummary,
   LiftRecordResponse,
   MacrocycleSummaryResponse,
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { liftListing } from '@/lib/liftNames';
 import { buildTmAtTimeIndex } from '@/lib/tmAtTime';
 import HistoryTabs from './HistoryTabs';
 import styles from './history.module.css';
@@ -53,7 +55,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   const fromProgram = <T,>(load: (program: string) => Promise<T>, none: T): Promise<T> =>
     program === undefined ? Promise.resolve(none) : load(program);
 
-  const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, imports, unit] = await Promise.all([
+  const [programRecords, nonCycleRecords, { entries: tmEntries }, macrocycles, imports, customLifts, unit] = await Promise.all([
     // fallback-covered-by: apps/web/e2e/staging.spec.ts
     fromProgram(fetchLiftRecords, []).catch((): LiftRecordResponse[] => {
       loadFailed = true;
@@ -82,14 +84,22 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
       importsFailed = true;
       return [];
     }),
+    // Import stores a custom lift's sets under its id (#1290), so without these they show the id (#1503).
+    // fallback-covered-by: apps/web/app/(authed)/history/page.imported.test.tsx
+    fetchCustomLifts().catch((): CustomLiftResponse[] => {
+      loadFailed = true;
+      return [];
+    }),
     getPreferredUnit(),
   ]);
 
   const records = [...programRecords, ...nonCycleRecords];
   const sortedRecords = records.slice().sort((a, b) => b.date.localeCompare(a.date));
 
-  // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135).
-  const listing = storedIdListing(sortedRecords.map((r) => r.lift));
+  // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135),
+  // and one stored by custom lift id with a record under the custom lift's name (#1503).
+  const liftNames = customLifts.map(({ id, name }) => ({ id, name }));
+  const listing = liftListing(sortedRecords.map((r) => r.lift), liftNames);
   const maxByLift = new Map<string, number>();
   for (const r of sortedRecords) {
     const lift = listing(r.lift);
@@ -158,7 +168,14 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
           Undoing an import isn’t available right now. Refresh the page in a moment to try again.
         </p>
       )}
-      <HistoryTabs records={enriched} tmEntries={tmEntries} macrocycles={macrocycles} imports={imports} unit={unit} />
+      <HistoryTabs
+        records={enriched}
+        tmEntries={tmEntries}
+        macrocycles={macrocycles}
+        imports={imports}
+        customLifts={liftNames}
+        unit={unit}
+      />
     </main>
   );
 }

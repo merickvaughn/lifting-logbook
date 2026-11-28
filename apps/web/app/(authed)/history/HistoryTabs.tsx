@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
+import { formatWeight, liftIdFor } from '@lifting-logbook/core';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   ImportBatchSummary,
@@ -14,6 +14,7 @@ import type {
 } from '@lifting-logbook/types';
 import { undoImport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
+import { liftListing, type CustomLiftName } from '@/lib/liftNames';
 import { undoSummary } from '@/lib/importUndo';
 import { logClientError } from '@/lib/log-client-error';
 import { formatDay, supplementsOnHref } from '@/lib/supplementHistory';
@@ -23,11 +24,14 @@ import styles from './history.module.css';
 
 type Tab = 'history' | 'timeline' | 'macrocycles';
 
+const NO_CUSTOM_LIFTS: CustomLiftName[] = [];
+
 export default function HistoryTabs({
   records,
   tmEntries,
   macrocycles,
   imports = [],
+  customLifts = NO_CUSTOM_LIFTS,
   unit,
 }: {
   records: EnrichedRecord[];
@@ -35,6 +39,8 @@ export default function HistoryTabs({
   macrocycles: MacrocycleSummaryResponse[];
   /** The imports that touched these macrocycles, newest first, each undoable (#1257). */
   imports?: ImportBatchSummary[];
+  /** The lifter's custom lifts, to name sets stored under a custom lift's id (#1503). */
+  customLifts?: CustomLiftName[];
   unit: WeightUnit;
 }) {
   const [tab, setTab] = useState<Tab>('history');
@@ -72,8 +78,8 @@ export default function HistoryTabs({
       </div>
 
       <div role="tabpanel">
-        {tab === 'history' && <LiftHistoryTab records={records} unit={unit} />}
-        {tab === 'timeline' && <TmTimelineTab entries={tmEntries} unit={unit} />}
+        {tab === 'history' && <LiftHistoryTab records={records} customLifts={customLifts} unit={unit} />}
+        {tab === 'timeline' && <TmTimelineTab entries={tmEntries} customLifts={customLifts} unit={unit} />}
         {tab === 'macrocycles' && <MacrocyclesTab macrocycles={macrocycles} imports={imports} />}
       </div>
     </div>
@@ -304,11 +310,19 @@ function UndoResult({
   );
 }
 
-function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: WeightUnit }) {
+function LiftHistoryTab({
+  records,
+  customLifts,
+  unit,
+}: {
+  records: EnrichedRecord[];
+  customLifts: readonly CustomLiftName[];
+  unit: WeightUnit;
+}) {
   const [search, setSearch] = useState('');
   const [liftFilter, setLiftFilter] = useState('');
 
-  const listing = useMemo(() => storedIdListing(records.map((r) => r.lift)), [records]);
+  const listing = useMemo(() => liftListing(records.map((r) => r.lift), customLifts), [records, customLifts]);
   const lifts = useMemo(
     () => Array.from(new Set(records.map((r) => listing(r.lift)))).sort(),
     [records, listing],
@@ -375,7 +389,7 @@ function LiftHistoryTab({ records, unit }: { records: EnrichedRecord[]; unit: We
               {visible.map((r) => (
                 <tr key={r.id}>
                   <td>{r.date}</td>
-                  <td>{r.lift}</td>
+                  <td>{listing(r.lift)}</td>
                   <td>
                     {formatWeight(r.weight, 'lbs', unit)} × {r.reps}
                   </td>
@@ -421,14 +435,16 @@ function SupplementsLink({ date }: { date: string }) {
 
 function TmTimelineTab({
   entries,
+  customLifts,
   unit,
 }: {
   entries: TrainingMaxHistoryEntryResponse[];
+  customLifts: readonly CustomLiftName[];
   unit: WeightUnit;
 }) {
   const [liftFilter, setLiftFilter] = useState('');
 
-  const listing = useMemo(() => storedIdListing(entries.map((e) => e.lift)), [entries]);
+  const listing = useMemo(() => liftListing(entries.map((e) => e.lift), customLifts), [entries, customLifts]);
   const lifts = useMemo(
     () => Array.from(new Set(entries.map((e) => listing(e.lift)))).sort(),
     [entries, listing],
