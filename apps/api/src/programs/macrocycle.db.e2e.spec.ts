@@ -23,6 +23,7 @@ import {
   NUMBERED_TABLES,
   PrismaMacrocycleRepository,
 } from '../adapters/prisma/macrocycle.repository';
+import { PrismaImportBatchRepository } from '../adapters/prisma/import-batch.repository';
 import { MacrocycleNumberConflictError } from '../ports/errors';
 import { IMPORT_LOCK_WAIT_MS, legacyRowsPreImage } from './macrocycle-history.util';
 import { VALIDATION_PIPE_OPTIONS } from '../validation-pipe.config';
@@ -63,6 +64,8 @@ const USER_RENUMBER_UPGRADE = 'macrocycle-db-renumber-upgrade';
 const USER_RENUMBER_DEADLOCK = 'macrocycle-db-renumber-deadlock';
 const USER_SPLIT_UNDO = 'macrocycle-db-split-undo';
 const USER_UNDO_NEGATIVE = 'macrocycle-db-undo-negative';
+const USER_RENUMBER_NEGATIVE = 'macrocycle-db-renumber-negative';
+const USER_KEYS_ON_NEGATIVE = 'macrocycle-db-keys-on-negative';
 const USER_HISTORY_ORDER = 'macrocycle-db-history-order';
 const USER_HISTORY_REVERSE = 'macrocycle-db-history-reverse';
 const USER_HISTORY_LATER_IMPORT = 'macrocycle-db-history-later-import';
@@ -76,6 +79,8 @@ const USER_HISTORY_NO_WAIT = 'macrocycle-db-history-no-wait';
 const USERS = [
   USER_SPLIT_UNDO,
   USER_UNDO_NEGATIVE,
+  USER_RENUMBER_NEGATIVE,
+  USER_KEYS_ON_NEGATIVE,
   USER_HISTORY_NO_WAIT,
   USER_HISTORY_NEGATIVE,
   USER_HISTORY_UNSTARTED,
@@ -371,6 +376,34 @@ describeOrSkip('macrocycle table (e2e, lifting_app role)', () => {
       }, 'macrocycle_backfill_window_rows');
     });
   });
+
+  // #1485: the SQL filters read a key's number with the same pattern, which allowed no sign.
+  it('finds and lists a batch by the negative macrocycle number its keys hold', async () => {
+    const user = USER_KEYS_ON_NEGATIVE;
+    const created = { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } };
+    const onNegative = await owner.importBatch.create({
+      data: { userId: user, program: PROGRAM, destination: 'lift-records', preImage: { '-2:1:20260302:Bench Press:1': created } },
+    });
+    const onPositive = await owner.importBatch.create({
+      data: { userId: user, program: PROGRAM, destination: 'lift-records', preImage: { 'macrocycle-row:3': { kind: 'created', wrote: { macrocycleNum: 3 } } } },
+    });
+
+    const read = await asUser(appDb, user, async (tx) => {
+      const repo = new PrismaImportBatchRepository(tx, user);
+      const ids = async (which: { on: number[] } | { except: number[] }) =>
+        (await repo.listWithKeysOn(PROGRAM, 'lift-records', which)).map((b) => b.id);
+      return {
+        on: await ids({ on: [-2] }),
+        except: await ids({ except: [3] }),
+        createdNums: Object.fromEntries((await repo.listSummaries(PROGRAM, 'lift-records')).map((s) => [s.id, s.createdNums])),
+      };
+    });
+    expect(read).toEqual({
+      on: [onNegative.id],
+      except: [onNegative.id],
+      createdNums: { [onNegative.id]: [-2], [onPositive.id]: [3] },
+    });
+  }, DB_E2E_HOOK_TIMEOUT_MS);
 });
 
 describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app role)', () => {
@@ -917,6 +950,45 @@ describeOrSkip('macrocycle numbering under concurrency (full app, lifting_app ro
       const undoDateBlind = await injectAs(user, 'POST', `${base}/import/${dateBlind.id}/undo`);
       expect(undoDateBlind.json()).toMatchObject({ restored: 1, skipped: 0 });
       expect(await sets()).toEqual(['1 2025-03-03 bench-press 1', '2 2026-01-05 Squat 1', '2 2026-01-09 Deadlift 1']);
+    }, DB_E2E_HOOK_TIMEOUT_MS);
+
+    // #1485: renumbering read a key on a negative number as holding none, so it moved the
+    // macrocycle's sets but left the batch's keys on -2, and undo then found nothing to delete.
+    it('moves a batch keyed on a negative macrocycle number with it, so undo still deletes its sets', async () => {
+      const user = USER_RENUMBER_NEGATIVE;
+      await owner.macrocycle.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: -2, startDate: day('2026-03-02'), status: 'completed', origin: 'legacy' },
+      });
+      await owner.liftRecord.create({
+        data: { userId: user, program: PROGRAM, macrocycleNum: -2, workoutNum: 1, date: day('2026-03-02'), lift: 'Bench Press', setNum: 1, weight: 200, reps: 5 },
+      });
+      const batch = await owner.importBatch.create({
+        data: {
+          userId: user,
+          program: PROGRAM,
+          destination: 'lift-records',
+          preImage: {
+            '-2:1:20260302:Bench Press:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } },
+            'macrocycle-row:-2': { kind: 'created', wrote: { macrocycleNum: -2 } },
+          },
+        },
+      });
+
+      // An older macrocycle arrives, so the one on -2 becomes 2.
+      expect((await commitFile(user, OLDER_SET)).statusCode).toBe(200);
+      const sets = async () =>
+        (await owner.liftRecord.findMany({ where: { userId: user }, orderBy: { date: 'asc' } })).map(
+          (r) => `${r.macrocycleNum} ${isoDay(r.date)} ${r.lift}`,
+        );
+      expect(await sets()).toEqual(['1 2025-03-03 bench-press', '2 2026-03-02 Bench Press']);
+      expect((await owner.importBatch.findUniqueOrThrow({ where: { id: batch.id } })).preImage).toEqual({
+        '2:1:20260302:Bench Press:1': { kind: 'created', wrote: { weight: 200, reps: 5, notes: '' } },
+        'macrocycle-row:2': { kind: 'created', wrote: { macrocycleNum: 2 } },
+      });
+
+      const undo = await injectAs(user, 'POST', `${base}/import/${batch.id}/undo`);
+      expect(undo.json()).toMatchObject({ restored: 1, skipped: 0 });
+      expect(await sets()).toEqual(['1 2025-03-03 bench-press']);
     }, DB_E2E_HOOK_TIMEOUT_MS);
 
     it('holds a rewrite back until a page write holding the lock across its id check has finished', async () => {
