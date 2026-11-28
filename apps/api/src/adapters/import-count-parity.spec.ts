@@ -159,7 +159,7 @@ describe('import-commit count parity (in-memory vs Prisma)', () => {
       wtDecrementPct: 0,
       activation: 'main',
     });
-    const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null });
+    const toRow = (s: LiftingProgramSpec) => ({ ...s, weekType: null, modifications: [] });
 
     const existing = [spec('Squat', 5), spec('Bench', 5)];
     const incoming = [

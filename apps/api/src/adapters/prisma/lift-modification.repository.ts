@@ -84,14 +84,14 @@ export class PrismaLiftModificationRepository implements ILiftModificationReposi
       select: { id: true },
     });
     // A program slot that starts with it on names it too (#1155).
-    const namedBySlot =
+    const inUse =
       namedBySet ??
       (await this.prisma.customProgramSpec.findFirst({
         where: { modifications: { has: id }, program: { userId: this.userId } },
         select: { id: true },
       }));
     const where = { id, userId: this.userId };
-    if (!namedBySlot) {
+    if (!inUse) {
       const { count } = await this.prisma.liftModification.deleteMany({ where });
       if (count === 0) throw new LiftModificationNotFoundError(id);
     } else if (!owned.archivedAt) {
