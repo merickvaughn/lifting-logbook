@@ -153,8 +153,6 @@ describe('daysFromSpecs', () => {
     ]);
   });
 
-  // Null, not absent: the API keeps a stored value for a field left out, so a row with no
-  // override would otherwise inherit what a deleted row at the same position held.
   it("carries a slot's start-on modifications through an edit round-trip, and clears them (#1155)", () => {
     const rows = [1, 2, 3].map((week) => ({ ...legacyRow(week, 'Cable Curl', 1), modifications: ['m-wide'] }));
 
@@ -167,6 +165,8 @@ describe('daysFromSpecs', () => {
     expect(specsFromDays(cleared).map((r) => r.modifications)).toEqual([[], [], []]);
   });
 
+  // Null, not absent: the API keeps a stored value for a field left out, so a row with no
+  // override would otherwise inherit what a deleted row at the same position held.
   it('sends progression and repsLow as null on a row that has none', () => {
     const saved = specsFromDays(daysFromSpecs([legacyRow(1, 'Squat', 1)]));
     expect(saved[0]).toMatchObject({ progression: null, repsLow: null });
