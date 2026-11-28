@@ -68,6 +68,15 @@ describe('ProgramEditor — start-on modifications (#1155)', () => {
     expect(mockUpdate.mock.calls[1]?.[1].specs?.[0]?.modifications).toEqual([]);
   });
 
+  it('asks only about the program’s lifts, not a complex slot', async () => {
+    mockFetch.mockResolvedValue({ 'Cable Curl': [WIDE] });
+    const program = existing();
+    renderEdit({ ...program, specs: [...program.specs, ...[1, 2, 3].map((w) => ({ ...row(w), order: 2, lift: 'complex:c1' }))] });
+
+    await screen.findByRole('checkbox', { name: 'Cable Curl #1 Day 1 starts with Wide grip' });
+    expect(mockFetch).toHaveBeenCalledWith(['Cable Curl']);
+  });
+
   // The fallback swallows the failed read: no boxes, and the saved list is sent back as it was,
   // so a failed read can't clear a slot's start-on (the success path is the first test).
   it('shows no boxes when the read fails, and still saves the slot’s list', async () => {

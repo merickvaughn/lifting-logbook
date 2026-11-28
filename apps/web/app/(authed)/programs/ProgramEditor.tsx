@@ -166,7 +166,12 @@ export default function ProgramEditor({
   const [modificationsByLift, setModificationsByLift] = useState<ReadonlyMap<string, LiftModificationResponse[]>>(
     new Map(),
   );
-  const liftsKey = [...new Set(days.flatMap((d) => d.instances.map((i) => i.lift)))].sort().join('\n');
+  // A complex slot has no modifications of its own, so it isn't asked about.
+  const liftsKey = [
+    ...new Set(days.flatMap((d) => d.instances.map((i) => i.lift)).filter((l) => complexIdOf(l) === undefined)),
+  ]
+    .sort()
+    .join('\n');
   useEffect(() => {
     if (liftsKey === '') return;
     let cancelled = false;
@@ -366,7 +371,7 @@ export default function ProgramEditor({
                           <label key={m.id}>
                             <input
                               type="checkbox"
-                              aria-label={`${inst.lift} #${i + 1} Day ${n} starts with ${m.name}`}
+                              aria-label={`${liftLabel(inst.lift)} #${i + 1} Day ${n} starts with ${m.name}`}
                               checked={inst.modifications.includes(m.id)}
                               onChange={() => toggleStartOn(day.id, inst.id, m.id)}
                             />{' '}

@@ -221,6 +221,19 @@ describeOrSkip('Lift modifications HTTP (e2e, PrismaRepositoryFactory)', () => {
     expect((kept.json() as { specs: { modifications?: string[] }[] }).specs[0]?.modifications).toEqual([wide.id]);
   });
 
+  it("another user's program slot naming the same id doesn't keep a modification from deleting (#1155)", async () => {
+    const wide = await create('Cable Curl', 'Wide grip');
+    const row = (week: number) => ({
+      week, offset: 0, order: 1, lift: 'Cable Curl', increment: 5, sets: 3, reps: 10, amrap: false,
+      warmUpPct: '0.5', wtDecrementPct: 0, activation: 'None', modifications: [wide.id],
+    });
+    expect((await other('POST', '/programs/custom', { name: 'Theirs', specs: [1, 2, 3].map(row) })).statusCode).toBe(201);
+
+    expect((await owner('DELETE', `/lifts/modifications/${wide.id}`)).statusCode).toBe(204);
+
+    expect(await prisma.liftModification.findUnique({ where: { id: wide.id } })).toBeNull();
+  });
+
   it("another user's sets naming the same id don't keep a modification from deleting", async () => {
     const paused = await create('Bench Press', 'Paused');
     await prisma.liftRecord.create({
