@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { storedIdListing } from '@lifting-logbook/core';
 import {
   fetchCustomLifts,
   fetchImportBatches,
@@ -19,6 +18,7 @@ import type {
   TrainingMaxHistoryEntryResponse,
   WeightUnit,
 } from '@lifting-logbook/types';
+import { liftListing } from '@/lib/liftNames';
 import { buildTmAtTimeIndex } from '@/lib/tmAtTime';
 import HistoryTabs from './HistoryTabs';
 import styles from './history.module.css';
@@ -96,8 +96,10 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   const records = [...programRecords, ...nonCycleRecords];
   const sortedRecords = records.slice().sort((a, b) => b.date.localeCompare(a.date));
 
-  // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135).
-  const listing = storedIdListing(sortedRecords.map((r) => r.lift));
+  // A record stored by catalog id shares its lift's PR with a record under the lift's name (#1135),
+  // and one stored by custom lift id with a record under the custom lift's name (#1503).
+  const liftNames = customLifts.map(({ id, name }) => ({ id, name }));
+  const listing = liftListing(sortedRecords.map((r) => r.lift), liftNames);
   const maxByLift = new Map<string, number>();
   for (const r of sortedRecords) {
     const lift = listing(r.lift);
@@ -171,7 +173,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         tmEntries={tmEntries}
         macrocycles={macrocycles}
         imports={imports}
-        customLifts={customLifts.map(({ id, name }) => ({ id, name }))}
+        customLifts={liftNames}
         unit={unit}
       />
     </main>

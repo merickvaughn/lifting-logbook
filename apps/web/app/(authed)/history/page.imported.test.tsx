@@ -96,4 +96,17 @@ describe('HistoryPage with sets stored by lift id', () => {
     expect(html).toContain('role="status"');
     expect(liftColumn(html)).toEqual(['Barbell Row', ZERCHER]);
   });
+
+  it('gives a custom lift stored under its id and under its name one PR', async () => {
+    (fetchCustomLifts as jest.Mock).mockResolvedValue([{ id: ZERCHER, name: 'Zercher Squat' }]);
+    (fetchLiftRecords as jest.Mock).mockResolvedValue([
+      { ...imported('heavy', 1, ZERCHER, '2021-03-01'), weight: 225 },
+      { ...imported('light', 2, 'Zercher Squat', '2021-04-01'), weight: 185 },
+    ]);
+
+    const html = renderToStaticMarkup((await HistoryPage({ searchParams: Promise.resolve({}) })) as ReactElement);
+
+    expect(html.match(/class="prBadge"/g)).toHaveLength(1);
+    expect(html).toMatch(/225 lbs × 5<\/td>(?:(?!<\/tr>).)*class="prBadge"/);
+  });
 });

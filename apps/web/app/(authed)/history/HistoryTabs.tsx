@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { formatWeight, liftIdFor, storedIdListing } from '@lifting-logbook/core';
+import { formatWeight, liftIdFor } from '@lifting-logbook/core';
 import { NON_CYCLE_PROGRAM } from '@lifting-logbook/types';
 import type {
   ImportBatchSummary,
@@ -14,6 +14,7 @@ import type {
 } from '@lifting-logbook/types';
 import { undoImport } from '@/lib/client-api';
 import { localToday } from '@/lib/calendarDay';
+import { liftListing, type CustomLiftName } from '@/lib/liftNames';
 import { undoSummary } from '@/lib/importUndo';
 import { logClientError } from '@/lib/log-client-error';
 import { formatDay, supplementsOnHref } from '@/lib/supplementHistory';
@@ -23,18 +24,7 @@ import styles from './history.module.css';
 
 type Tab = 'history' | 'timeline' | 'macrocycles';
 
-type CustomLiftName = { id: string; name: string };
 const NO_CUSTOM_LIFTS: CustomLiftName[] = [];
-
-/**
- * What to list and show each stored `lift` as: a custom lift's name for its id, which import
- * stores its sets under (#1290, #1503), otherwise `storedIdListing`'s name.
- */
-function liftListing(names: string[], customLifts: readonly CustomLiftName[]): (name: string) => string {
-  const custom = new Map(customLifts.map((lift) => [lift.id, lift.name]));
-  const listing = storedIdListing(names);
-  return (name) => custom.get(name) ?? listing(name);
-}
 
 export default function HistoryTabs({
   records,
