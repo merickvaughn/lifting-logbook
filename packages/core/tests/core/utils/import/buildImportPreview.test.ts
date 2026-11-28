@@ -42,6 +42,12 @@ describe("buildLiftRecordsPreview", () => {
     expect(preview).toMatchObject({ creates: 1, updates: 0, skips: 1 });
   });
 
+  it("reports how many skipped rows differ from the stored set (#1223)", () => {
+    const existing = [liftRecord({ setNum: 1 })];
+    expect(buildLiftRecordsPreview([liftRecord({ setNum: 1, weight: 999 })], existing).changed).toBe(1);
+    expect(buildLiftRecordsPreview([liftRecord({ setNum: 1 })], existing).changed).toBe(0);
+  });
+
   it("collapses duplicate keys within the file", () => {
     const incoming = [liftRecord({ setNum: 1 }), liftRecord({ setNum: 1 })];
     const preview = buildLiftRecordsPreview(incoming, []);

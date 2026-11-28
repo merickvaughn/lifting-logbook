@@ -2462,6 +2462,28 @@ describe('ImportWizard', () => {
       });
     });
 
+    it('says how many skipped rows differ from the stored set, only when some do (#1223)', async () => {
+      const user = userEvent.setup();
+      const deltas: ImportDelta[] = [{ key: 'k1', label: 'Bench set 1', kind: 'skip', rowIndex: 1 }];
+      const withChanged = liftPreview(deltas);
+      mockPreview.mockResolvedValue({ ...withChanged, preview: { ...withChanged.preview!, changed: 2 } });
+
+      const { unmount } = render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, CSV);
+      await user.click(screen.getByRole('button', { name: 'Next' })); // Review → Preview
+
+      expect(screen.getByTestId('import-changed-note')).toHaveTextContent(
+        '2 skipped rows differ from the set already stored, in weight or reps.',
+      );
+      unmount();
+
+      mockPreview.mockResolvedValue({ ...withChanged, preview: { ...withChanged.preview!, changed: 0 } });
+      render(<ImportWizard programs={PROGRAMS} customLifts={[]} />);
+      await navigateToLiftRecordsReview(user, CSV);
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      expect(screen.queryByTestId('import-changed-note')).not.toBeInTheDocument();
+    });
+
     it('drops the split card when nothing routes to a second destination', async () => {
       const user = userEvent.setup();
       mockPreview.mockResolvedValue({
